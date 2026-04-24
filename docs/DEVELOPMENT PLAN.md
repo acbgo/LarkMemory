@@ -1,256 +1,174 @@
-# OpenClaw记忆引擎插件基本模块开发目录说明
+# Python Memory Engine 开发计划简版
 
-本文档对openClaw记忆引擎插件下每个主要文件的职责做说明，便于快速理解项目结构。
+## 1. 定位
 
-## 总览
+方案采用 `OpenClaw 插件（TypeScript） + 本地 Python Memory Engine 服务`。
 
-`src/` 里的文件大致分成几类：
-
-- 存储层：负责记忆的持久化、迁移、压缩
-- 提取层：负责从对话中抽取记忆、分类、去重、补 metadata
-- 检索层：负责召回、排序、融合、降噪、可观测性
-- 生命周期层：负责衰减、tier、访问强化
-- 会话与反思层：负责 session memory、reflection、恢复
-- 治理与边界层：负责 scope、workspace 边界、准入控制
-- 工具层：负责给 Agent 和 CLI 暴露能力
+- 插件负责采集上下文、发起请求、注入记忆结果。
+- Python 服务负责长期记忆的抽取、存储、检索和更新。
+- 服务默认运行在 `localhost`，由插件按需探测和拉起。
 
 ---
 
-## 核心主链路文件
+## 2. Python 文件一句话说明
 
-### `store.ts`
+### `app/`
 
-底层存储核心。封装 LanceDB 的表初始化、增删改查、向量搜索、BM25/FTS 搜索、统计以及写锁控制。
+- `main.py`：FastAPI 服务入口，负责启动应用并注册所有接口。
+- `config.py`：集中管理端口、路径、模型参数和运行开关。
+- `dependencies.py`：为 API 层统一提供 service、store 等依赖对象。
+- `logging.py`：初始化结构化日志与请求链路日志能力。
 
-### `embedder.ts`
+### `api/`
 
-向量化核心。统一 embedding provider，处理维度、缓存、chunking、任务类型和错误提示。
+- `ingest.py`：接收外部事件并触发记忆写入流程。
+- `retrieve.py`：接收检索请求并返回相关记忆结果。
+- `update.py`：处理记忆纠正、覆盖和失效标记。
+- `proactive.py`：提供提醒、建议和复习类主动结果。
+- `benchmark.py`：暴露评测运行与结果查询接口。
+- `health.py`：提供服务健康检查和依赖状态检查。
 
-### `retriever.ts`
+### `core/`
 
-检索核心。把向量搜索、BM25、融合、rerank、长度归一化、时间衰减、噪声过滤和多样性控制整合成完整检索流水线。
+- `router.py`：根据事件或查询意图把请求路由到合适的领域模块。
+- `memory_core.py`：定义统一记忆对象及其状态流转规则。
+- `admission_control.py`：决定哪些候选信息值得进入长期记忆。
+- `dedup_merge.py`：识别重复内容并合并相近记忆。
+- `supersede.py`：管理新旧记忆的覆盖关系和版本链。
+- `decay.py`：负责记忆衰减、归档和遗忘策略。
+- `access_tracker.py`：记录命中、采纳和反馈以反向优化排序。
+- `scheduler.py`：调度复习、提醒和过期扫描等后台任务。
+- `service.py`：作为后端统一业务入口串联各层能力。
 
-### `smart-extractor.ts`
+### `domains/cli_workflow/`
 
-记忆自动提取核心。把对话内容转成结构化记忆，负责 LLM 抽取、去重、合并、跳过、support、supersede 等决策。
+- `models.py`：定义 CLI 工作流相关的结构化数据模型。
+- `extractor.py`：从命令和执行上下文中抽取工作流记忆。
+- `retriever.py`：按 repo、任务和命令语境检索 CLI 记忆。
+- `ranker.py`：对 CLI 记忆结果做领域内排序。
+- `workflow_miner.py`：从命令序列中识别稳定的多步工作流模式。
 
-### `smart-metadata.ts`
+### `domains/project_decision/`
 
-记忆元数据核心。定义一条记忆的语义结构、source/state/layer/tier、关系链和多层摘要。
+- `models.py`：定义项目决策、理由和备选方案的数据结构。
+- `extractor.py`：从讨论或记录中抽取项目决策信息。
+- `retriever.py`：按项目、主题和阶段检索决策记忆。
+- `ranker.py`：对决策类结果按相关性和时效性排序。
+- `versioning.py`：维护决策更新时的新旧版本关系。
+
+### `domains/personal_preference/`
+
+- `models.py`：定义个人偏好和习惯相关的数据模型。
+- `extractor.py`：从用户行为和表达中抽取偏好信息。
+- `retriever.py`：按用户、场景和时间模式检索偏好记忆。
+- `ranker.py`：对偏好类结果做个性化排序。
+- `pattern_miner.py`：分析重复行为并挖掘稳定偏好模式。
+
+### `domains/team_retention/`
+
+- `models.py`：定义团队事实、风险和复习计划的数据模型。
+- `extractor.py`：从协作信息中抽取团队关键事实。
+- `retriever.py`：按团队、项目和风险维度检索团队记忆。
+- `ranker.py`：对团队记忆结果按重要性和风险等级排序。
+- `review_planner.py`：生成团队知识复习和提醒计划。
+- `versioning.py`：维护团队事实的生效、失效和替换关系。
+
+### `storage/`
+
+- `event_store.py`：存储原始事件，便于回放、调试和评测。
+- `memory_core_store.py`：负责统一记忆主表的读写操作。
+- `cli_workflow_store.py`：负责 CLI 工作流记忆的存储与检索。
+- `project_decision_store.py`：负责项目决策记忆的存储与检索。
+- `personal_preference_store.py`：负责个人偏好记忆的存储与检索。
+- `team_retention_store.py`：负责团队事实记忆的存储与检索。
+- `embedding_store.py`：提供向量索引和语义检索能力。
+- `review_schedule_store.py`：存储复习计划和下次提醒时间。
+- `access_log_store.py`：记录检索命中、采纳和反馈日志。
+
+### `retrieval/`
+
+- `intent_analyzer.py`：分析查询意图并决定主查与辅查领域。
+- `query_rewrite.py`：补全主题、时间和上下文等检索信号。
+- `fusion.py`：融合多个领域的召回结果。
+- `rerank.py`：对跨领域结果做统一重排。
+- `retrieval_trace.py`：记录完整检索链路用于调试和评测。
+
+### `llm/`
+
+- `client.py`：封装大模型调用并输出结构化结果。
+- `prompts.py`：集中管理通用提示词模板。
+- `extraction_prompts.py`：维护抽取类任务使用的提示词。
+- `decision_prompts.py`：维护决策类任务使用的提示词。
+
+### `jobs/`
+
+- `review_scan.py`：扫描需要复习或提醒的记忆项。
+- `decay_compaction.py`：处理低活跃记忆的衰减、归档和压缩。
+- `benchmark_runner.py`：统一执行基准评测任务。
+
+### `schemas/`
+
+- `event.py`：定义事件输入输出的数据结构。
+- `memory_core.py`：定义统一记忆对象的协议模型。
+- `ingest.py`：定义写入接口的请求和响应模型。
+- `retrieve.py`：定义检索接口的请求和响应模型。
+- `update.py`：定义更新接口的请求和响应模型。
+- `proactive.py`：定义主动提醒接口的请求和响应模型。
+- `benchmark.py`：定义评测接口的请求和响应模型。
+
+### `utils/`
+
+- `ids.py`：提供统一 ID 生成与解析工具。
+- `time.py`：提供时间处理、格式化和窗口计算工具。
+- `text.py`：提供文本清洗、截断和规范化工具。
+- `jsonlog.py`：提供 JSON 日志输出辅助方法。
 
 ---
 
-## 存储与数据维护
+## 3. 核心 API
 
-### `migrate.ts`
-
-迁移入口。负责旧数据迁移到当前插件格式。
-
-### `memory-upgrader.ts`
-
-旧记忆升级器。把 legacy memory 升级为带 smart metadata 的新格式。
-
-### `memory-compactor.ts`
-
-记忆压缩器。扫描旧且相似的记忆，聚类后合成一条更干净的新记忆，减少冗余碎片。
-
-### `batch-dedup.ts`
-
-批量近重复检测。用于在提取结果进入主流程前，先做候选记忆内部去重。
-
-### `chunker.ts`
-
-长文本切块。给 embedding 或长上下文处理做分块。
+- `POST /ingest`：接收标准化事件并写入记忆。
+- `POST /retrieve`：根据当前问题和上下文召回相关记忆。
+- `POST /update`：处理记忆纠正、覆盖和失效。
+- `GET /proactive`：返回当前应主动提醒或推荐的内容。
+- `POST /benchmark/run`：执行指定评测任务。
+- `GET /health`：检查服务和依赖是否正常。
 
 ---
 
-## 记忆分类与时间语义
+## 4. 建议开发顺序
 
-### `memory-categories.ts`
+### 第一批
 
-智能分类定义。定义 `profile/preferences/entities/events/cases/patterns` 等语义分类，以及哪些类型偏向 merge/supersede。
+- `app/main.py`
+- `api/ingest.py`
+- `api/retrieve.py`
+- `api/health.py`
+- `core/service.py`
+- `core/router.py`
+- `core/memory_core.py`
+- `storage/event_store.py`
+- `storage/memory_core_store.py`
+- `domains/cli_workflow/extractor.py`
+- `domains/cli_workflow/retriever.py`
 
-### `temporal-classifier.ts`
+### 第二批
 
-时间语义判断。识别静态/动态记忆，推断过期时间，支持 temporal fact。
+- `domains/project_decision/*`
+- `retrieval/intent_analyzer.py`
+- `retrieval/fusion.py`
+- `api/update.py`
 
-### `preference-slots.ts`
+### 第三批
 
-偏好槽位抽象。把某些偏好标准化成更适合 merge/update 的结构。
-
-### `identity-addressing.ts`
-
-身份与称呼处理。帮助处理“我/你/他”等 addressing 场景下的抽取和规范化。
-
----
-
-## 检索增强与可观测性
-
-### `query-expander.ts`
-
-查询扩展。给 BM25 增加同义词、标签等高信号补充。
-
-### `intent-analyzer.ts`
-
-意图分析。为 adaptive recall 判断当前 query 更偏向哪类记忆、需要多深的召回。
-
-### `adaptive-retrieval.ts`
-
-检索门控。判断短消息、寒暄、低价值输入是否应跳过 auto-recall。
-
-### `retrieval-trace.ts`
-
-检索追踪。记录每个阶段的候选和裁剪过程，便于调试。
-
-### `retrieval-stats.ts`
-
-检索统计。收集检索质量和阶段性统计信息。
-
-### `access-tracker.ts`
-
-访问强化。记录某条记忆被命中/使用的次数和时间，给衰减与排序提供依据。
+- `domains/team_retention/*`
+- `domains/personal_preference/*`
+- `jobs/review_scan.py`
+- `api/proactive.py`
+- `api/benchmark.py`
 
 ---
 
-## 生命周期与层级管理
+## 5. 结论
 
-### `decay-engine.ts`
-
-遗忘/衰减模型。根据 recency、frequency、importance、confidence 计算生命周期得分。
-
-### `tier-manager.ts`
-
-tier 晋升/降级管理。控制 `core / working / peripheral` 的演化。
-
-### `admission-control.ts`
-
-准入控制。在写入前拦截不该入库或低价值的候选记忆。
-
-### `admission-stats.ts`
-
-准入统计。对 admission control 的拒绝和原因做聚合统计。
-
----
-
-## 噪声处理
-
-### `noise-filter.ts`
-
-噪声识别。基于规则判断哪些文本是无价值噪声，例如系统包裹元数据、低信息内容。
-
-### `noise-prototypes.ts`
-
-噪声原型库。通过 embedding 累积噪声样本，提升语言无关的噪声过滤能力。
-
-### `auto-capture-cleanup.ts`
-
-自动捕获文本清洗。对 `agent_end` 自动抓取的消息做清洗，去除系统注入和反思提示等无关内容。
-
----
-
-## 会话压缩、恢复与反思
-
-### `session-compressor.ts`
-
-会话压缩。对当前对话做价值评估和裁剪，保留高信息片段再送入提取流程。
-
-### `session-recovery.ts`
-
-session 恢复。处理 `/new`、reset、session 文件定位和历史恢复相关逻辑。
-
-### `reflection-store.ts`
-
-反思写库。把 session reflection 结果写入 LanceDB，并支持 reflection slices 的读取。
-
-### `reflection-slices.ts`
-
-反思切片提取。从 reflection 结果中抽出可注入和可治理的片段。
-
-### `reflection-retry.ts`
-
-反思重试。给 reflection 过程提供一次性容错和瞬时重试机制。
-
-### `reflection-ranking.ts`
-
-反思排序。决定哪些 reflection 项更值得保留或注入。
-
-### `reflection-metadata.ts`
-
-反思元数据定义。管理 reflection 相关展示标签和字段。
-
-### `reflection-mapped-metadata.ts`
-
-反思映射元数据。把 reflection 内容映射成普通记忆 metadata。
-
-### `reflection-item-store.ts`
-
-反思条目存储。管理单条 reflection item。
-
-### `reflection-event-store.ts`
-
-反思事件存储。管理一次 reflection 事件及其 ID 和事件级元数据。
-
----
-
-## 作用域、边界与团队协作
-
-### `scopes.ts`
-
-scope 隔离核心。定义 `global / agent:* / project:* / user:* / reflection:*` 等作用域及访问控制。
-
-### `clawteam-scope.ts`
-
-团队 scope 扩展。给现有 scope 管理器动态补充团队共享 scope。
-
-### `workspace-boundary.ts`
-
-工作区边界。处理 USER.md 专属记忆与 LanceDB 记忆的边界，避免混淆和污染。
-
----
-
-## LLM 与提示词
-
-### `llm-client.ts`
-
-LLM 客户端封装。供 smart extraction、reflection 等模块统一调用模型。
-
-### `llm-oauth.ts`
-
-OAuth 登录支持。对应 `memory-pro auth login/status/logout` 等命令。
-
-### `extraction-prompts.ts`
-
-抽取提示词模板。定义提取、去重、合并时使用的 prompt。
-
----
-
-## 工具与辅助文件
-
-### `tools.ts`
-
-Agent 工具层。注册 `memory_store / memory_recall / memory_update / memory_forget / memory_stats / memory_list` 等工具。
-
-### `self-improvement-files.ts`
-
-自改进文件管理。处理 self-improvement 的日志和学习文件。
-
-## 项目基础模块构建规划
-
-##### 阶段一：统一记忆模型、raw数据层管理、episode提取（结构化事件）
-
-##### 阶段二：konwledge固化（长期项目理解），多层检索引擎（L1,L2,L3），决策卡片(事件决策的定义，项目state)
-
-##### 阶段三：偏好记忆、规则/提醒、遗忘曲线与版本覆盖
-
-##### 阶段四：日报周报、决策时间线、真实飞书数据接入、demo
-
-## 总结
-
-这个项目不是一个单一的“记忆表封装”，而是一整套围绕记忆的工程体系：
-
-- 写入前有清洗、提取、分类、去重
-- 存储中有 metadata、scope、版本兼容
-- 检索时有融合、rerank、降噪、解释
-- 后台还有衰减、压缩、反思、治理
-
-如果后续还要继续深入，建议下一步按“运行链路”而不是按文件名继续读代码。
+当前最合适的落地方式是保留 TypeScript 插件层，并用 Python 实现本地记忆引擎服务，以兼顾开发效率、建模能力和后续扩展性。
