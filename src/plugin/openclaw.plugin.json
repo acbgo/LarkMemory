@@ -1,0 +1,26 @@
+{
+  "id": "larkmemory-plugin",
+  "name": "LarkMemory Plugin",
+  "description": "飞书企业级长程协作 Memory 系统的 OpenClaw 插件，在对话前搜索相关记忆，在对话后提取并存储新记忆",
+  "configSchema": {
+    "type": "object",
+    "properties": {
+      "memoryApiUrl": {
+        "type": "string",
+        "description": "Memory Backend API 地址",
+        "default": "http://localhost:8000/api/v1"
+      },
+      "userId": {
+        "type": "string",
+        "description": "默认用户ID",
+        "default": "default_user"
+      },
+      "debug": {
+        "type": "boolean",
+        "description": "启用调试日志",
+        "default": true
+      }
+    },
+    "additionalProperties": false
+  }
+}
