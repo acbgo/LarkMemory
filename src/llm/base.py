@@ -4,7 +4,7 @@ import asyncio
 from abc import ABC, abstractmethod
 from typing import Any
 
-from .schema import LLMResponse, Message, ProviderConfig
+from src.schemas import LLMResponse, Message, ProviderConfig
 
 
 class ProviderError(Exception):
@@ -114,4 +114,3 @@ class LLMProvider(ABC):
         except RuntimeError:
             return asyncio.run(coro)
         raise RuntimeError("Cannot call sync LLM methods inside an async context.")
-

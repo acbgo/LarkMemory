@@ -11,7 +11,14 @@ from .base import (
     RateLimitError,
     ValidationError,
 )
-from .schema import FunctionCall, LLMResponse, Message, ProviderConfig, TokenUsage, ToolCall
+from src.schemas import (
+    FunctionCall,
+    LLMResponse,
+    Message,
+    ProviderConfig,
+    TokenUsage,
+    ToolCall,
+)
 
 try:
     import openai
@@ -168,4 +175,3 @@ class OpenAIProvider(LLMProvider):
         except Exception as error:
             self._handle_error(error)
             raise
-

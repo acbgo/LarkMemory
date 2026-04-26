@@ -77,4 +77,3 @@ class ProviderConfig:
     max_retries: int = 2
     default_headers: dict[str, str] = field(default_factory=dict)
     extra_body: dict[str, Any] = field(default_factory=dict)
-

@@ -1,6 +1,4 @@
-from .client import LLMClient
-from .openai_provider import OpenAIProvider
-from .schema import (
+from src.schemas import (
     FunctionCall,
     LLMResponse,
     Message,
@@ -8,6 +6,8 @@ from .schema import (
     TokenUsage,
     ToolCall,
 )
+from .client import LLMClient
+from .openai_provider import OpenAIProvider
 
 __all__ = [
     "FunctionCall",

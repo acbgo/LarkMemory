@@ -1,0 +1,281 @@
+from __future__ import annotations
+
+import json
+from typing import Any
+
+from src.schemas import MemoryCore
+
+from .base import SQLiteStore
+
+
+class MemoryCoreStore(SQLiteStore):
+    def create_table(self) -> None:
+        self.execute(
+            """
+            CREATE TABLE IF NOT EXISTS memory_core (
+                memory_id TEXT PRIMARY KEY,
+                domain TEXT NOT NULL,
+                memory_type TEXT NOT NULL,
+                scope TEXT NOT NULL,
+                source_type TEXT NOT NULL,
+                source_ref TEXT NOT NULL,
+                source_event_id TEXT,
+                content_text TEXT NOT NULL,
+                summary_text TEXT,
+                entities_json TEXT NOT NULL,
+                tags_json TEXT NOT NULL,
+                importance REAL NOT NULL,
+                confidence REAL NOT NULL,
+                freshness_score REAL,
+                status TEXT NOT NULL,
+                valid_from TEXT,
+                valid_to TEXT,
+                overwrite_of TEXT,
+                superseded_by TEXT,
+                trigger_policy_id TEXT,
+                decay_policy_id TEXT,
+                embedding_id TEXT,
+                created_at TEXT,
+                updated_at TEXT
+            )
+            """
+        )
+        self.execute(
+            "CREATE INDEX IF NOT EXISTS idx_memory_core_domain_status ON memory_core (domain, status)"
+        )
+        self.execute(
+            "CREATE INDEX IF NOT EXISTS idx_memory_core_scope ON memory_core (scope)"
+        )
+        self.execute(
+            "CREATE INDEX IF NOT EXISTS idx_memory_core_source_ref ON memory_core (source_ref)"
+        )
+        self.execute(
+            "CREATE INDEX IF NOT EXISTS idx_memory_core_overwrite_of ON memory_core (overwrite_of)"
+        )
+        self.execute(
+            "CREATE INDEX IF NOT EXISTS idx_memory_core_superseded_by ON memory_core (superseded_by)"
+        )
+
+    def insert_memory_core(self, memory: MemoryCore) -> str:
+        self.execute(
+            """
+            INSERT INTO memory_core (
+                memory_id,
+                domain,
+                memory_type,
+                scope,
+                source_type,
+                source_ref,
+                source_event_id,
+                content_text,
+                summary_text,
+                entities_json,
+                tags_json,
+                importance,
+                confidence,
+                freshness_score,
+                status,
+                valid_from,
+                valid_to,
+                overwrite_of,
+                superseded_by,
+                trigger_policy_id,
+                decay_policy_id,
+                embedding_id,
+                created_at,
+                updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                memory.memory_id,
+                memory.domain,
+                memory.memory_type,
+                memory.scope,
+                memory.source_type,
+                memory.source_ref,
+                memory.source_event_id,
+                memory.content_text,
+                memory.summary_text,
+                json.dumps(memory.entities, ensure_ascii=True),
+                json.dumps(memory.tags, ensure_ascii=True),
+                memory.importance,
+                memory.confidence,
+                memory.freshness_score,
+                memory.status,
+                memory.valid_from,
+                memory.valid_to,
+                memory.overwrite_of,
+                memory.superseded_by,
+                memory.trigger_policy_id,
+                memory.decay_policy_id,
+                memory.embedding_id,
+                memory.created_at,
+                memory.updated_at,
+            ),
+        )
+        return memory.memory_id
+
+    def get_memory(self, memory_id: str) -> dict[str, Any] | None:
+        row = self.fetch_one(
+            "SELECT * FROM memory_core WHERE memory_id = ?",
+            (memory_id,),
+        )
+        return self._deserialize_row(row)
+
+    def batch_get_memories(self, memory_ids: list[str]) -> list[dict[str, Any]]:
+        if not memory_ids:
+            return []
+        placeholders = ", ".join("?" for _ in memory_ids)
+        rows = self.fetch_all(
+            f"SELECT * FROM memory_core WHERE memory_id IN ({placeholders})",
+            tuple(memory_ids),
+        )
+        row_map = {
+            row["memory_id"]: self._deserialize_row(row)
+            for row in rows
+        }
+        return [row_map[memory_id] for memory_id in memory_ids if memory_id in row_map]
+
+    def update_memory_status(self, memory_id: str, status: str) -> None:
+        self.execute(
+            """
+            UPDATE memory_core
+            SET status = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE memory_id = ?
+            """,
+            (status, memory_id),
+        )
+
+    def mark_superseded(self, old_memory_id: str, new_memory_id: str) -> None:
+        with self.transaction() as connection:
+            connection.execute(
+                """
+                UPDATE memory_core
+                SET status = 'superseded',
+                    superseded_by = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE memory_id = ?
+                """,
+                (new_memory_id, old_memory_id),
+            )
+            connection.execute(
+                """
+                UPDATE memory_core
+                SET overwrite_of = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE memory_id = ?
+                """,
+                (old_memory_id, new_memory_id),
+            )
+
+    def update_confidence(self, memory_id: str, confidence: float) -> None:
+        self.execute(
+            """
+            UPDATE memory_core
+            SET confidence = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE memory_id = ?
+            """,
+            (confidence, memory_id),
+        )
+
+    def update_importance(self, memory_id: str, importance: float) -> None:
+        self.execute(
+            """
+            UPDATE memory_core
+            SET importance = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE memory_id = ?
+            """,
+            (importance, memory_id),
+        )
+
+    def list_active_memories(
+        self,
+        domain: str | None = None,
+        scope: str | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        clauses = ["status = 'active'"]
+        parameters: list[Any] = []
+        if domain is not None:
+            clauses.append("domain = ?")
+            parameters.append(domain)
+        if scope is not None:
+            clauses.append("scope = ?")
+            parameters.append(scope)
+        sql = """
+            SELECT * FROM memory_core
+            WHERE {where_clause}
+            ORDER BY updated_at DESC, created_at DESC
+            LIMIT ?
+        """.format(where_clause=" AND ".join(clauses))
+        parameters.append(limit)
+        rows = self.fetch_all(sql, tuple(parameters))
+        return [self._deserialize_row(row) for row in rows]
+
+    def search_memory_candidates(
+        self,
+        domain: str | None = None,
+        status: str = "active",
+        source_ref: str | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        clauses = ["status = ?"]
+        parameters: list[Any] = [status]
+        if domain is not None:
+            clauses.append("domain = ?")
+            parameters.append(domain)
+        if source_ref is not None:
+            clauses.append("source_ref = ?")
+            parameters.append(source_ref)
+        sql = """
+            SELECT * FROM memory_core
+            WHERE {where_clause}
+            ORDER BY updated_at DESC, created_at DESC
+            LIMIT ?
+        """.format(where_clause=" AND ".join(clauses))
+        parameters.append(limit)
+        rows = self.fetch_all(sql, tuple(parameters))
+        return [self._deserialize_row(row) for row in rows]
+
+    def get_version_chain(self, memory_id: str) -> list[dict[str, Any]]:
+        rows = self.fetch_all(
+            """
+            WITH RECURSIVE version_chain AS (
+                SELECT * FROM memory_core WHERE memory_id = ?
+                UNION
+                SELECT m.*
+                FROM memory_core m
+                JOIN version_chain vc
+                  ON m.memory_id = vc.overwrite_of
+                  OR m.overwrite_of = vc.memory_id
+                  OR m.memory_id = vc.superseded_by
+                  OR m.superseded_by = vc.memory_id
+            )
+            SELECT DISTINCT * FROM version_chain
+            """,
+            (memory_id,),
+        )
+        items = [self._deserialize_row(row) for row in rows]
+        items.sort(
+            key=lambda item: (
+                item["created_at"] or "",
+                item["updated_at"] or "",
+                item["memory_id"],
+            )
+        )
+        return items
+
+    def delete_memory(self, memory_id: str) -> None:
+        self.execute(
+            "DELETE FROM memory_core WHERE memory_id = ?",
+            (memory_id,),
+        )
+
+    def _deserialize_row(self, row: dict[str, Any] | None) -> dict[str, Any] | None:
+        if row is None:
+            return None
+        row["entities_json"] = json.loads(row["entities_json"])
+        row["tags_json"] = json.loads(row["tags_json"])
+        row["entities"] = row["entities_json"]
+        row["tags"] = row["tags_json"]
+        return row
