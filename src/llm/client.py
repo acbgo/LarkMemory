@@ -4,7 +4,7 @@ import json
 from typing import Any
 
 from .openai_provider import OpenAIProvider
-from .schema import LLMResponse, Message, ProviderConfig
+from src.schemas import LLMResponse, Message, ProviderConfig
 
 
 class LLMClient:
@@ -108,4 +108,3 @@ class LLMClient:
             **kwargs,
         )
         return json.loads(content)
-

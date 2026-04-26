@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 
 from src.llm.client import LLMClient
-from src.llm.schema import LLMResponse, Message
+from src.schemas import LLMResponse, Message
 
 
 class FakeProvider:
