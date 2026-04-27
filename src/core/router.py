@@ -106,7 +106,25 @@ class DomainRouter:
 
     @staticmethod
     def _matches_project_decision(text: str) -> bool:
+        if "截止日期" in text and "确认" not in text:
+            return False
         return contains_any(
             text,
-            ["决定", "方案", "选型", "架构", "why", "decision", "rationale", "choose", "替代"],
+            [
+                "决定",
+                "确认",
+                "采用",
+                "选择",
+                "结论",
+                "方案",
+                "选型",
+                "架构",
+                "截止日期",
+                "why",
+                "decision",
+                "rationale",
+                "choose",
+                "confirmed",
+                "替代",
+            ],
         )

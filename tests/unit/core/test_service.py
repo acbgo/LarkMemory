@@ -42,6 +42,36 @@ class TestService(unittest.TestCase):
 
         self.assertTrue(result.stored)
         self.assertIsNotNone(self.event_store.get_event("event-1"))
+        self.assertEqual(result.candidate_count, 1)
+        self.assertEqual(len(result.memory_ids), 1)
+        self.assertIsNotNone(self.memory_store.get_memory(result.memory_ids[0]))
+
+    def test_ingest_event_supersedes_old_project_decision(self) -> None:
+        first = NormalizedEvent(
+            event_id="event-old",
+            event_type="chat_message",
+            source_type="feishu_chat",
+            occurred_at="2026-04-27T00:00:00Z",
+            context=EventContext(project_id="project-1"),
+            content_text="确认截止日期是 5 号",
+        )
+        second = NormalizedEvent(
+            event_id="event-new",
+            event_type="chat_message",
+            source_type="feishu_chat",
+            occurred_at="2026-04-28T00:00:00Z",
+            context=EventContext(project_id="project-1"),
+            content_text="确认截止日期改为 8 号",
+        )
+
+        old_id = self.service.ingest_event(first).memory_ids[0]
+        new_id = self.service.ingest_event(second).memory_ids[0]
+
+        old_row = self.memory_store.get_memory(old_id)
+        new_row = self.memory_store.get_memory(new_id)
+        self.assertEqual(old_row["status"], "superseded")
+        self.assertEqual(old_row["superseded_by"], new_id)
+        self.assertEqual(new_row["overwrite_of"], old_id)
 
     def test_add_memory_and_duplicate(self) -> None:
         memory = create_memory_core(
@@ -123,4 +153,3 @@ class TestService(unittest.TestCase):
     def test_proactive_and_maintenance(self) -> None:
         self.assertEqual(self.service.proactive_suggestions(), [])
         self.assertIn("decay", self.service.run_maintenance())
-

@@ -11,6 +11,10 @@ from src.core.dedup_merge import DedupMergeEngine
 from src.core.router import DomainRouter
 from src.core.scheduler import ScheduledTaskResult, Scheduler
 from src.core.supersede import SupersedeManager
+from src.domains.project_decision import (
+    ProjectDecisionExtractor,
+    ProjectDecisionVersionManager,
+)
 from src.retrieval import (
     FusedCandidate,
     IntentAnalyzer,
@@ -64,6 +68,8 @@ class MemoryService:
         supersede: SupersedeManager | None = None,
         decay_policy: DecayPolicy | None = None,
         access_tracker: AccessTracker | None = None,
+        project_decision_extractor: ProjectDecisionExtractor | None = None,
+        project_decision_version_manager: ProjectDecisionVersionManager | None = None,
     ) -> None:
         self.event_store = event_store
         self.memory_store = memory_store
@@ -75,17 +81,48 @@ class MemoryService:
         self.supersede = supersede or SupersedeManager(memory_store)
         self.decay_policy = decay_policy or DecayPolicy()
         self.access_tracker = access_tracker or AccessTracker()
+        self.project_decision_extractor = project_decision_extractor or ProjectDecisionExtractor(
+            llm_client=llm_client
+        )
+        self.project_decision_version_manager = (
+            project_decision_version_manager
+            or ProjectDecisionVersionManager(memory_store)
+        )
 
     def ingest_event(self, event: NormalizedEvent) -> IngestResult:
         event_id = self.event_store.insert_event(event)
-        decision = self.router.route_event(event)
-        primary_domain = decision.primary[0].domain if decision.primary else None
+        route_decision = self.router.route_event(event)
+        primary_domain = route_decision.primary[0].domain if route_decision.primary else None
         self.admission.evaluate_event(event, domain=primary_domain)
+        memory_ids: list[str] = []
+        candidates = []
+        if primary_domain == "project_decision":
+            candidates = self.project_decision_extractor.extract(event)
+            for candidate in candidates:
+                version_decision = self.project_decision_version_manager.detect_update(
+                    candidate.decision
+                )
+                if version_decision.should_supersede and version_decision.old_memory_id:
+                    candidate.decision.overwrite_of = version_decision.old_memory_id
+                memory_id = self.add_memory(candidate.decision.to_memory_core())
+                memory_ids.append(memory_id)
+                if (
+                    version_decision.should_supersede
+                    and version_decision.old_memory_id
+                    and memory_id == candidate.decision.decision_id
+                ):
+                    self.project_decision_version_manager.apply_supersede(
+                        version_decision.old_memory_id,
+                        memory_id,
+                    )
         return IngestResult(
             event_id=event_id,
             stored=True,
-            candidate_count=0,
-            message="event stored; domain extractors not implemented",
+            memory_ids=memory_ids,
+            candidate_count=len(candidates),
+            message="event stored; project_decision extractor enabled"
+            if candidates
+            else "event stored; no memory candidate admitted",
         )
 
     def add_memory(self, memory: MemoryCore) -> str:

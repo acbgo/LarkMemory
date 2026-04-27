@@ -5,7 +5,9 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from src.app.dependencies import get_llm_client, get_memory_core_store
+from src.app.dependencies import get_llm_client, get_memory_core_store, get_memory_service
+from src.core import MemoryService
+from src.retrieval import RetrievalQuery
 from src.schemas import MemoryHit, RetrieveRequest, RetrieveResponse
 from src.storage import MemoryCoreStore
 
@@ -86,19 +88,53 @@ def _retrieve_fallback(
 @router.post("/retrieve", response_model=RetrieveResponse)
 def retrieve_memories(
     request: RetrieveRequest,
-    memory_store: MemoryCoreStore = Depends(get_memory_core_store),
-    llm_client: object | None = Depends(get_llm_client),
+    memory_service: MemoryService = Depends(get_memory_service),
 ) -> RetrieveResponse:
-    del llm_client
     if not request.query_text.strip():
         raise HTTPException(status_code=422, detail="query_text cannot be blank")
-    return _retrieve_fallback(request, memory_store)
+    query = RetrievalQuery(
+        query_text=request.query_text,
+        user_id=request.user_id,
+        project_id=request.project_id,
+        repo_id=request.repo_id,
+        workspace_id=request.workspace_id,
+        team_id=request.team_id,
+        session_context=request.session_context,
+    )
+    result = memory_service.retrieve(
+        query,
+        top_k=request.top_k,
+        include_trace=request.include_trace,
+    )
+    hits = [
+        MemoryHit(
+            memory_id=ranked.item.memory_id,
+            domain=ranked.item.domain.value,
+            memory_type=ranked.item.memory_type,
+            content_text=ranked.item.content_text,
+            summary_text=ranked.item.summary_text,
+            score=ranked.final_score,
+            rank=ranked.rank,
+            scope=ranked.item.scope.value,
+            source_ref=ranked.item.source_ref,
+            tags=list(ranked.item.tags),
+            entities=list(ranked.item.entities),
+            score_breakdown=ranked.score_breakdown,
+        )
+        for ranked in result.ranked_memories
+    ]
+    return RetrieveResponse(
+        status="ok",
+        query_id=result.query_id,
+        results=hits,
+        trace=result.trace,
+        message=result.message,
+    )
 
 
 @router.post("/memories/search", response_model=RetrieveResponse)
 def search_memories_alias(
     request: RetrieveRequest,
-    memory_store: MemoryCoreStore = Depends(get_memory_core_store),
-    llm_client: object | None = Depends(get_llm_client),
+    memory_service: MemoryService = Depends(get_memory_service),
 ) -> RetrieveResponse:
-    return retrieve_memories(request, memory_store, llm_client)
+    return retrieve_memories(request, memory_service)

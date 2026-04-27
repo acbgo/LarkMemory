@@ -3,6 +3,7 @@ from __future__ import annotations
 from functools import lru_cache
 
 from src.app.config import AppSettings, load_settings
+from src.core import MemoryService
 from src.llm import LLMClient
 from src.storage import EmbeddingStore, EventStore, MemoryCoreStore
 
@@ -53,9 +54,20 @@ def get_llm_client() -> LLMClient | None:
     )
 
 
+@lru_cache(maxsize=1)
+def get_memory_service() -> MemoryService:
+    return MemoryService(
+        event_store=get_event_store(),
+        memory_store=get_memory_core_store(),
+        embedding_store=get_embedding_store(),
+        llm_client=get_llm_client(),
+    )
+
+
 def reset_dependency_cache() -> None:
     get_settings.cache_clear()
     get_event_store.cache_clear()
     get_memory_core_store.cache_clear()
     get_embedding_store.cache_clear()
     get_llm_client.cache_clear()
+    get_memory_service.cache_clear()

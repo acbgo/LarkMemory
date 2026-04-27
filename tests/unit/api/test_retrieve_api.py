@@ -91,3 +91,25 @@ class TestRetrieveApi(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn("query_id", response.json())
 
+    def test_ingest_then_retrieve_project_decision(self) -> None:
+        ingest_response = self.client.post(
+            "/api/v1/ingest",
+            json={
+                "event_id": "event-decision-retrieve",
+                "event_type": "chat_message",
+                "source_type": "feishu_chat",
+                "occurred_at": "2026-04-27T00:00:00Z",
+                "context": {"project_id": "project-1"},
+                "content_text": "我们决定采用方案 B 而不是方案 A，因为接入成本更低",
+            },
+        )
+        retrieve_response = self.client.post(
+            "/api/v1/retrieve",
+            json={"query_text": "方案 B", "project_id": "project-1", "top_k": 1},
+        )
+
+        self.assertEqual(ingest_response.status_code, 200)
+        self.assertEqual(ingest_response.json()["memory_candidates"], 1)
+        self.assertEqual(retrieve_response.status_code, 200)
+        self.assertEqual(len(retrieve_response.json()["results"]), 1)
+        self.assertEqual(retrieve_response.json()["results"][0]["domain"], "project_decision")
