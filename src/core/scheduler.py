@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from src.core.decay import DecayPolicy
-from src.storage import MemoryCoreStore, TeamRetentionStore
+from src.storage import MemoryCoreStore
 
 
 @dataclass(slots=True)
@@ -21,11 +21,9 @@ class Scheduler:
         self,
         memory_store: MemoryCoreStore,
         decay_policy: DecayPolicy | None = None,
-        team_retention_store: TeamRetentionStore | None = None,
     ) -> None:
         self.memory_store = memory_store
         self.decay_policy = decay_policy or DecayPolicy()
-        self.team_retention_store = team_retention_store
 
     def scan_decay(
         self,
@@ -52,44 +50,8 @@ class Scheduler:
         now: str | None = None,
         warning_window_hours: int = 24,
     ) -> ScheduledTaskResult:
-        result = ScheduledTaskResult(task_name="review_due")
-        if self.team_retention_store is None:
-            return result
-        schedules = self.team_retention_store.list_due_reviews(
-            now=now,
-            warning_window_hours=warning_window_hours,
-            limit=limit,
-        )
-        memory_rows = {
-            row["memory_id"]: row
-            for row in self.memory_store.batch_get_memories([item.memory_id for item in schedules])
-            if row.get("status") == "active" and row.get("domain") == "team_retention"
-        }
-        for schedule in schedules:
-            result.scanned += 1
-            row = memory_rows.get(schedule.memory_id)
-            if row is None:
-                continue
-            memory = self.team_retention_store.get_memory(schedule.memory_id)
-            if memory is None:
-                continue
-            result.suggestions.append(
-                {
-                    "type": "review_reminder",
-                    "memory_id": schedule.memory_id,
-                    "due_at": schedule.next_review_at,
-                    "content": memory.fact_value,
-                    "metadata": {
-                        "domain": "team_retention",
-                        "fact_type": memory.fact_type,
-                        "risk_level": memory.risk_level,
-                        "team_id": memory.team_id,
-                        "project_id": memory.project_id,
-                        "review_count": schedule.review_count,
-                    },
-                }
-            )
-        return result
+        del limit, now, warning_window_hours
+        return ScheduledTaskResult(task_name="review_due")
 
     def run_once(self) -> dict[str, ScheduledTaskResult]:
         decay = self.scan_decay()

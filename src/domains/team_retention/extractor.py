@@ -6,8 +6,9 @@ from dataclasses import dataclass
 from typing import Any
 
 from src.schemas import EventContext, NormalizedEvent
-from src.storage import TeamRetentionMemory
 from src.utils.text import clean_text
+
+from .models import TeamRetentionMemory
 
 
 SECRET_PATTERNS = (

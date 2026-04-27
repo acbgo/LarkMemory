@@ -4,8 +4,9 @@ import shutil
 import uuid
 from pathlib import Path
 
-from src.domains.team_retention import TeamRetentionQuery, TeamRetentionRetriever
-from src.storage import MemoryCoreStore, TeamRetentionMemory, TeamRetentionStore
+from src.domains.team_retention.models import TeamRetentionMemory
+from src.domains.team_retention.retriever import TeamRetentionQuery, TeamRetentionRetriever
+from src.storage import MemoryCoreStore, TeamRetentionStore
 
 
 def _stores() -> tuple[MemoryCoreStore, TeamRetentionStore, Path]:

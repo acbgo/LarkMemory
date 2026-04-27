@@ -1,4 +1,5 @@
 from .extractor import ProjectDecisionExtractor
+from .handler import ProjectDecisionDomainHandler
 from .models import (
     DecisionAlternative,
     DecisionReason,
@@ -15,6 +16,7 @@ __all__ = [
     "ProjectDecision",
     "ProjectDecisionCandidate",
     "ProjectDecisionExtractor",
+    "ProjectDecisionDomainHandler",
     "DecisionRankWeights",
     "ProjectDecisionRanker",
     "ProjectDecisionQuery",

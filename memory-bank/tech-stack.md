@@ -26,8 +26,8 @@
 
 - `NormalizedEvent`：标准化外部事件。
 - `MemoryCore`：所有记忆共享的核心元数据和生命周期字段。
-- domain-specific payload：不同场景的结构化记忆字段。
-- storage layer：事件、核心记忆、domain payload、embedding、access log、review schedule 等存储。
+- domain-specific memory：不同场景的结构化记忆字段，模型定义在 `domains/*/models.py`。
+- storage layer：事件、核心记忆、domain memory、embedding、access log、review schedule 等存储。
 - retrieval layer：意图分析、查询改写、召回、重排、融合、trace。
 
 ## 计划扩展

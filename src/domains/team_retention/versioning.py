@@ -3,7 +3,9 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from src.storage import MemoryCoreStore, TeamRetentionMemory, TeamRetentionStore
+from src.storage import MemoryCoreStore, TeamRetentionStore
+
+from .models import TeamRetentionMemory
 
 
 @dataclass(slots=True)

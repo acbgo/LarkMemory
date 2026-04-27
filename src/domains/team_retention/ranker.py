@@ -3,8 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from src.storage import TeamRetentionMemory
 from src.utils.time import days_between
+
+from .models import TeamRetentionMemory
 
 
 @dataclass(slots=True)

@@ -4,8 +4,9 @@ import shutil
 import uuid
 from pathlib import Path
 
-from src.domains.team_retention import TeamRetentionVersionManager
-from src.storage import MemoryCoreStore, TeamRetentionMemory, TeamRetentionStore
+from src.domains.team_retention.models import TeamRetentionMemory
+from src.domains.team_retention.versioning import TeamRetentionVersionManager
+from src.storage import MemoryCoreStore, TeamRetentionStore
 
 
 def test_detects_and_applies_team_retention_supersede() -> None:

@@ -4,7 +4,8 @@ import shutil
 import uuid
 from pathlib import Path
 
-from src.storage import TeamRetentionMemory, TeamRetentionStore
+from src.domains.team_retention.models import TeamRetentionMemory
+from src.storage import TeamRetentionStore
 
 
 def _store() -> TeamRetentionStore:

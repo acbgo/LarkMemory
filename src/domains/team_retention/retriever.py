@@ -5,9 +5,10 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from src.retrieval import MemoryItem, RankedMemory, RetrievalQuery, memory_item_from_core
-from src.storage import MemoryCoreStore, TeamRetentionMemory, TeamRetentionStore
+from src.storage import MemoryCoreStore, TeamRetentionStore
 from src.utils.text import clean_text
 
+from .models import TeamRetentionMemory
 from .ranker import TeamRetentionRanker
 
 

@@ -7,6 +7,8 @@ from pathlib import Path
 
 from src.core.memory_core import create_memory_core
 from src.core.service import MemoryService
+from src.domains.project_decision import ProjectDecisionDomainHandler
+from src.domains.team_retention.handler import TeamRetentionDomainHandler
 from src.retrieval import RetrievalQuery
 from src.schemas import EventContext, NormalizedEvent
 from src.storage import EventStore, MemoryCoreStore, TeamRetentionStore
@@ -28,7 +30,10 @@ class TestService(unittest.TestCase):
         self.service = MemoryService(
             event_store=self.event_store,
             memory_store=self.memory_store,
-            team_retention_store=self.team_retention_store,
+            domain_handlers=[
+                ProjectDecisionDomainHandler(self.memory_store),
+                TeamRetentionDomainHandler(self.memory_store, self.team_retention_store),
+            ],
         )
 
     def test_ingest_event_writes_event_store(self) -> None:
@@ -301,7 +306,8 @@ class TestService(unittest.TestCase):
         result = self.service.retrieve(RetrievalQuery("team 客户 A xlsx"), include_trace=True)
 
         self.assertEqual(result.ranked_memories, [])
-        self.assertEqual(result.trace["mode"], "team_retention")
+        self.assertEqual(result.trace["mode"], "memory_core_fallback")
+        self.assertEqual(result.trace["candidate_count"], 0)
 
     def test_duplicate_team_retention_reinforces_review_schedule(self) -> None:
         event = NormalizedEvent(
