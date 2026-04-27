@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 
 def _model_to_dict(model: object) -> dict[str, object]:
-    """兼容不同 Pydantic 版本，将模型对象转为字典。"""
+    """将 Pydantic v1/v2 模型转为字典，供 `EventContext` 重建使用。"""
     if hasattr(model, "model_dump"):
         return model.model_dump()  # type: ignore[no-any-return,attr-defined]
     return model.dict()  # type: ignore[no-any-return,attr-defined]
@@ -28,7 +28,7 @@ def ingest_event(
     request: IngestRequest,
     memory_service: MemoryService = Depends(get_memory_service),
 ) -> IngestResponse:
-    """接收事件并写入记忆服务，返回入库结果。"""
+    """接收标准化事件请求，补齐事件 ID 和时间后返回 MemoryService 的入库结果。"""
     event_id = request.event_id or new_event_id()
     occurred_at = request.occurred_at or utc_now_iso()
     logger.info(

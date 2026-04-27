@@ -15,6 +15,7 @@ class TeamRetentionStore(SQLiteStore):
     """Storage for TeamRetentionMemory and its review schedule."""
 
     def create_table(self) -> None:
+        """创建团队留存记忆表和复习排期表。"""
         self.execute(
             """
             CREATE TABLE IF NOT EXISTS memory_team_retention (
@@ -78,6 +79,7 @@ class TeamRetentionStore(SQLiteStore):
         self.execute("CREATE INDEX IF NOT EXISTS idx_review_memory ON memory_review_schedule (memory_id)")
 
     def insert_memory(self, memory: TeamRetentionMemory) -> str:
+        """写入 TeamRetentionMemory，输入领域模型并返回 retention_id。"""
         now = utc_now_iso()
         created = memory.created_at or now
         updated = memory.updated_at or now
@@ -128,6 +130,7 @@ class TeamRetentionStore(SQLiteStore):
         return memory.retention_id
 
     def get_memory(self, memory_id: str) -> TeamRetentionMemory | None:
+        """按 memory_id 查询团队留存记忆，返回领域模型或 None。"""
         row = self.fetch_one(
             "SELECT * FROM memory_team_retention WHERE memory_id = ?",
             (memory_id,),
@@ -144,6 +147,7 @@ class TeamRetentionStore(SQLiteStore):
         version_group: str | None = None,
         limit: int = 100,
     ) -> list[TeamRetentionMemory]:
+        """按团队、项目、工作区、事实类型或版本组过滤团队留存记忆。"""
         clauses: list[str] = []
         parameters: list[Any] = []
         for column, value in (
@@ -176,6 +180,7 @@ class TeamRetentionStore(SQLiteStore):
         overwrite_of: str | None = None,
         superseded_by: str | None = None,
     ) -> None:
+        """更新团队留存记忆的 overwrite_of 和 superseded_by 链接字段。"""
         self.execute(
             """
             UPDATE memory_team_retention
@@ -188,6 +193,7 @@ class TeamRetentionStore(SQLiteStore):
         )
 
     def create_review_schedule(self, memory: TeamRetentionMemory) -> str | None:
+        """为团队留存记忆创建复习排期，review_policy 为 none 时返回 None。"""
         if memory.review_policy == "none":
             return None
         next_review_at = memory.next_review_at or self.next_review_time(
@@ -234,6 +240,7 @@ class TeamRetentionStore(SQLiteStore):
         return schedule_id
 
     def get_review_schedule(self, memory_id: str) -> TeamReviewSchedule | None:
+        """按 memory_id 查询团队留存复习排期，返回排期模型或 None。"""
         row = self.fetch_one(
             "SELECT * FROM memory_review_schedule WHERE memory_id = ? AND domain = 'team_retention'",
             (memory_id,),
@@ -250,6 +257,7 @@ class TeamRetentionStore(SQLiteStore):
         workspace_id: str | None = None,
         limit: int = 10,
     ) -> list[TeamReviewSchedule]:
+        """查询到期或即将到期的复习排期，可按团队、项目和工作区过滤。"""
         effective_now = now or utc_now_iso()
         cutoff = effective_now
         if warning_window_hours > 0:
@@ -282,6 +290,7 @@ class TeamRetentionStore(SQLiteStore):
         return [item for item in (self._row_to_schedule(row) for row in rows) if item is not None]
 
     def mark_reviewed(self, memory_id: str, *, reviewed_at: str | None = None) -> str:
+        """标记指定记忆已复习，输入 memory_id 和可选复习时间，返回下次复习时间。"""
         schedule = self.get_review_schedule(memory_id)
         if schedule is None:
             raise ValueError(f"review schedule not found: {memory_id}")
@@ -317,12 +326,13 @@ class TeamRetentionStore(SQLiteStore):
         return next_review_at
 
     def reinforce_review(self, memory_id: str, *, observed_at: str | None = None) -> str:
-        """Strengthen a repeated team memory mention by advancing its review curve."""
+        """按重复观察时间强化团队记忆复习曲线，返回新的下次复习时间。"""
         if self.get_memory(memory_id) is None:
             raise ValueError(f"team retention memory not found: {memory_id}")
         return self.mark_reviewed(memory_id, reviewed_at=observed_at)
 
     def snooze_review(self, memory_id: str, *, days: int = 1, now: str | None = None) -> str:
+        """将指定记忆复习时间顺延 days 天，返回新的下次复习时间。"""
         if days <= 0:
             raise ValueError("days must be greater than 0")
         if self.get_review_schedule(memory_id) is None:
@@ -348,6 +358,7 @@ class TeamRetentionStore(SQLiteStore):
         return next_review_at
 
     def deactivate_review(self, memory_id: str) -> None:
+        """按 memory_id 停用团队留存复习排期。"""
         self.execute(
             """
             UPDATE memory_review_schedule
@@ -365,6 +376,7 @@ class TeamRetentionStore(SQLiteStore):
         risk_level: str,
         review_policy: str,
     ) -> str:
+        """根据参考时间、复习次数、风险等级和策略计算下次复习时间。"""
         if review_policy == "none":
             return reference_time
         if review_policy == "fixed":
@@ -379,6 +391,7 @@ class TeamRetentionStore(SQLiteStore):
         return format_iso(parse_iso(reference_time) + timedelta(days=days))
 
     def _row_to_memory(self, row: dict[str, Any] | None) -> TeamRetentionMemory | None:
+        """将数据库行转换为 TeamRetentionMemory，输入 None 时返回 None。"""
         if row is None:
             return None
         return TeamRetentionMemory(
@@ -414,6 +427,7 @@ class TeamRetentionStore(SQLiteStore):
         )
 
     def _row_to_schedule(self, row: dict[str, Any] | None) -> TeamReviewSchedule | None:
+        """将数据库行转换为 TeamReviewSchedule，输入 None 时返回 None。"""
         if row is None:
             return None
         return TeamReviewSchedule(
