@@ -11,6 +11,7 @@ from ._types import (
     RewrittenQuery,
     TimeWindow,
     TraceStep,
+    memory_item_from_core,
 )
 from .fusion import ResultFusion
 from .intent_analyzer import IntentAnalyzer
@@ -32,6 +33,7 @@ __all__ = [
     "RewrittenQuery",
     "TimeWindow",
     "TraceStep",
+    "memory_item_from_core",
     # 核心组件
     "IntentAnalyzer",
     "QueryRewriter",

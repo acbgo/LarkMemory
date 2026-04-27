@@ -15,8 +15,10 @@ from src.retrieval import (
     RetrievalQuery,
     RewrittenQuery,
     Reranker,
+    memory_item_from_core,
 )
 from src.retrieval.query_rewrite import _extract_topics_by_rules
+from src.schemas import MemoryCore
 
 
 def _memory(
@@ -130,3 +132,60 @@ def test_keyword_fallback_defaults_to_collaboration_domains() -> None:
 
     assert result.primary_domains == [MemoryDomain.TEAM_RETENTION]
     assert result.secondary_domains == [MemoryDomain.PROJECT_DECISION]
+
+
+def test_memory_item_from_core_accepts_schema_object() -> None:
+    memory = MemoryCore(
+        memory_id="memory-1",
+        domain="project_decision",
+        memory_type="decision",
+        scope="project",
+        source_type="feishu_chat",
+        source_ref="event-1",
+        content_text="团队决定使用方案B",
+        summary_text="方案B 决策",
+        entities=["方案B"],
+        tags=["decision"],
+        importance=0.8,
+        confidence=0.9,
+        embedding_id="embedding-1",
+    )
+
+    item = memory_item_from_core(memory, extra={"project_id": "project-1"})
+
+    assert item.memory_id == "memory-1"
+    assert item.domain == MemoryDomain.PROJECT_DECISION
+    assert item.scope == MemoryScope.PROJECT
+    assert item.entities == ["方案B"]
+    assert item.tags == ["decision"]
+    assert item.extra["source_type"] == "feishu_chat"
+    assert item.extra["embedding_id"] == "embedding-1"
+    assert item.extra["project_id"] == "project-1"
+
+
+def test_memory_item_from_core_accepts_store_row_dict() -> None:
+    row = {
+        "memory_id": "memory-2",
+        "domain": "team_retention",
+        "memory_type": "team_fact",
+        "scope": "team",
+        "source_type": "feishu_chat",
+        "source_ref": "event-2",
+        "content_text": "客户要求上线前完成安全复核",
+        "entities_json": ["客户", "安全复核"],
+        "tags_json": ["risk"],
+        "importance": 0.7,
+        "confidence": 0.8,
+        "status": "active",
+        "created_at": "2026-04-27T00:00:00Z",
+        "updated_at": "2026-04-27T00:00:00Z",
+        "team_id": "team-1",
+    }
+
+    item = memory_item_from_core(row)
+
+    assert item.domain == MemoryDomain.TEAM_RETENTION
+    assert item.scope == MemoryScope.TEAM
+    assert item.entities == ["客户", "安全复核"]
+    assert item.tags == ["risk"]
+    assert item.extra["team_id"] == "team-1"

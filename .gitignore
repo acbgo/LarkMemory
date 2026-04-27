@@ -1,6 +1,9 @@
 .claude
 .idea
 .workbuddy
+.tmp-tests
+codeReview
+plans
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

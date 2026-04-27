@@ -5,6 +5,44 @@
 - 明确项目定位：飞书 AI 比赛 OpenClaw 赛道参赛项目，课题为“企业级长程协作 Memory 系统”。
 - 明确技术路线：OpenClaw TypeScript 插件 + 本地 Python Memory Engine。
 - 插件调用链已通过 mock 输出 log 的方式跑通。
+- 已实现 Python Memory Engine 的 `src/app/` 基础层：
+  - `config.py`
+  - `logging.py`
+  - `dependencies.py`
+  - `main.py`
+- 已新增 `requirements.txt`，包含当前最小依赖 `fastapi`、`uvicorn`、`pytest`。
+- 已新增 `tests/unit/app/`，覆盖配置解析、日志中间件、依赖缓存、FastAPI app factory 和内置 `/health`。
+- 已实现 Python Memory Engine 的 `src/api/` 基础层：
+  - `health.py`
+  - `ingest.py`
+  - `retrieve.py`
+  - `update.py`
+  - `proactive.py`
+  - `benchmark.py`
+- 已新增 API schema：
+  - `src/schemas/ingest.py`
+  - `src/schemas/retrieve.py`
+  - `src/schemas/update.py`
+  - `src/schemas/proactive.py`
+  - `src/schemas/benchmark.py`
+- 已新增 `tests/unit/api/`，覆盖 health、ingest、retrieve、update、proactive、benchmark。
+- 已实现 Python Memory Engine 的 `src/utils/` 基础工具层：
+  - `ids.py`
+  - `time.py`
+  - `text.py`
+  - `jsonlog.py`
+- 已新增 `tests/unit/utils/`，覆盖 ID、UTC 时间、文本清洗和 JSON 日志工具。
+- 已实现 Python Memory Engine 的 `src/core/` 基础编排层：
+  - `router.py`
+  - `memory_core.py`
+  - `admission_control.py`
+  - `dedup_merge.py`
+  - `supersede.py`
+  - `decay.py`
+  - `access_tracker.py`
+  - `scheduler.py`
+  - `service.py`
+- 已新增 `tests/unit/core/`，覆盖路由、生命周期、准入、去重合并、覆盖、衰减、访问记录、调度和统一服务。
 - 仓库已有基础 Python 模块：
   - `src/schemas/`
   - `src/storage/`
@@ -21,12 +59,13 @@
 
 ## 下一步建议
 
-1. 梳理当前 `src/storage/` 与测试，确认 event store、memory core store、embedding store 的完成度。
-2. 定义第一阶段最小闭环：
-   - ingest 一个 `NormalizedEvent`
+1. 基于已完成的 core 层，将 API 的 ingest/retrieve/update/proactive 逐步迁移为调用 `MemoryService`。
+2. 定义第一阶段最小记忆闭环：
+> - ingest 一个 `NormalizedEvent`
    - 生成或写入 `MemoryCore`
    - 可按条件 retrieve
    - 有测试覆盖
+
 3. 选择第一个 demo domain，建议优先用 `project_decision` 打通比赛演示。
 4. 为第一个 demo domain 增加最小 schema、store 和 retrieval 测试。
 5. 设计矛盾更新的 supersede 测试，证明旧记忆失效、新记忆生效。
@@ -42,3 +81,12 @@
 - 暂不接真实飞书 API，避免过早被外部集成复杂度牵引。
 - 比赛最终需要交付白皮书、Demo 和评测报告，代码实现要能支撑叙事和数据证明。
 
+## 最近验证
+
+- `pytest tests/unit/app -q`：22 passed。
+- `pytest tests/unit/api -q`：18 passed。
+- `pytest tests/unit/utils -q`：27 passed。
+- `pytest tests/unit/core -q`：33 passed。
+- `pytest tests/unit/app tests/unit/api -q`：41 passed。
+- `pytest -q`：127 passed, 1 skipped。
+- `python -m compileall src tests`：通过。
