@@ -135,17 +135,28 @@ class MemoryService:
         top_k: int = 10,
         include_trace: bool = False,
     ) -> RetrieveResult:
+        """Run retrieval from synchronous callers such as CLI scripts and sync unit tests."""
+        return _run_async(self.retrieve_async(query, top_k=top_k, include_trace=include_trace))
+
+    async def retrieve_async(
+        self,
+        query: RetrievalQuery,
+        *,
+        top_k: int = 10,
+        include_trace: bool = False,
+    ) -> RetrieveResult:
+        """Run the retrieval pipeline inside an existing async runtime without nesting event loops."""
         if top_k < 1:
             raise ValueError("top_k must be greater than 0")
         query_id = new_query_id()
         logger.info(
-            "function=src.core.service.MemoryService.retrieve action=start query_id=%s top_k=%s include_trace=%s",
+            "function=src.core.service.MemoryService.retrieve_async action=start query_id=%s top_k=%s include_trace=%s",
             query_id,
             top_k,
             include_trace,
         )
-        intent = _run_async(IntentAnalyzer(self.llm_client).analyze(query))
-        rewritten = _run_async(QueryRewriter(self.llm_client).rewrite(query, intent))
+        intent = await IntentAnalyzer(self.llm_client).analyze(query)
+        rewritten = await QueryRewriter(self.llm_client).rewrite(query, intent)
         target_domains = [
             domain.value
             for domain in [*intent.primary_domains, *intent.secondary_domains]
@@ -173,7 +184,7 @@ class MemoryService:
                 )
                 for index, (_domain, ranked) in enumerate(domain_ranked)
             ]
-            ranked = _run_async(Reranker(llm_client=None).rerank(candidates, rewritten, top_k=top_k))
+            ranked = await Reranker(llm_client=None).rerank(candidates, rewritten, top_k=top_k)
             for result in ranked:
                 self.access_tracker.record_access(result.item.memory_id, query_id=query_id)
             trace = None
@@ -209,7 +220,7 @@ class MemoryService:
             )
             for index, row in enumerate(rows)
         ]
-        ranked = _run_async(Reranker(llm_client=None).rerank(candidates, rewritten, top_k=top_k))
+        ranked = await Reranker(llm_client=None).rerank(candidates, rewritten, top_k=top_k)
         for result in ranked:
             self.access_tracker.record_access(result.item.memory_id, query_id=query_id)
         trace = None

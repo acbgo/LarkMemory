@@ -74,6 +74,10 @@
   - `src/domains/team_retention/handler.py` 继续负责领域写入编排、重复强化、版本覆盖、复习提醒和领域更新动作。
   - `memory-bank/architecture.md` 已补充 `handler.py` 架构职责，并将 domain payload 表述统一为 domain memory。
   - `memory-bank/architecture.md` 已将 `cli_workflow`、`personal_preference` 也补齐为包含 `handler.py` 的标准 domain 结构。
+- 已处理 retrieve 链路 async 边界：
+  - `MemoryService.retrieve_async()` 成为异步主实现，直接 `await IntentAnalyzer`、`QueryRewriter` 和 `Reranker`。
+  - `MemoryService.retrieve()` 保留为同步兼容包装，供 CLI、同步测试和脚本使用。
+  - `/api/v1/retrieve` 与 `/api/v1/memories/search` 已改为 FastAPI async endpoint，并调用 `await memory_service.retrieve_async(...)`。
 - 已更新根目录 `README.md`，写入后端安装、测试、启动和手工验证步骤。
 - 已更新 OpenClaw 插件链路：
   - hook 从 `before_agent_reply` 调整为 `before_prompt_build`。
@@ -151,7 +155,8 @@
 - `pytest -q`：152 passed, 1 skipped。
 - `python -m compileall src tests`：通过。
 - `python -m pytest tests/unit/storage/test_team_retention_store.py tests/unit/domains/team_retention tests/unit/core/test_service.py -q -p no:cacheprovider`：27 passed。
-- `python -m pytest tests -q -p no:cacheprovider`：177 passed, 6 subtests passed。
+- `python -m pytest tests/unit/core/test_service.py tests/unit/api/test_retrieve_api.py -q -p no:cacheprovider`：20 passed。
+- `python -m pytest tests -q -p no:cacheprovider`：190 passed, 6 subtests passed。
 - HTTP 手工验证：`/health`、`/api/v1/ingest`、`/api/v1/retrieve` 通过。
 - 插件轻量验证：`openclaw.plugin.json` 可解析；旧 `before_agent_reply` 和 mock 后端调用无残留。
 

@@ -15,11 +15,11 @@ logger = logging.getLogger(__name__)
 
 
 @router.post("/retrieve", response_model=RetrieveResponse)
-def retrieve_memories(
+async def retrieve_memories(
     request: RetrieveRequest,
     memory_service: MemoryService = Depends(get_memory_service),
 ) -> RetrieveResponse:
-    """接收检索请求，调用 MemoryService 并返回排序后的记忆命中结果。"""
+    """接收检索请求，异步调用 MemoryService 并返回排序后的记忆命中结果。"""
     if not request.query_text.strip():
         logger.warning("function=src.api.retrieve.retrieve_memories action=blank_query")
         raise HTTPException(status_code=422, detail="query_text cannot be blank")
@@ -39,7 +39,7 @@ def retrieve_memories(
         team_id=request.team_id,
         session_context=request.session_context,
     )
-    result = memory_service.retrieve(
+    result = await memory_service.retrieve_async(
         query,
         top_k=request.top_k,
         include_trace=request.include_trace,
@@ -76,10 +76,10 @@ def retrieve_memories(
 
 
 @router.post("/memories/search", response_model=RetrieveResponse)
-def search_memories_alias(
+async def search_memories_alias(
     request: RetrieveRequest,
     memory_service: MemoryService = Depends(get_memory_service),
 ) -> RetrieveResponse:
     """兼容 `/memories/search` 别名路由，输入输出与 `retrieve_memories` 相同。"""
     logger.info("function=src.api.retrieve.search_memories_alias action=delegate")
-    return retrieve_memories(request, memory_service)
+    return await retrieve_memories(request, memory_service)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import shutil
 import unittest
 import uuid
@@ -165,6 +166,29 @@ class TestService(unittest.TestCase):
         self.assertEqual(len(result.ranked_memories), 1)
         self.assertEqual(result.ranked_memories[0].item.memory_id, "mem-1")
 
+    def test_retrieve_async_supports_existing_event_loop(self) -> None:
+        self.memory_store.insert_memory_core(
+            create_memory_core(
+                memory_id="mem-async",
+                domain="project_decision",
+                memory_type="decision",
+                scope="project",
+                source_type="feishu_chat",
+                source_ref="event-async",
+                content_text="Use async retrieval for FastAPI",
+                importance=0.9,
+                confidence=0.9,
+                status="active",
+            )
+        )
+
+        async def run_retrieve() -> str:
+            """在已有事件循环中调用异步检索入口，验证不会触发同步包装器异常。"""
+            result = await self.service.retrieve_async(RetrievalQuery("async retrieval"), top_k=1)
+            return result.ranked_memories[0].item.memory_id
+
+        self.assertEqual(asyncio.run(run_retrieve()), "mem-async")
+
     def test_retrieve_emits_function_level_logs(self) -> None:
         self.memory_store.insert_memory_core(
             create_memory_core(
@@ -186,7 +210,7 @@ class TestService(unittest.TestCase):
 
         logs = "\n".join(captured.output)
         self.assertEqual(len(result.ranked_memories), 1)
-        self.assertIn("function=src.core.service.MemoryService.retrieve", logs)
+        self.assertIn("function=src.core.service.MemoryService.retrieve_async", logs)
         self.assertIn(
             "function=src.storage.memory_core_store.MemoryCoreStore.list_active_memories",
             logs,
