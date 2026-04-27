@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+import logging
 import uuid
 from datetime import datetime, timezone
 
@@ -12,6 +13,7 @@ from src.schemas import EventContext, IngestRequest, IngestResponse, NormalizedE
 
 
 router = APIRouter(prefix="/api/v1", tags=["ingest"])
+logger = logging.getLogger(__name__)
 
 
 def _new_event_id() -> str:
@@ -35,6 +37,12 @@ def ingest_event(
 ) -> IngestResponse:
     event_id = request.event_id or _new_event_id()
     occurred_at = request.occurred_at or _utc_now_iso()
+    logger.info(
+        "function=src.api.ingest.ingest_event action=build_event event_id=%s event_type=%s source_type=%s",
+        event_id,
+        request.event_type,
+        request.source_type,
+    )
     event = NormalizedEvent(
         event_id=event_id,
         event_type=request.event_type,  # type: ignore[arg-type]
@@ -51,13 +59,28 @@ def ingest_event(
     try:
         result = memory_service.ingest_event(event)
     except sqlite3.IntegrityError as exc:
+        logger.warning(
+            "function=src.api.ingest.ingest_event action=duplicate_event event_id=%s",
+            event_id,
+        )
         raise HTTPException(
             status_code=409,
             detail=f"event_id already exists: {event_id}",
         ) from exc
     except Exception as exc:
+        logger.exception(
+            "function=src.api.ingest.ingest_event action=failed event_id=%s",
+            event_id,
+        )
         raise HTTPException(status_code=500, detail="failed to store event") from exc
 
+    logger.info(
+        "function=src.api.ingest.ingest_event action=done event_id=%s stored=%s memory_candidates=%s memory_ids=%s",
+        result.event_id,
+        result.stored,
+        result.candidate_count,
+        result.memory_ids,
+    )
     return IngestResponse(
         status="ok",
         event_id=result.event_id,

@@ -30,18 +30,19 @@ class TestIngestApi(unittest.TestCase):
         self.addCleanup(reset_dependency_cache)
 
     def test_ingest_writes_event(self) -> None:
-        response = self.client.post(
-            "/api/v1/ingest",
-            json={
-                "event_id": "event-api-1",
-                "event_type": "chat_message",
-                "source_type": "feishu_chat",
-                "occurred_at": "2026-04-27T00:00:00Z",
-                "context": {"project_id": "project-1"},
-                "content_text": "decide to use option B",
-                "payload": {"topic": "architecture"},
-            },
-        )
+        with self.assertLogs(level="INFO") as captured:
+            response = self.client.post(
+                "/api/v1/ingest",
+                json={
+                    "event_id": "event-api-1",
+                    "event_type": "chat_message",
+                    "source_type": "feishu_chat",
+                    "occurred_at": "2026-04-27T00:00:00Z",
+                    "context": {"project_id": "project-1"},
+                    "content_text": "decide to use option B",
+                    "payload": {"topic": "architecture"},
+                },
+            )
         stored = get_event_store().get_event("event-api-1")
 
         self.assertEqual(response.status_code, 200)
@@ -50,6 +51,10 @@ class TestIngestApi(unittest.TestCase):
         self.assertIsNotNone(stored)
         assert stored is not None
         self.assertEqual(stored["project_id"], "project-1")
+        self.assertIn(
+            "function=src.api.ingest.ingest_event",
+            "\n".join(captured.output),
+        )
 
     def test_ingest_project_decision_creates_memory_core(self) -> None:
         response = self.client.post(

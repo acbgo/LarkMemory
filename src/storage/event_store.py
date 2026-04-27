@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any
 
 from src.schemas import NormalizedEvent
 
 from .base import SQLiteStore
+
+
+logger = logging.getLogger(__name__)
 
 
 class EventStore(SQLiteStore):
@@ -47,6 +51,12 @@ class EventStore(SQLiteStore):
         )
 
     def insert_event(self, event: NormalizedEvent) -> str:
+        logger.info(
+            "function=src.storage.event_store.EventStore.insert_event action=start event_id=%s event_type=%s source_type=%s",
+            event.event_id,
+            event.event_type,
+            event.source_type,
+        )
         self.execute(
             """
             INSERT INTO event_store (
@@ -88,6 +98,10 @@ class EventStore(SQLiteStore):
                 json.dumps(event.raw_payload, ensure_ascii=True),
                 json.dumps(event.tags, ensure_ascii=True),
             ),
+        )
+        logger.info(
+            "function=src.storage.event_store.EventStore.insert_event action=inserted event_id=%s",
+            event.event_id,
         )
         return event.event_id
 

@@ -31,16 +31,21 @@ class TestRetrieveApi(unittest.TestCase):
         self.addCleanup(reset_dependency_cache)
 
     def test_empty_retrieve_returns_empty_results(self) -> None:
-        response = self.client.post(
-            "/api/v1/retrieve",
-            json={"query_text": "why choose sqlite", "include_trace": True},
-        )
+        with self.assertLogs(level="INFO") as captured:
+            response = self.client.post(
+                "/api/v1/retrieve",
+                json={"query_text": "why choose sqlite", "include_trace": True},
+            )
 
         body = response.json()
         self.assertEqual(response.status_code, 200)
         self.assertEqual(body["status"], "ok")
         self.assertEqual(body["results"], [])
         self.assertEqual(body["trace"]["mode"], "memory_core_fallback")
+        self.assertIn(
+            "function=src.api.retrieve.retrieve_memories",
+            "\n".join(captured.output),
+        )
 
     def test_retrieve_returns_active_memory_hit_and_respects_top_k(self) -> None:
         store = get_memory_core_store()

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -32,6 +33,9 @@ from src.retrieval import (
 from src.schemas import MemoryCore, NormalizedEvent
 from src.storage import EmbeddingStore, EventStore, MemoryCoreStore, TeamRetentionStore
 from src.utils.ids import new_id, query_id as new_query_id
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -112,14 +116,36 @@ class MemoryService:
         )
 
     def ingest_event(self, event: NormalizedEvent) -> IngestResult:
+        logger.info(
+            "function=src.core.service.MemoryService.ingest_event action=start event_id=%s event_type=%s source_type=%s",
+            event.event_id,
+            event.event_type,
+            event.source_type,
+        )
         event_id = self.event_store.insert_event(event)
+        logger.info(
+            "function=src.core.service.MemoryService.ingest_event action=event_stored event_id=%s",
+            event_id,
+        )
         route_decision = self.router.route_event(event)
         primary_domain = route_decision.primary[0].domain if route_decision.primary else None
+        logger.info(
+            "function=src.core.service.MemoryService.ingest_event action=routed event_id=%s primary_domain=%s fallback_used=%s reason=%s",
+            event_id,
+            primary_domain,
+            route_decision.fallback_used,
+            route_decision.reason,
+        )
         self.admission.evaluate_event(event, domain=primary_domain)
         memory_ids: list[str] = []
         candidates = []
         if primary_domain == "project_decision":
             candidates = self.project_decision_extractor.extract(event)
+            logger.info(
+                "function=src.core.service.MemoryService.ingest_event action=extracted event_id=%s domain=project_decision candidate_count=%s",
+                event_id,
+                len(candidates),
+            )
             for candidate in candidates:
                 version_decision = self.project_decision_version_manager.detect_update(
                     candidate.decision
@@ -128,12 +154,23 @@ class MemoryService:
                     candidate.decision.overwrite_of = version_decision.old_memory_id
                 memory_id = self.add_memory(candidate.decision.to_memory_core())
                 memory_ids.append(memory_id)
+                logger.info(
+                    "function=src.core.service.MemoryService.ingest_event action=memory_added event_id=%s memory_id=%s supersedes=%s",
+                    event_id,
+                    memory_id,
+                    candidate.decision.overwrite_of,
+                )
                 if (
                     version_decision.should_supersede
                     and version_decision.old_memory_id
-                    and memory_id == candidate.decision.decision_id
+                        and memory_id == candidate.decision.decision_id
                 ):
                     self.project_decision_version_manager.apply_supersede(
+                        version_decision.old_memory_id,
+                        memory_id,
+                    )
+                    logger.info(
+                        "function=src.core.service.MemoryService.ingest_event action=supersede_applied old_memory_id=%s new_memory_id=%s",
                         version_decision.old_memory_id,
                         memory_id,
                     )
@@ -167,11 +204,20 @@ class MemoryService:
                             version_decision.old_memory_id,
                             memory_id,
                         )
+<<<<<<< HEAD
                 else:
                     self.team_retention_store.reinforce_review(
                         memory_id,
                         observed_at=event.occurred_at,
                     )
+=======
+        logger.info(
+            "function=src.core.service.MemoryService.ingest_event action=done event_id=%s candidate_count=%s memory_ids=%s",
+            event_id,
+            len(candidates),
+            memory_ids,
+        )
+>>>>>>> b99add032b7660e17b81a51e14b6295e37691890
         return IngestResult(
             event_id=event_id,
             stored=True,
@@ -183,17 +229,43 @@ class MemoryService:
         )
 
     def add_memory(self, memory: MemoryCore) -> str:
+        logger.info(
+            "function=src.core.service.MemoryService.add_memory action=start memory_id=%s domain=%s status=%s",
+            memory.memory_id,
+            memory.domain,
+            memory.status,
+        )
         admission = self.admission.evaluate_memory(memory)
         if not admission.admitted:
+            logger.warning(
+                "function=src.core.service.MemoryService.add_memory action=rejected memory_id=%s reason=%s",
+                memory.memory_id,
+                admission.reason,
+            )
             raise ValueError(f"memory rejected: {admission.reason}")
         existing = [
             *self.memory_store.search_memory_candidates(domain=memory.domain, status="active"),
             *self.memory_store.search_memory_candidates(domain=memory.domain, status="candidate"),
         ]
+        logger.info(
+            "function=src.core.service.MemoryService.add_memory action=dedup_lookup memory_id=%s existing_count=%s",
+            memory.memory_id,
+            len(existing),
+        )
         duplicate = self.dedup.find_duplicate(memory, existing)
         if duplicate.duplicate_found and duplicate.matched_memory_id:
+            logger.info(
+                "function=src.core.service.MemoryService.add_memory action=duplicate memory_id=%s matched_memory_id=%s",
+                memory.memory_id,
+                duplicate.matched_memory_id,
+            )
             return duplicate.matched_memory_id
-        return self.memory_store.insert_memory_core(memory)
+        inserted_id = self.memory_store.insert_memory_core(memory)
+        logger.info(
+            "function=src.core.service.MemoryService.add_memory action=inserted memory_id=%s",
+            inserted_id,
+        )
+        return inserted_id
 
     def retrieve(
         self,
@@ -205,6 +277,12 @@ class MemoryService:
         if top_k < 1:
             raise ValueError("top_k must be greater than 0")
         query_id = new_query_id()
+        logger.info(
+            "function=src.core.service.MemoryService.retrieve action=start query_id=%s top_k=%s include_trace=%s",
+            query_id,
+            top_k,
+            include_trace,
+        )
         intent = _run_async(IntentAnalyzer(self.llm_client).analyze(query))
         primary_domains = {domain.value for domain in intent.primary_domains}
         scoped_query = bool(query.team_id or query.project_id or query.workspace_id)
@@ -229,9 +307,23 @@ class MemoryService:
                 message="team_retention retriever",
             )
         rewritten = _run_async(QueryRewriter(self.llm_client).rewrite(query, intent))
+<<<<<<< HEAD
         rows = self._filter_rows_by_query_scope(
             self.memory_store.list_active_memories(limit=max(top_k * 5, 20)),
             query,
+=======
+        logger.info(
+            "function=src.core.service.MemoryService.retrieve action=query_prepared query_id=%s primary_domains=%s rewritten_text=%s",
+            query_id,
+            [domain.value for domain in intent.primary_domains],
+            rewritten.rewritten_text,
+        )
+        rows = self.memory_store.list_active_memories(limit=max(top_k * 5, 20))
+        logger.info(
+            "function=src.core.service.MemoryService.retrieve action=loaded_active_memories query_id=%s row_count=%s",
+            query_id,
+            len(rows),
+>>>>>>> b99add032b7660e17b81a51e14b6295e37691890
         )
         candidates = [
             FusedCandidate(
@@ -242,9 +334,26 @@ class MemoryService:
             )
             for index, row in enumerate(rows)
         ]
+        logger.info(
+            "function=src.core.service.MemoryService.retrieve action=candidates_built query_id=%s candidate_count=%s",
+            query_id,
+            len(candidates),
+        )
         ranked = _run_async(Reranker(llm_client=None).rerank(candidates, rewritten, top_k=top_k))
+        logger.info(
+            "function=src.core.service.MemoryService.retrieve action=reranked query_id=%s result_count=%s",
+            query_id,
+            len(ranked),
+        )
         for result in ranked:
             self.access_tracker.record_access(result.item.memory_id, query_id=query_id)
+            logger.info(
+                "function=src.core.service.MemoryService.retrieve action=access_recorded query_id=%s memory_id=%s rank=%s score=%.4f",
+                query_id,
+                result.item.memory_id,
+                result.rank,
+                result.final_score,
+            )
         trace = None
         if include_trace:
             trace = {
