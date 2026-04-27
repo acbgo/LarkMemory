@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from src.app.dependencies import get_memory_core_store
+from src.app.dependencies import get_memory_service
+from src.core import MemoryService
 from src.schemas import MemoryUpdateRequest, MemoryUpdateResponse
-from src.storage import MemoryCoreStore
 
 
 router = APIRouter(prefix="/api/v1", tags=["update"])
@@ -17,63 +17,40 @@ def _require(value: str | float | None, name: str) -> None:
 
 def _update_memory_core(
     request: MemoryUpdateRequest,
-    memory_store: MemoryCoreStore,
+    memory_service: MemoryService,
 ) -> MemoryUpdateResponse:
     action = request.action
 
     try:
-        if action == "expire":
-            _require(request.memory_id, "memory_id")
-            memory_store.update_memory_status(request.memory_id or "", "expired")
-            return MemoryUpdateResponse(
-                status="ok",
-                action=action,
+        if action in {"expire", "forget", "supersede", "confidence", "importance"}:
+            result = memory_service.update_memory(
+                action,
                 memory_id=request.memory_id,
-                updated=True,
-            )
-        if action == "forget":
-            _require(request.memory_id, "memory_id")
-            memory_store.update_memory_status(request.memory_id or "", "forgotten")
-            return MemoryUpdateResponse(
-                status="ok",
-                action=action,
-                memory_id=request.memory_id,
-                updated=True,
-            )
-        if action == "supersede":
-            _require(request.memory_id, "memory_id")
-            _require(request.new_memory_id, "new_memory_id")
-            memory_store.mark_superseded(
-                request.memory_id or "",
-                request.new_memory_id or "",
+                new_memory_id=request.new_memory_id,
+                confidence=request.confidence,
+                importance=request.importance,
             )
             return MemoryUpdateResponse(
                 status="ok",
-                action=action,
-                memory_id=request.memory_id,
-                updated=True,
-            )
-        if action == "confidence":
-            _require(request.memory_id, "memory_id")
-            _require(request.confidence, "confidence")
-            memory_store.update_confidence(request.memory_id or "", request.confidence or 0.0)
-            return MemoryUpdateResponse(
-                status="ok",
-                action=action,
-                memory_id=request.memory_id,
-                updated=True,
-            )
-        if action == "importance":
-            _require(request.memory_id, "memory_id")
-            _require(request.importance, "importance")
-            memory_store.update_importance(request.memory_id or "", request.importance or 0.0)
-            return MemoryUpdateResponse(
-                status="ok",
-                action=action,
-                memory_id=request.memory_id,
-                updated=True,
+                action=result.action,
+                memory_id=result.memory_id,
+                updated=result.updated,
+                message=result.message,
             )
         if action == "feedback":
+            if request.memory_id and request.feedback_signal:
+                result = memory_service.update_memory(
+                    action,
+                    memory_id=request.memory_id,
+                    feedback_signal=request.feedback_signal,
+                )
+                return MemoryUpdateResponse(
+                    status="accepted",
+                    action=result.action,
+                    memory_id=result.memory_id,
+                    updated=result.updated,
+                    message=result.message,
+                )
             return MemoryUpdateResponse(
                 status="accepted",
                 action=action,
@@ -89,8 +66,8 @@ def _update_memory_core(
                 updated=False,
                 message="correction accepted; core lifecycle service not implemented",
             )
-    except HTTPException:
-        raise
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail="failed to update memory") from exc
 
@@ -100,14 +77,14 @@ def _update_memory_core(
 @router.post("/update", response_model=MemoryUpdateResponse)
 def update_memory(
     request: MemoryUpdateRequest,
-    memory_store: MemoryCoreStore = Depends(get_memory_core_store),
+    memory_service: MemoryService = Depends(get_memory_service),
 ) -> MemoryUpdateResponse:
-    return _update_memory_core(request, memory_store)
+    return _update_memory_core(request, memory_service)
 
 
 @router.post("/memories/update", response_model=MemoryUpdateResponse)
 def update_memory_alias(
     request: MemoryUpdateRequest,
-    memory_store: MemoryCoreStore = Depends(get_memory_core_store),
+    memory_service: MemoryService = Depends(get_memory_service),
 ) -> MemoryUpdateResponse:
-    return _update_memory_core(request, memory_store)
+    return _update_memory_core(request, memory_service)

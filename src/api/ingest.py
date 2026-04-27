@@ -6,9 +6,9 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from src.app.dependencies import get_event_store
+from src.app.dependencies import get_memory_service
+from src.core import MemoryService
 from src.schemas import EventContext, IngestRequest, IngestResponse, NormalizedEvent
-from src.storage import EventStore
 
 
 router = APIRouter(prefix="/api/v1", tags=["ingest"])
@@ -31,7 +31,7 @@ def _model_to_dict(model: object) -> dict[str, object]:
 @router.post("/ingest", response_model=IngestResponse)
 def ingest_event(
     request: IngestRequest,
-    event_store: EventStore = Depends(get_event_store),
+    memory_service: MemoryService = Depends(get_memory_service),
 ) -> IngestResponse:
     event_id = request.event_id or _new_event_id()
     occurred_at = request.occurred_at or _utc_now_iso()
@@ -49,7 +49,7 @@ def ingest_event(
     )
 
     try:
-        stored_id = event_store.insert_event(event)
+        result = memory_service.ingest_event(event)
     except sqlite3.IntegrityError as exc:
         raise HTTPException(
             status_code=409,
@@ -60,7 +60,8 @@ def ingest_event(
 
     return IngestResponse(
         status="ok",
-        event_id=stored_id,
-        stored=True,
-        memory_candidates=0,
+        event_id=result.event_id,
+        stored=result.stored,
+        memory_candidates=result.candidate_count,
+        message=result.message,
     )

@@ -43,6 +43,19 @@
   - `scheduler.py`
   - `service.py`
 - 已新增 `tests/unit/core/`，覆盖路由、生命周期、准入、去重合并、覆盖、衰减、访问记录、调度和统一服务。
+- 已实现第一个比赛主线领域 `src/domains/project_decision/`：
+  - `models.py`
+  - `extractor.py`
+  - `retriever.py`
+  - `ranker.py`
+  - `versioning.py`
+- 已新增 `tests/unit/domains/project_decision/`，覆盖项目决策模型互转、规则抽取、领域检索、排序和版本覆盖链路。
+- 已补齐后端最小服务闭环：
+  - `MemoryService.ingest_event()` 已接入 `ProjectDecisionExtractor` 和 `ProjectDecisionVersionManager`。
+  - `src/app/dependencies.py` 已提供 `get_memory_service()`。
+  - `src/api/ingest.py`、`src/api/retrieve.py`、`src/api/update.py` 已改为通过 `MemoryService` 执行核心链路。
+  - 已验证 `ingest -> MemoryCore -> retrieve` 可通过 HTTP 服务跑通。
+- 已更新根目录 `README.md`，写入后端安装、测试、启动和手工验证步骤。
 - 仓库已有基础 Python 模块：
   - `src/schemas/`
   - `src/storage/`
@@ -56,19 +69,20 @@
 - 拆解 Python Memory Engine 的实现任务。
 - 明确记忆系统的 domain、存储、检索和生命周期治理边界。
 - 将白皮书、Demo 和自证评测报告的要求映射到代码实现计划。
+- 准备将 `ProjectDecisionRetriever` 进一步接入统一检索编排，并完善 proactive 历史决策卡片输出。
+- 后续 app/API 层可逐步迁移到 `src/utils/` 的 ID、时间、文本和 JSON 日志工具，但当前阶段未强制重构既有模块。
 
 ## 下一步建议
 
 1. 基于已完成的 core 层，将 API 的 ingest/retrieve/update/proactive 逐步迁移为调用 `MemoryService`。
 2. 定义第一阶段最小记忆闭环：
-> - ingest 一个 `NormalizedEvent`
+   - ingest 一个 `NormalizedEvent`
    - 生成或写入 `MemoryCore`
    - 可按条件 retrieve
    - 有测试覆盖
-
-3. 选择第一个 demo domain，建议优先用 `project_decision` 打通比赛演示。
-4. 为第一个 demo domain 增加最小 schema、store 和 retrieval 测试。
-5. 设计矛盾更新的 supersede 测试，证明旧记忆失效、新记忆生效。
+3. 将 `ProjectDecisionRetriever` 接入 `MemoryService.retrieve()` 或领域编排入口，替换当前 `MemoryCore` fallback 召回。
+4. 将 proactive 接入 `ProjectDecisionRetriever.retrieve_cards()`，输出历史决策卡片。
+5. 增加 HTTP 层矛盾更新示例和测试，证明旧记忆失效、新记忆生效。
 6. 设计抗干扰 benchmark，证明大量无关事件后仍能召回关键记忆。
 7. 设计本地 API 边界，再连接插件 mock 链路。
 
@@ -87,6 +101,9 @@
 - `pytest tests/unit/api -q`：18 passed。
 - `pytest tests/unit/utils -q`：27 passed。
 - `pytest tests/unit/core -q`：33 passed。
+- `pytest tests/unit/domains/project_decision -q`：21 passed。
+- `pytest tests/unit/app tests/unit/api tests/unit/core tests/unit/domains/project_decision -q`：99 passed。
 - `pytest tests/unit/app tests/unit/api -q`：41 passed。
-- `pytest -q`：127 passed, 1 skipped。
+- `pytest -q`：152 passed, 1 skipped。
 - `python -m compileall src tests`：通过。
+- HTTP 手工验证：`/health`、`/api/v1/ingest`、`/api/v1/retrieve` 通过。

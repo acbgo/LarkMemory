@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
-from src.app.dependencies import get_event_store, reset_dependency_cache
+from src.app.dependencies import get_event_store, get_memory_core_store, reset_dependency_cache
 from src.app.main import create_app
 
 
@@ -51,6 +51,25 @@ class TestIngestApi(unittest.TestCase):
         assert stored is not None
         self.assertEqual(stored["project_id"], "project-1")
 
+    def test_ingest_project_decision_creates_memory_core(self) -> None:
+        response = self.client.post(
+            "/api/v1/ingest",
+            json={
+                "event_id": "event-decision-1",
+                "event_type": "chat_message",
+                "source_type": "feishu_chat",
+                "occurred_at": "2026-04-27T00:00:00Z",
+                "context": {"project_id": "project-1"},
+                "content_text": "我们决定采用方案 B 而不是方案 A，因为接入成本更低",
+            },
+        )
+        memories = get_memory_core_store().list_active_memories(domain="project_decision")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["memory_candidates"], 1)
+        self.assertEqual(len(memories), 1)
+        self.assertEqual(memories[0]["source_event_id"], "event-decision-1")
+
     def test_ingest_generates_event_id(self) -> None:
         response = self.client.post(
             "/api/v1/ingest",
@@ -74,4 +93,3 @@ class TestIngestApi(unittest.TestCase):
         response = self.client.post("/api/v1/ingest", json=payload)
 
         self.assertEqual(response.status_code, 409)
-
