@@ -55,6 +55,13 @@
   - `src/app/dependencies.py` 已提供 `get_memory_service()`。
   - `src/api/ingest.py`、`src/api/retrieve.py`、`src/api/update.py` 已改为通过 `MemoryService` 执行核心链路。
   - 已验证 `ingest -> MemoryCore -> retrieve` 可通过 HTTP 服务跑通。
+- 已实现方向 D `team_retention` 团队知识断层与遗忘预警最小闭环：
+  - `src/storage/team_retention_store.py` 在 store 层定义 `TeamRetentionMemory`，并提供 `TeamRetentionStore` 管理 `memory_team_retention` 和 `memory_review_schedule`。
+  - `src/domains/team_retention/` 已实现规则抽取、领域召回、排序和版本覆盖判断。
+  - `MemoryService.ingest_event()` 已接入 `TeamRetentionExtractor`、`TeamRetentionStore` 和 `TeamRetentionVersionManager`。
+  - `MemoryService.proactive_suggestions()` 已可基于复习计划输出 `review_reminder`。
+  - `MemoryService.update_memory()` 已支持 `reviewed` 和 `snooze`，用于推进遗忘曲线复习计划。
+  - `src/api/proactive.py` 已接入 `MemoryService`，支持 team/project/workspace/now 过滤。
 - 已更新根目录 `README.md`，写入后端安装、测试、启动和手工验证步骤。
 - 已更新 OpenClaw 插件链路：
   - hook 从 `before_agent_reply` 调整为 `before_prompt_build`。
@@ -84,6 +91,7 @@
 - 将白皮书、Demo 和自证评测报告的要求映射到代码实现计划。
 - 准备将 `ProjectDecisionRetriever` 进一步接入统一检索编排，并完善 proactive 历史决策卡片输出。
 - 后续 app/API 层可逐步迁移到 `src/utils/` 的 ID、时间、文本和 JSON 日志工具，但当前阶段未强制重构既有模块。
+- 方向 D 下一步可补充 benchmark 场景，验证大量无关事件后仍能召回团队保留记忆，并验证旧版本不会继续提醒。
 
 ## 下一步建议
 
@@ -96,9 +104,10 @@
 3. 将 `ProjectDecisionRetriever` 接入 `MemoryService.retrieve()` 或领域编排入口，替换当前 `MemoryCore` fallback 召回。
 4. 将 proactive 接入 `ProjectDecisionRetriever.retrieve_cards()`，输出历史决策卡片。
 5. 增加 HTTP 层矛盾更新示例和测试，证明旧记忆失效、新记忆生效。
+6. 为方向 D 增加 benchmark：团队关键事项 + 大量无关事件 + 到期复习提醒 + 版本覆盖。
+7. 设计本地 API 边界，再连接插件 mock 链路。
 6. 设计抗干扰 benchmark，证明大量无关事件后仍能召回关键记忆。
 7. 继续验证 OpenClaw 插件在真实飞书机器人消息触发时的事件字段，并按真实字段完善上下文映射。
-
 ## 风险与注意事项
 
 - 记忆系统容易过早复杂化，应保持小步可验证。
@@ -116,6 +125,8 @@
 - `pytest tests/unit/utils -q`：27 passed。
 - `pytest tests/unit/core -q`：33 passed。
 - `pytest tests/unit/domains/project_decision -q`：21 passed。
+- `python -m pytest tests/unit/storage/test_team_retention_store.py tests/unit/domains/team_retention tests/unit/core/test_service.py tests/unit/api/test_proactive_api.py tests/unit/api/test_update_api.py -q`：26 passed。
+- `python -m pytest tests -q -p no:cacheprovider`：165 passed, 6 subtests passed。
 - `pytest tests/unit/app tests/unit/api tests/unit/core tests/unit/domains/project_decision -q`：99 passed。
 - `pytest tests/unit/app tests/unit/api -q`：41 passed。
 - `pytest -q`：152 passed, 1 skipped。

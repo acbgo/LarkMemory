@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
-from src.app.dependencies import get_memory_core_store, reset_dependency_cache
+from src.app.dependencies import get_memory_core_store, get_team_retention_store, reset_dependency_cache
 from src.app.main import create_app
 from src.schemas import MemoryCore
 
@@ -27,6 +27,7 @@ class TestUpdateApi(unittest.TestCase):
         reset_dependency_cache()
         self.client = TestClient(create_app())
         self.store = get_memory_core_store()
+        self.team_store = get_team_retention_store()
         self.addCleanup(self.env.stop)
         self.addCleanup(shutil.rmtree, self.temp_dir, True)
         self.addCleanup(reset_dependency_cache)
@@ -120,4 +121,30 @@ class TestUpdateApi(unittest.TestCase):
         response = self.client.post("/api/v1/update", json={"action": "expire"})
 
         self.assertEqual(response.status_code, 400)
+
+    def test_reviewed_action_updates_team_retention_schedule(self) -> None:
+        ingest = self.client.post(
+            "/api/v1/ingest",
+            json={
+                "event_id": "event-retention-update",
+                "event_type": "chat_message",
+                "source_type": "feishu_chat",
+                "occurred_at": "2026-04-27T00:00:00Z",
+                "context": {"team_id": "team-1", "project_id": "project-1"},
+                "content_text": "请团队长期记住：客户 A 要求导出文件使用 xlsx。",
+            },
+        )
+        memory_id = ingest.json()["memory_ids"][0]
+        response = self.client.post(
+            "/api/v1/update",
+            json={
+                "action": "reviewed",
+                "memory_id": memory_id,
+                "reviewed_at": "2026-04-28T00:00:00Z",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["updated"])
+        self.assertEqual(self.team_store.get_review_schedule(memory_id).review_count, 1)
 

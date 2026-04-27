@@ -9,7 +9,7 @@ from src.core.memory_core import create_memory_core
 from src.core.service import MemoryService
 from src.retrieval import RetrievalQuery
 from src.schemas import EventContext, NormalizedEvent
-from src.storage import EventStore, MemoryCoreStore
+from src.storage import EventStore, MemoryCoreStore, TeamRetentionStore
 
 
 class TestService(unittest.TestCase):
@@ -23,9 +23,12 @@ class TestService(unittest.TestCase):
         self.event_store.create_table()
         self.memory_store = MemoryCoreStore(str(self.temp_dir / "memory.db"))
         self.memory_store.create_table()
+        self.team_retention_store = TeamRetentionStore(str(self.temp_dir / "memory.db"))
+        self.team_retention_store.create_table()
         self.service = MemoryService(
             event_store=self.event_store,
             memory_store=self.memory_store,
+            team_retention_store=self.team_retention_store,
         )
 
     def test_ingest_event_writes_event_store(self) -> None:
@@ -212,3 +215,74 @@ class TestService(unittest.TestCase):
     def test_proactive_and_maintenance(self) -> None:
         self.assertEqual(self.service.proactive_suggestions(), [])
         self.assertIn("decay", self.service.run_maintenance())
+
+    def test_ingest_team_retention_creates_memory_and_review_schedule(self) -> None:
+        event = NormalizedEvent(
+            event_id="event-retention",
+            event_type="chat_message",
+            source_type="feishu_chat",
+            occurred_at="2026-04-27T00:00:00Z",
+            context=EventContext(team_id="team-1", project_id="project-1"),
+            content_text="请团队长期记住：客户 A 要求所有导出文件使用 xlsx，不接受 csv。",
+        )
+
+        result = self.service.ingest_event(event)
+        memory_id = result.memory_ids[0]
+
+        self.assertEqual(result.candidate_count, 1)
+        self.assertEqual(self.memory_store.get_memory(memory_id)["domain"], "team_retention")
+        self.assertIsNotNone(self.team_retention_store.get_memory(memory_id))
+        self.assertIsNotNone(self.team_retention_store.get_review_schedule(memory_id))
+
+    def test_team_retention_proactive_review_and_reviewed_update(self) -> None:
+        event = NormalizedEvent(
+            event_id="event-retention-due",
+            event_type="chat_message",
+            source_type="feishu_chat",
+            occurred_at="2026-04-27T00:00:00Z",
+            context=EventContext(team_id="team-1", project_id="project-1"),
+            content_text="请团队长期记住：API key 已更新到 secret-v2，旧 key 不再使用。",
+        )
+        memory_id = self.service.ingest_event(event).memory_ids[0]
+
+        suggestions = self.service.proactive_suggestions(
+            team_id="team-1",
+            now="2026-04-28T00:00:00Z",
+        )
+        update = self.service.update_memory(
+            "reviewed",
+            memory_id=memory_id,
+            reviewed_at="2026-04-28T00:00:00Z",
+        )
+
+        self.assertEqual(len(suggestions), 1)
+        self.assertEqual(suggestions[0]["memory_id"], memory_id)
+        self.assertTrue(update.updated)
+        self.assertIn("next_review_at=", update.message)
+
+    def test_team_retention_supersedes_old_version(self) -> None:
+        first = NormalizedEvent(
+            event_id="event-retention-old",
+            event_type="chat_message",
+            source_type="feishu_chat",
+            occurred_at="2026-04-27T00:00:00Z",
+            context=EventContext(team_id="team-1", project_id="project-1"),
+            content_text="请团队长期记住：客户 A 要求所有导出文件使用 xlsx，不接受 csv。",
+            payload={"version_group": "team-1:customer-a-export"},
+        )
+        second = NormalizedEvent(
+            event_id="event-retention-new",
+            event_type="chat_message",
+            source_type="feishu_chat",
+            occurred_at="2026-04-28T00:00:00Z",
+            context=EventContext(team_id="team-1", project_id="project-1"),
+            content_text="请团队长期记住：客户 A 现在接受 csv，但必须 UTF-8 编码。",
+            payload={"version_group": "team-1:customer-a-export"},
+        )
+
+        old_id = self.service.ingest_event(first).memory_ids[0]
+        new_id = self.service.ingest_event(second).memory_ids[0]
+
+        self.assertEqual(self.memory_store.get_memory(old_id)["status"], "superseded")
+        self.assertEqual(self.memory_store.get_memory(old_id)["superseded_by"], new_id)
+        self.assertFalse(self.team_retention_store.get_review_schedule(old_id).active)

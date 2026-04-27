@@ -2,6 +2,7 @@
 .idea
 .workbuddy
 .tmp-tests
+.gitignore
 codeReview
 plans
 logs/
@@ -58,6 +59,7 @@ coverage.xml
 *.py.cover
 .hypothesis/
 .pytest_cache/
+pytest-cache-files-*/
 cover/
 
 # Translations

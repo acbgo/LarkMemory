@@ -33,5 +33,6 @@ class IngestResponse(BaseModel):
     status: str
     event_id: str
     stored: bool
+    memory_ids: list[str] = Field(default_factory=list)
     memory_candidates: int = 0
     message: str | None = None
