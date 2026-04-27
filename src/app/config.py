@@ -23,6 +23,8 @@ class AppSettings:
     enable_llm: bool = False
     enable_embedding: bool = False
     log_level: str = "INFO"
+    log_dir: str = "logs"
+    log_file: str = "larkmemory.log"
     request_log_enabled: bool = True
 
 
@@ -89,5 +91,8 @@ def load_settings() -> AppSettings:
         enable_llm=_env_bool("LARKMEMORY_ENABLE_LLM", False),
         enable_embedding=_env_bool("LARKMEMORY_ENABLE_EMBEDDING", False),
         log_level=_env_str("LARKMEMORY_LOG_LEVEL", "INFO") or "INFO",
+        log_dir=_env_str("LARKMEMORY_LOG_DIR", "logs") or "logs",
+        log_file=_env_str("LARKMEMORY_LOG_FILE", "larkmemory.log")
+        or "larkmemory.log",
         request_log_enabled=_env_bool("LARKMEMORY_REQUEST_LOG_ENABLED", True),
     )

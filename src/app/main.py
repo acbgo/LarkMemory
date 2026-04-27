@@ -22,7 +22,11 @@ ROUTER_MODULES = [
 
 def create_app(settings: AppSettings | None = None) -> FastAPI:
     resolved_settings = settings or get_settings()
-    setup_logging(resolved_settings.log_level)
+    setup_logging(
+        resolved_settings.log_level,
+        resolved_settings.log_dir,
+        resolved_settings.log_file,
+    )
 
     app = FastAPI(title=resolved_settings.app_name, debug=resolved_settings.debug)
     app.state.settings = resolved_settings
@@ -31,8 +35,6 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
         app.add_middleware(RequestLogMiddleware)
 
     register_routers(app)
-    if not has_route(app, "/health", "GET"):
-        register_builtin_health_route(app)
     return app
 
 
@@ -57,30 +59,6 @@ def register_routers(app: FastAPI) -> list[str]:
         app.include_router(router)
         registered.append(module_name.rsplit(".", 1)[-1])
     return registered
-
-
-def register_builtin_health_route(app: FastAPI) -> None:
-    @app.get("/health")
-    def health() -> dict[str, object]:
-        settings: AppSettings = app.state.settings
-        return {
-            "status": "ok",
-            "app": settings.app_name,
-            "env": settings.env,
-            "llm_enabled": settings.enable_llm,
-            "embedding_enabled": settings.enable_embedding,
-        }
-
-
-def has_route(app: FastAPI, path: str, method: str) -> bool:
-    expected_method = method.upper()
-    for route in app.routes:
-        route_path = getattr(route, "path", None)
-        route_methods = getattr(route, "methods", set()) or set()
-        if route_path == path and expected_method in route_methods:
-            return True
-    return False
-
 
 app = create_app()
 

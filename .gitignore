@@ -2,8 +2,10 @@
 .idea
 .workbuddy
 .tmp-tests
+.gitignore
 codeReview
 plans
+logs/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

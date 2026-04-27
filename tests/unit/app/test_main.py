@@ -11,7 +11,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from src.app.config import AppSettings
-from src.app.main import create_app, has_route, register_routers
+from src.app.main import create_app, register_routers
 
 
 class TestMain(unittest.TestCase):
@@ -29,36 +29,17 @@ class TestMain(unittest.TestCase):
         self.assertIsInstance(app, FastAPI)
         self.assertIs(app.state.settings, settings)
 
-    def test_builtin_health_route_returns_status(self) -> None:
-        settings = AppSettings(
-            app_name="Test Engine",
-            env="test",
-            enable_llm=False,
-            enable_embedding=False,
-        )
-        with patch("src.app.main.ROUTER_MODULES", []):
-            app = create_app(settings)
-        client = TestClient(app)
+    def test_create_app_registers_health_api_route(self) -> None:
+        db_path = str(self.temp_dir / "health.db")
+        with patch.dict(os.environ, {"LARKMEMORY_SQLITE_PATH": db_path}, clear=True):
+            app = create_app(AppSettings())
+            client = TestClient(app)
 
-        response = client.get("/health")
+            response = client.get("/health")
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(
-            response.json(),
-            {
-                "status": "ok",
-                "app": "Test Engine",
-                "env": "test",
-                "llm_enabled": False,
-                "embedding_enabled": False,
-            },
-        )
-
-    def test_has_route_identifies_registered_route(self) -> None:
-        app = create_app(AppSettings())
-
-        self.assertTrue(has_route(app, "/health", "GET"))
-        self.assertFalse(has_route(app, "/missing", "GET"))
+        self.assertEqual(response.json()["status"], "ok")
+        self.assertIn("storage", response.json())
 
     def test_register_routers_skips_missing_api_package(self) -> None:
         app = FastAPI()

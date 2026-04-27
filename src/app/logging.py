@@ -5,6 +5,7 @@ import sys
 import time
 import uuid
 from collections.abc import Callable, Mapping
+from pathlib import Path
 
 from starlette.datastructures import Headers
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -12,7 +13,11 @@ from starlette.requests import Request
 from starlette.responses import Response
 
 
-def setup_logging(level: str = "INFO") -> None:
+def setup_logging(
+    level: str = "INFO",
+    log_dir: str | Path = "logs",
+    log_file: str = "larkmemory.log",
+) -> None:
     resolved_level = getattr(logging, level.upper(), logging.INFO)
     if not isinstance(resolved_level, int):
         resolved_level = logging.INFO
@@ -37,6 +42,31 @@ def setup_logging(level: str = "INFO") -> None:
         root_logger.addHandler(stream_handler)
     stream_handler.setLevel(resolved_level)
     stream_handler.setFormatter(formatter)
+
+    log_path = Path(log_dir) / log_file
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    file_handler = next(
+        (
+            handler
+            for handler in root_logger.handlers
+            if getattr(handler, "_larkmemory_file_handler", False)
+        ),
+        None,
+    )
+    if (
+        file_handler is not None
+        and getattr(file_handler, "baseFilename", None) != str(log_path.resolve())
+    ):
+        root_logger.removeHandler(file_handler)
+        file_handler.close()
+        file_handler = None
+
+    if file_handler is None:
+        file_handler = logging.FileHandler(log_path, encoding="utf-8")
+        setattr(file_handler, "_larkmemory_file_handler", True)
+        root_logger.addHandler(file_handler)
+    file_handler.setLevel(resolved_level)
+    file_handler.setFormatter(formatter)
 
 
 def get_request_id(headers: Mapping[str, str] | Headers) -> str:

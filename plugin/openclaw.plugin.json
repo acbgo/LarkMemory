@@ -8,7 +8,7 @@
       "memoryApiUrl": {
         "type": "string",
         "description": "Memory Backend API 地址",
-        "default": "http://localhost:8000/api/v1"
+        "default": "http://127.0.0.1:8765/api/v1"
       },
       "userId": {
         "type": "string",
@@ -19,6 +19,11 @@
         "type": "boolean",
         "description": "启用调试日志",
         "default": true
+      },
+      "requestTimeoutMs": {
+        "type": "number",
+        "description": "调用 Memory Backend 的超时时间（毫秒）",
+        "default": 5000
       }
     },
     "additionalProperties": false
