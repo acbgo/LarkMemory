@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 
 class MemoryCoreStore(SQLiteStore):
     def create_table(self) -> None:
+        """创建 MemoryCore 存储表和常用索引。"""
         self.execute(
             """
             CREATE TABLE IF NOT EXISTS memory_core (
@@ -61,6 +62,7 @@ class MemoryCoreStore(SQLiteStore):
         )
 
     def insert_memory_core(self, memory: MemoryCore) -> str:
+        """写入单个 MemoryCore，输入记忆对象并返回 memory_id。"""
         logger.info(
             "function=src.storage.memory_core_store.MemoryCoreStore.insert_memory_core action=start memory_id=%s domain=%s memory_type=%s status=%s",
             memory.memory_id,
@@ -131,6 +133,7 @@ class MemoryCoreStore(SQLiteStore):
         return memory.memory_id
 
     def get_memory(self, memory_id: str) -> dict[str, Any] | None:
+        """按 memory_id 查询记忆，返回反序列化后的行字典。"""
         row = self.fetch_one(
             "SELECT * FROM memory_core WHERE memory_id = ?",
             (memory_id,),
@@ -138,6 +141,7 @@ class MemoryCoreStore(SQLiteStore):
         return self._deserialize_row(row)
 
     def batch_get_memories(self, memory_ids: list[str]) -> list[dict[str, Any]]:
+        """批量按 memory_id 查询记忆，返回顺序尽量匹配输入 ID 列表。"""
         if not memory_ids:
             return []
         placeholders = ", ".join("?" for _ in memory_ids)
@@ -152,6 +156,7 @@ class MemoryCoreStore(SQLiteStore):
         return [row_map[memory_id] for memory_id in memory_ids if memory_id in row_map]
 
     def update_memory_status(self, memory_id: str, status: str) -> None:
+        """按 memory_id 更新记忆状态，输入目标状态字符串。"""
         self.execute(
             """
             UPDATE memory_core
@@ -162,6 +167,7 @@ class MemoryCoreStore(SQLiteStore):
         )
 
     def mark_superseded(self, old_memory_id: str, new_memory_id: str) -> None:
+        """建立新旧记忆覆盖关系，输入旧 memory_id 和新 memory_id。"""
         with self.transaction() as connection:
             connection.execute(
                 """
@@ -184,6 +190,7 @@ class MemoryCoreStore(SQLiteStore):
             )
 
     def update_confidence(self, memory_id: str, confidence: float) -> None:
+        """按 memory_id 更新置信度分数。"""
         self.execute(
             """
             UPDATE memory_core
@@ -194,6 +201,7 @@ class MemoryCoreStore(SQLiteStore):
         )
 
     def update_importance(self, memory_id: str, importance: float) -> None:
+        """按 memory_id 更新重要性分数。"""
         self.execute(
             """
             UPDATE memory_core
@@ -209,6 +217,7 @@ class MemoryCoreStore(SQLiteStore):
         scope: str | None = None,
         limit: int = 100,
     ) -> list[dict[str, Any]]:
+        """列出 active 状态记忆，可按 domain 和 scope 过滤。"""
         logger.info(
             "function=src.storage.memory_core_store.MemoryCoreStore.list_active_memories action=start domain=%s scope=%s limit=%s",
             domain,
@@ -245,6 +254,7 @@ class MemoryCoreStore(SQLiteStore):
         source_ref: str | None = None,
         limit: int = 100,
     ) -> list[dict[str, Any]]:
+        """按 domain、status 和 source_ref 搜索候选记忆。"""
         clauses = ["status = ?"]
         parameters: list[Any] = [status]
         if domain is not None:
@@ -264,6 +274,7 @@ class MemoryCoreStore(SQLiteStore):
         return [self._deserialize_row(row) for row in rows]
 
     def get_version_chain(self, memory_id: str) -> list[dict[str, Any]]:
+        """查询指定 memory_id 的覆盖版本链，返回按时间排序的记忆列表。"""
         rows = self.fetch_all(
             """
             WITH RECURSIVE version_chain AS (
@@ -292,12 +303,14 @@ class MemoryCoreStore(SQLiteStore):
         return items
 
     def delete_memory(self, memory_id: str) -> None:
+        """按 memory_id 删除单条 MemoryCore 记录。"""
         self.execute(
             "DELETE FROM memory_core WHERE memory_id = ?",
             (memory_id,),
         )
 
     def _deserialize_row(self, row: dict[str, Any] | None) -> dict[str, Any] | None:
+        """反序列化 MemoryCore 行中的 entities/tags JSON 字段。"""
         if row is None:
             return None
         row["entities_json"] = json.loads(row["entities_json"])

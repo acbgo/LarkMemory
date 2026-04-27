@@ -21,7 +21,7 @@ ROUTER_MODULES = [
 
 
 def create_app(settings: AppSettings | None = None) -> FastAPI:
-    """创建并初始化 FastAPI 应用实例。"""
+    """创建 FastAPI 应用，输入可选 AppSettings，返回已注册中间件和路由的 app。"""
     resolved_settings = settings or get_settings()
     setup_logging(
         resolved_settings.log_level,
@@ -40,7 +40,7 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
 
 
 def register_routers(app: FastAPI) -> list[str]:
-    """按配置导入并注册 API 路由模块。"""
+    """按 ROUTER_MODULES 动态导入 API router 并注册到 app；返回成功注册的模块短名列表。"""
     logger = logging.getLogger(__name__)
     registered: list[str] = []
     for module_name in ROUTER_MODULES:
@@ -66,7 +66,7 @@ app = create_app()
 
 
 def main() -> None:
-    """以当前配置启动 Uvicorn 服务。"""
+    """读取运行配置并启动 Uvicorn 服务，作为命令行入口使用。"""
     settings = get_settings()
     try:
         import uvicorn

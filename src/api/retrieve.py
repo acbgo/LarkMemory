@@ -19,7 +19,7 @@ def retrieve_memories(
     request: RetrieveRequest,
     memory_service: MemoryService = Depends(get_memory_service),
 ) -> RetrieveResponse:
-    """执行记忆检索并返回排序后的命中结果。"""
+    """接收检索请求，调用 MemoryService 并返回排序后的记忆命中结果。"""
     if not request.query_text.strip():
         logger.warning("function=src.api.retrieve.retrieve_memories action=blank_query")
         raise HTTPException(status_code=422, detail="query_text cannot be blank")
@@ -80,6 +80,6 @@ def search_memories_alias(
     request: RetrieveRequest,
     memory_service: MemoryService = Depends(get_memory_service),
 ) -> RetrieveResponse:
-    """兼容别名路由并委托到标准检索接口。"""
+    """兼容 `/memories/search` 别名路由，输入输出与 `retrieve_memories` 相同。"""
     logger.info("function=src.api.retrieve.search_memories_alias action=delegate")
     return retrieve_memories(request, memory_service)

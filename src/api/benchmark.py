@@ -15,7 +15,7 @@ router = APIRouter(prefix="/api/v1", tags=["benchmark"])
 
 @router.post("/benchmark/run", response_model=BenchmarkRunResponse)
 def run_benchmark(request: BenchmarkRunRequest) -> BenchmarkRunResponse:
-    """接收评测请求并返回受理状态。"""
+    """接收 benchmark 运行请求，返回 run_id、suite_name 和当前受理状态。"""
     if request.dry_run:
         return BenchmarkRunResponse(
             status="accepted",
@@ -35,7 +35,7 @@ def run_benchmark(request: BenchmarkRunRequest) -> BenchmarkRunResponse:
 
 @router.get("/benchmark/{run_id}", response_model=BenchmarkStatusResponse)
 def get_benchmark_status(run_id: str) -> BenchmarkStatusResponse:
-    """查询评测任务状态并返回当前结果。"""
+    """按 run_id 查询 benchmark 状态，返回任务状态、结果占位和提示消息。"""
     return BenchmarkStatusResponse(
         status="ok",
         run_id=run_id,

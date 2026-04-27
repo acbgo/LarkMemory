@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 
 class EventStore(SQLiteStore):
     def create_table(self) -> None:
+        """创建事件存储表和常用索引，供 NormalizedEvent 持久化使用。"""
         self.execute(
             """
             CREATE TABLE IF NOT EXISTS event_store (
@@ -51,6 +52,7 @@ class EventStore(SQLiteStore):
         )
 
     def insert_event(self, event: NormalizedEvent) -> str:
+        """写入单个 NormalizedEvent，输入事件对象并返回 event_id。"""
         logger.info(
             "function=src.storage.event_store.EventStore.insert_event action=start event_id=%s event_type=%s source_type=%s",
             event.event_id,
@@ -106,6 +108,7 @@ class EventStore(SQLiteStore):
         return event.event_id
 
     def get_event(self, event_id: str) -> dict[str, Any] | None:
+        """按 event_id 查询事件，返回反序列化后的事件行字典。"""
         row = self.fetch_one(
             "SELECT * FROM event_store WHERE event_id = ?",
             (event_id,),
@@ -113,6 +116,7 @@ class EventStore(SQLiteStore):
         return self._deserialize_row(row)
 
     def list_events(self, limit: int = 100) -> list[dict[str, Any]]:
+        """按 occurred_at 倒序列出事件，输入最大返回数量。"""
         rows = self.fetch_all(
             """
             SELECT * FROM event_store
@@ -128,6 +132,7 @@ class EventStore(SQLiteStore):
         source_type: str,
         limit: int = 50,
     ) -> list[dict[str, Any]]:
+        """按 source_type 过滤事件并按时间倒序返回。"""
         rows = self.fetch_all(
             """
             SELECT * FROM event_store
@@ -146,6 +151,7 @@ class EventStore(SQLiteStore):
         user_id: str | None = None,
         limit: int = 100,
     ) -> list[dict[str, Any]]:
+        """按项目、团队或用户范围过滤事件，返回时间倒序列表。"""
         clauses: list[str] = []
         parameters: list[Any] = []
 
@@ -174,6 +180,7 @@ class EventStore(SQLiteStore):
         end_at: str,
         limit: int = 500,
     ) -> list[dict[str, Any]]:
+        """查询指定时间范围内的事件，输入起止 ISO 时间和返回上限。"""
         rows = self.fetch_all(
             """
             SELECT * FROM event_store
@@ -186,6 +193,7 @@ class EventStore(SQLiteStore):
         return [self._deserialize_row(row) for row in rows]
 
     def delete_old_events(self, before: str) -> int:
+        """删除早于 before 时间的事件，返回删除行数。"""
         with self.transaction() as connection:
             cursor = connection.execute(
                 "DELETE FROM event_store WHERE occurred_at < ?",
@@ -194,6 +202,7 @@ class EventStore(SQLiteStore):
             return cursor.rowcount
 
     def _deserialize_row(self, row: dict[str, Any] | None) -> dict[str, Any] | None:
+        """反序列化事件行中的 JSON 字段，未命中行时返回 None。"""
         if row is None:
             return None
         row["payload_json"] = json.loads(row["payload_json"])

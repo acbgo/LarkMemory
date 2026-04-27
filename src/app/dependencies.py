@@ -12,13 +12,13 @@ from src.storage import EmbeddingStore, EventStore, MemoryCoreStore, TeamRetenti
 
 @lru_cache(maxsize=1)
 def get_settings() -> AppSettings:
-    """获取全局应用配置实例，使用lru_cache缓存单例"""
+    """返回缓存的应用配置；首次调用会读取环境变量，后续复用同一 AppSettings 实例。"""
     return load_settings()
 
 
 @lru_cache(maxsize=1)
 def get_event_store() -> EventStore:
-    """获取事件存储实例，自动创建表，缓存单例"""
+    """返回缓存的事件存储实例，使用当前配置中的 SQLite 路径。"""
     store = EventStore(get_settings().sqlite_path)
     store.create_table()
     return store
@@ -26,7 +26,7 @@ def get_event_store() -> EventStore:
 
 @lru_cache(maxsize=1)
 def get_memory_core_store() -> MemoryCoreStore:
-    """获取记忆核心存储实例，自动创建表，缓存单例"""
+    """返回缓存的 MemoryCore 存储实例，使用当前配置中的 SQLite 路径。"""
     store = MemoryCoreStore(get_settings().sqlite_path)
     store.create_table()
     return store
@@ -34,7 +34,7 @@ def get_memory_core_store() -> MemoryCoreStore:
 
 @lru_cache(maxsize=1)
 def get_team_retention_store() -> TeamRetentionStore:
-    """获取团队留存策略存储实例，自动创建表，缓存单例"""
+    """返回缓存的团队留存存储实例，使用当前配置中的 SQLite 路径。"""
     store = TeamRetentionStore(get_settings().sqlite_path)
     store.create_table()
     return store
@@ -42,7 +42,7 @@ def get_team_retention_store() -> TeamRetentionStore:
 
 @lru_cache(maxsize=1)
 def get_embedding_store() -> EmbeddingStore | None:
-    """获取向量嵌入存储实例，未启用嵌入功能时返回None，缓存单例"""
+    """按配置返回缓存的向量存储实例；未启用嵌入时返回 None。"""
     settings = get_settings()
     if not settings.enable_embedding:
         return None
@@ -54,7 +54,7 @@ def get_embedding_store() -> EmbeddingStore | None:
 
 @lru_cache(maxsize=1)
 def get_llm_client() -> LLMClient | None:
-    """获取LLM客户端实例，未启用LLM或配置不全时返回None，缓存单例"""
+    """按配置返回缓存的 LLM 客户端；未启用或密钥/模型缺失时返回 None，不发起网络请求。"""
     settings = get_settings()
     if not settings.enable_llm:
         return None
@@ -71,7 +71,7 @@ def get_llm_client() -> LLMClient | None:
 
 @lru_cache(maxsize=1)
 def get_memory_service() -> MemoryService:
-    """获取记忆服务核心实例，注入所有依赖，缓存单例"""
+    """组装并返回缓存的 MemoryService，注入 store、LLM 和领域处理器依赖。"""
     return MemoryService(
         event_store=get_event_store(),
         memory_store=get_memory_core_store(),
@@ -92,7 +92,7 @@ def get_memory_service() -> MemoryService:
 
 
 def reset_dependency_cache() -> None:
-    """清空所有依赖的缓存，用于配置变更后重新初始化"""
+    """清空 app 依赖单例缓存，用于测试或环境变量变更后的重新加载。"""
     get_settings.cache_clear()
     get_event_store.cache_clear()
     get_memory_core_store.cache_clear()
