@@ -18,6 +18,7 @@ def setup_logging(
     log_dir: str | Path = "logs",
     log_file: str = "larkmemory.log",
 ) -> None:
+    """初始化根日志配置并挂载控制台与文件处理器。"""
     resolved_level = getattr(logging, level.upper(), logging.INFO)
     if not isinstance(resolved_level, int):
         resolved_level = logging.INFO
@@ -70,6 +71,7 @@ def setup_logging(
 
 
 def get_request_id(headers: Mapping[str, str] | Headers) -> str:
+    """从请求头提取请求 ID，缺失时生成默认 ID。"""
     for name in ("x-request-id", "x-larkmemory-request-id"):
         value = headers.get(name)
         if value is not None and value.strip():
@@ -78,11 +80,15 @@ def get_request_id(headers: Mapping[str, str] | Headers) -> str:
 
 
 class RequestLogMiddleware(BaseHTTPMiddleware):
+    """记录请求耗时与状态，并在响应头回传请求 ID。"""
+
     def __init__(self, app: Callable, logger_name: str = "larkmemory.request") -> None:
+        """初始化中间件并绑定指定名称的日志器。"""
         super().__init__(app)
         self.logger = logging.getLogger(logger_name)
 
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
+        """处理请求日志记录，异常时输出错误日志并继续抛出。"""
         request_id = get_request_id(request.headers)
         started_at = time.perf_counter()
         try:

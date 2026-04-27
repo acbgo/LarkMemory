@@ -8,12 +8,14 @@ _TAG_SPLIT = re.compile(r"[,，;；]")
 
 
 def normalize_whitespace(text: str | None) -> str:
+    """规范化空白字符并去除首尾空格。"""
     if not text:
         return ""
     return re.sub(r"\s+", " ", text).strip()
 
 
 def clean_text(text: str | None, *, max_chars: int | None = None) -> str:
+    """清理控制字符并按需裁剪文本长度。"""
     if max_chars is not None and max_chars <= 0:
         raise ValueError("max_chars must be greater than 0")
     cleaned = normalize_whitespace(_CONTROL_CHARS.sub("", text or ""))
@@ -28,6 +30,7 @@ def truncate_text(
     *,
     suffix: str = "...",
 ) -> str:
+    """将文本截断到指定长度，超出时追加后缀。"""
     if max_chars <= 0:
         raise ValueError("max_chars must be greater than 0")
     value = text or ""
@@ -39,10 +42,12 @@ def truncate_text(
 
 
 def safe_preview(text: str | None, *, max_chars: int = 200) -> str:
+    """生成适合展示的安全文本预览。"""
     return clean_text(text, max_chars=max_chars)
 
 
 def split_tags(value: str | list[str] | None) -> list[str]:
+    """按中英文分隔符拆分标签并去重（忽略大小写）。"""
     if value is None:
         return []
     raw_tags = _TAG_SPLIT.split(value) if isinstance(value, str) else value
@@ -61,6 +66,7 @@ def split_tags(value: str | list[str] | None) -> list[str]:
 
 
 def normalize_keyword(keyword: str | None) -> str:
+    """将关键词规范化为空白折叠后的小写形式。"""
     return normalize_whitespace(keyword).lower()
 
 
@@ -70,6 +76,7 @@ def contains_any(
     *,
     case_sensitive: bool = False,
 ) -> bool:
+    """判断文本是否包含任一关键词，可配置大小写敏感。"""
     if not text or not keywords:
         return False
     haystack = text if case_sensitive else text.lower()

@@ -2,29 +2,22 @@ from __future__ import annotations
 
 import sqlite3
 import logging
-import uuid
-from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
 
 from src.app.dependencies import get_memory_service
 from src.core import MemoryService
 from src.schemas import EventContext, IngestRequest, IngestResponse, NormalizedEvent
+from src.utils.ids import event_id as new_event_id
+from src.utils.time import utc_now_iso
 
 
 router = APIRouter(prefix="/api/v1", tags=["ingest"])
 logger = logging.getLogger(__name__)
 
 
-def _new_event_id() -> str:
-    return f"evt-{uuid.uuid4().hex[:12]}"
-
-
-def _utc_now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
 def _model_to_dict(model: object) -> dict[str, object]:
+    """兼容不同 Pydantic 版本，将模型对象转为字典。"""
     if hasattr(model, "model_dump"):
         return model.model_dump()  # type: ignore[no-any-return,attr-defined]
     return model.dict()  # type: ignore[no-any-return,attr-defined]
@@ -35,8 +28,9 @@ def ingest_event(
     request: IngestRequest,
     memory_service: MemoryService = Depends(get_memory_service),
 ) -> IngestResponse:
-    event_id = request.event_id or _new_event_id()
-    occurred_at = request.occurred_at or _utc_now_iso()
+    """接收事件并写入记忆服务，返回入库结果。"""
+    event_id = request.event_id or new_event_id()
+    occurred_at = request.occurred_at or utc_now_iso()
     logger.info(
         "function=src.api.ingest.ingest_event action=build_event event_id=%s event_type=%s source_type=%s",
         event_id,

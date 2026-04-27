@@ -12,11 +12,13 @@ from src.storage import EmbeddingStore, EventStore, MemoryCoreStore, TeamRetenti
 
 @lru_cache(maxsize=1)
 def get_settings() -> AppSettings:
+    """获取全局应用配置实例，使用lru_cache缓存单例"""
     return load_settings()
 
 
 @lru_cache(maxsize=1)
 def get_event_store() -> EventStore:
+    """获取事件存储实例，自动创建表，缓存单例"""
     store = EventStore(get_settings().sqlite_path)
     store.create_table()
     return store
@@ -24,6 +26,7 @@ def get_event_store() -> EventStore:
 
 @lru_cache(maxsize=1)
 def get_memory_core_store() -> MemoryCoreStore:
+    """获取记忆核心存储实例，自动创建表，缓存单例"""
     store = MemoryCoreStore(get_settings().sqlite_path)
     store.create_table()
     return store
@@ -31,6 +34,7 @@ def get_memory_core_store() -> MemoryCoreStore:
 
 @lru_cache(maxsize=1)
 def get_team_retention_store() -> TeamRetentionStore:
+    """获取团队留存策略存储实例，自动创建表，缓存单例"""
     store = TeamRetentionStore(get_settings().sqlite_path)
     store.create_table()
     return store
@@ -38,6 +42,7 @@ def get_team_retention_store() -> TeamRetentionStore:
 
 @lru_cache(maxsize=1)
 def get_embedding_store() -> EmbeddingStore | None:
+    """获取向量嵌入存储实例，未启用嵌入功能时返回None，缓存单例"""
     settings = get_settings()
     if not settings.enable_embedding:
         return None
@@ -49,6 +54,7 @@ def get_embedding_store() -> EmbeddingStore | None:
 
 @lru_cache(maxsize=1)
 def get_llm_client() -> LLMClient | None:
+    """获取LLM客户端实例，未启用LLM或配置不全时返回None，缓存单例"""
     settings = get_settings()
     if not settings.enable_llm:
         return None
@@ -65,6 +71,7 @@ def get_llm_client() -> LLMClient | None:
 
 @lru_cache(maxsize=1)
 def get_memory_service() -> MemoryService:
+    """获取记忆服务核心实例，注入所有依赖，缓存单例"""
     return MemoryService(
         event_store=get_event_store(),
         memory_store=get_memory_core_store(),
@@ -85,6 +92,7 @@ def get_memory_service() -> MemoryService:
 
 
 def reset_dependency_cache() -> None:
+    """清空所有依赖的缓存，用于配置变更后重新初始化"""
     get_settings.cache_clear()
     get_event_store.cache_clear()
     get_memory_core_store.cache_clear()

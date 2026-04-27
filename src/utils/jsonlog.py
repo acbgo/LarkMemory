@@ -15,6 +15,7 @@ _RESERVED_FIELDS = {"timestamp", "level", "event", "message"}
 
 
 def json_safe(value: Any) -> Any:
+    """将对象递归转换为可 JSON 序列化的安全结构。"""
     if value is None or isinstance(value, (bool, int, float, str)):
         return value
     if isinstance(value, datetime):
@@ -31,6 +32,7 @@ def json_safe(value: Any) -> Any:
 
 
 def json_dumps(data: Any) -> str:
+    """将数据序列化为紧凑 JSON 字符串，失败时返回兜底结果。"""
     try:
         return json.dumps(
             json_safe(data),
@@ -52,6 +54,7 @@ def json_log_record(
     message: str | None = None,
     **fields: Any,
 ) -> dict[str, Any]:
+    """构建标准化 JSON 日志记录并过滤保留字段冲突。"""
     record = {
         "timestamp": utc_now_iso(),
         "level": level.upper(),
@@ -74,6 +77,7 @@ def log_json(
     message: str | None = None,
     **fields: Any,
 ) -> None:
+    """按日志级别将结构化日志以 JSON 形式写入 logger。"""
     payload = json_dumps(
         json_log_record(event, level=level, message=message, **fields)
     )
@@ -90,7 +94,9 @@ def compact_dict(
     *,
     max_text_chars: int = 500,
 ) -> dict[str, Any]:
+    """压缩字典中的长文本字段并递归清洗为 JSON 安全值。"""
     def compact(value: Any) -> Any:
+        """递归压缩单个值，处理文本、容器和基础类型。"""
         if isinstance(value, str):
             return safe_preview(value, max_chars=max_text_chars)
         if isinstance(value, dict):

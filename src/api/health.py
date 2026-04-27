@@ -20,6 +20,7 @@ router = APIRouter(tags=["health"])
 
 
 def _check_store(store: EventStore | MemoryCoreStore) -> dict[str, Any]:
+    """检查存储可用性并返回健康状态。"""
     try:
         store.fetch_one("SELECT 1 AS ok")
         return {"available": True}
@@ -35,6 +36,7 @@ def health_check(
     embedding_store: EmbeddingStore | None = Depends(get_embedding_store),
     llm_client: LLMClient | None = Depends(get_llm_client),
 ) -> dict[str, Any]:
+    """返回服务、存储、嵌入与 LLM 的健康信息。"""
     event_status = _check_store(event_store)
     memory_status = _check_store(memory_core_store)
     storage_available = event_status["available"] and memory_status["available"]
