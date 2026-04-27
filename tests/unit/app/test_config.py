@@ -20,6 +20,8 @@ class TestConfig(unittest.TestCase):
         self.assertEqual(settings.sqlite_path, ".larkmemory/larkmemory.db")
         self.assertFalse(settings.enable_llm)
         self.assertFalse(settings.enable_embedding)
+        self.assertEqual(settings.log_dir, "logs")
+        self.assertEqual(settings.log_file, "larkmemory.log")
 
     def test_load_settings_reads_environment_overrides(self) -> None:
         with patch.dict(
@@ -28,6 +30,8 @@ class TestConfig(unittest.TestCase):
                 "LARKMEMORY_PORT": "9000",
                 "LARKMEMORY_DEBUG": "true",
                 "LARKMEMORY_SQLITE_PATH": ".tmp-tests/app.db",
+                "LARKMEMORY_LOG_DIR": ".tmp-tests/logs",
+                "LARKMEMORY_LOG_FILE": "service.log",
             },
             clear=True,
         ):
@@ -36,6 +40,8 @@ class TestConfig(unittest.TestCase):
         self.assertEqual(settings.port, 9000)
         self.assertTrue(settings.debug)
         self.assertEqual(settings.sqlite_path, ".tmp-tests/app.db")
+        self.assertEqual(settings.log_dir, ".tmp-tests/logs")
+        self.assertEqual(settings.log_file, "service.log")
 
     def test_env_bool_supports_common_values(self) -> None:
         for value in ("1", "true", "yes", "on", "TRUE"):
@@ -55,4 +61,3 @@ class TestConfig(unittest.TestCase):
         with patch.dict(os.environ, {"TIMEOUT": "slow"}, clear=True):
             with self.assertRaisesRegex(ValueError, "TIMEOUT"):
                 _env_float("TIMEOUT", 60.0)
-

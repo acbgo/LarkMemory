@@ -4,7 +4,7 @@
 
 - 明确项目定位：飞书 AI 比赛 OpenClaw 赛道参赛项目，课题为“企业级长程协作 Memory 系统”。
 - 明确技术路线：OpenClaw TypeScript 插件 + 本地 Python Memory Engine。
-- 插件调用链已通过 mock 输出 log 的方式跑通。
+- 插件调用链已从 mock 输出 log 推进到真实后端 HTTP 调用阶段。
 - 已实现 Python Memory Engine 的 `src/app/` 基础层：
   - `config.py`
   - `logging.py`
@@ -56,6 +56,15 @@
   - `src/api/ingest.py`、`src/api/retrieve.py`、`src/api/update.py` 已改为通过 `MemoryService` 执行核心链路。
   - 已验证 `ingest -> MemoryCore -> retrieve` 可通过 HTTP 服务跑通。
 - 已更新根目录 `README.md`，写入后端安装、测试、启动和手工验证步骤。
+- 已更新 OpenClaw 插件链路：
+  - hook 从 `before_agent_reply` 调整为 `before_prompt_build`。
+  - `before_prompt_build` 会把当前用户消息写入后端 `/api/v1/ingest`，再调用 `/api/v1/retrieve` 获取记忆并返回 prompt 注入字段。
+  - `agent_end` 会把 Agent 回复作为事件写回后端。
+  - 插件日志已补充后端 HTTP 请求、状态码和响应体输出。
+- 已补充后端文件日志：
+  - `src/app/logging.py` 会在应用启动时写入 `logs/larkmemory.log`。
+  - 可通过 `LARKMEMORY_LOG_DIR` 和 `LARKMEMORY_LOG_FILE` 覆盖日志目录与文件名。
+  - `logs/` 已加入 `.gitignore`，避免运行日志进入版本库。
 - 仓库已有基础 Python 模块：
   - `src/schemas/`
   - `src/storage/`
@@ -84,7 +93,7 @@
 4. 将 proactive 接入 `ProjectDecisionRetriever.retrieve_cards()`，输出历史决策卡片。
 5. 增加 HTTP 层矛盾更新示例和测试，证明旧记忆失效、新记忆生效。
 6. 设计抗干扰 benchmark，证明大量无关事件后仍能召回关键记忆。
-7. 设计本地 API 边界，再连接插件 mock 链路。
+7. 继续验证 OpenClaw 插件在真实飞书机器人消息触发时的事件字段，并按真实字段完善上下文映射。
 
 ## 风险与注意事项
 
@@ -97,8 +106,8 @@
 
 ## 最近验证
 
-- `pytest tests/unit/app -q`：22 passed。
-- `pytest tests/unit/api -q`：18 passed。
+- `pytest tests/unit/app -q`：24 passed。
+- `pytest tests/unit/api -q`：20 passed。
 - `pytest tests/unit/utils -q`：27 passed。
 - `pytest tests/unit/core -q`：33 passed。
 - `pytest tests/unit/domains/project_decision -q`：21 passed。
@@ -107,3 +116,4 @@
 - `pytest -q`：152 passed, 1 skipped。
 - `python -m compileall src tests`：通过。
 - HTTP 手工验证：`/health`、`/api/v1/ingest`、`/api/v1/retrieve` 通过。
+- 插件轻量验证：`openclaw.plugin.json` 可解析；旧 `before_agent_reply` 和 mock 后端调用无残留。
