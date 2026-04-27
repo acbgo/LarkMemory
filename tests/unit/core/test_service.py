@@ -46,6 +46,37 @@ class TestService(unittest.TestCase):
         self.assertEqual(len(result.memory_ids), 1)
         self.assertIsNotNone(self.memory_store.get_memory(result.memory_ids[0]))
 
+    def test_ingest_event_emits_function_level_logs(self) -> None:
+        event = NormalizedEvent(
+            event_id="event-log",
+            event_type="chat_message",
+            source_type="feishu_chat",
+            occurred_at="2026-04-27T00:00:00Z",
+            context=EventContext(project_id="project-log"),
+            content_text="decision confirmed choose plan B because it is safer",
+        )
+
+        with self.assertLogs(level="INFO") as captured:
+            result = self.service.ingest_event(event)
+
+        logs = "\n".join(captured.output)
+        self.assertEqual(result.candidate_count, 1)
+        self.assertIn("function=src.core.service.MemoryService.ingest_event", logs)
+        self.assertIn("function=src.storage.event_store.EventStore.insert_event", logs)
+        self.assertIn("function=src.core.router.DomainRouter.route_event", logs)
+        self.assertIn(
+            "function=src.domains.project_decision.extractor.ProjectDecisionExtractor.extract",
+            logs,
+        )
+        self.assertIn(
+            "function=src.domains.project_decision.models.ProjectDecision.to_memory_core",
+            logs,
+        )
+        self.assertIn(
+            "function=src.storage.memory_core_store.MemoryCoreStore.insert_memory_core",
+            logs,
+        )
+
     def test_ingest_event_supersedes_old_project_decision(self) -> None:
         first = NormalizedEvent(
             event_id="event-old",
@@ -125,6 +156,34 @@ class TestService(unittest.TestCase):
 
         self.assertEqual(len(result.ranked_memories), 1)
         self.assertEqual(result.ranked_memories[0].item.memory_id, "mem-1")
+
+    def test_retrieve_emits_function_level_logs(self) -> None:
+        self.memory_store.insert_memory_core(
+            create_memory_core(
+                memory_id="mem-log",
+                domain="project_decision",
+                memory_type="decision",
+                scope="project",
+                source_type="feishu_chat",
+                source_ref="event-log",
+                content_text="Use SQLite for local memory storage",
+                importance=0.9,
+                confidence=0.9,
+                status="active",
+            )
+        )
+
+        with self.assertLogs(level="INFO") as captured:
+            result = self.service.retrieve(RetrievalQuery("SQLite"), top_k=1)
+
+        logs = "\n".join(captured.output)
+        self.assertEqual(len(result.ranked_memories), 1)
+        self.assertIn("function=src.core.service.MemoryService.retrieve", logs)
+        self.assertIn(
+            "function=src.storage.memory_core_store.MemoryCoreStore.list_active_memories",
+            logs,
+        )
+        self.assertIn("function=src.retrieval.rerank.Reranker.rerank", logs)
 
     def test_update_actions(self) -> None:
         for memory_id, text in [("mem-old", "old"), ("mem-new", "new"), ("mem-score", "score")]:

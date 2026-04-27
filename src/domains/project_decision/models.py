@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -7,6 +8,9 @@ from src.schemas import MemoryCore
 from src.utils.ids import memory_id
 from src.utils.text import clean_text, truncate_text
 from src.utils.time import utc_now_iso
+
+
+logger = logging.getLogger(__name__)
 
 
 DecisionStatus = Literal["proposed", "confirmed", "rejected", "superseded", "unknown"]
@@ -128,6 +132,12 @@ class ProjectDecision:
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_memory_core(self) -> MemoryCore:
+        logger.info(
+            "function=src.domains.project_decision.models.ProjectDecision.to_memory_core action=start decision_id=%s topic=%s status=%s",
+            self.decision_id,
+            self.topic,
+            self.status,
+        )
         scope = "project" if self.project_id else "team" if self.team_id else "workspace"
         entities = _unique(
             [
@@ -152,7 +162,7 @@ class ProjectDecision:
             ]
         )
         now = utc_now_iso()
-        return MemoryCore(
+        memory = MemoryCore(
             memory_id=self.decision_id,
             domain="project_decision",
             memory_type="project_decision",
@@ -174,6 +184,15 @@ class ProjectDecision:
             created_at=self.decided_at or now,
             updated_at=now,
         )
+        logger.info(
+            "function=src.domains.project_decision.models.ProjectDecision.to_memory_core action=done decision_id=%s memory_id=%s scope=%s entity_count=%s tag_count=%s",
+            self.decision_id,
+            memory.memory_id,
+            memory.scope,
+            len(memory.entities),
+            len(memory.tags),
+        )
+        return memory
 
     def build_content_text(self) -> str:
         lines = [
@@ -340,4 +359,3 @@ class ProjectDecisionCandidate:
         if self.decision.status == "unknown" and not self.signals:
             return False
         return True
-

@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from typing import Any
 
 from src.retrieval import IntentResult, RetrievalQuery
 from src.schemas import NormalizedEvent
 from src.utils.text import contains_any
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -31,14 +35,20 @@ class DomainRouter:
     def route_event(self, event: NormalizedEvent) -> RouteDecision:
         text = self._event_text(event)
         if event.event_type in {"command_finished", "command_failed"}:
-            return self._single("cli_workflow", "command event")
+            decision = self._single("cli_workflow", "command event")
+            self.log_event_decision(event, decision)
+            return decision
         if self._matches_project_decision(text):
-            return self._single("project_decision", "decision keywords")
+            decision = self._single("project_decision", "decision keywords")
+            self.log_event_decision(event, decision)
+            return decision
         if contains_any(text, ["偏好", "习惯", "默认", "喜欢", "prefer"]):
             return self._single("personal_preference", "preference keywords")
         if contains_any(text, ["提醒", "截止", "合规", "风险", "复习", "保留", "deadline", "risk"]):
             return self._single("team_retention", "retention keywords")
-        return self._fallback()
+        decision = self._fallback()
+        self.log_event_decision(event, decision)
+        return decision
 
     def route_query(
         self,
@@ -46,7 +56,7 @@ class DomainRouter:
         intent: IntentResult | None = None,
     ) -> RouteDecision:
         if intent is not None:
-            return RouteDecision(
+            decision = RouteDecision(
                 primary=[
                     RouteTarget(domain=domain.value, priority=1.0, reason="intent primary")
                     for domain in intent.primary_domains
@@ -57,6 +67,8 @@ class DomainRouter:
                 ],
                 reason="intent result",
             )
+            self.log_query_decision(query, decision)
+            return decision
         text = query.query_text
         if contains_any(text, ["deploy", "build", "command", "shell", "npm", "pytest", "命令", "构建", "部署"]):
             return self._single("cli_workflow", "query command keywords")
@@ -78,6 +90,28 @@ class DomainRouter:
             seen.add(target.domain)
             domains.append(target.domain)
         return domains
+
+    @staticmethod
+    def log_event_decision(event: NormalizedEvent, decision: RouteDecision) -> None:
+        logger.info(
+            "function=src.core.router.DomainRouter.route_event action=done event_id=%s primary_domains=%s secondary_domains=%s fallback_used=%s reason=%s",
+            event.event_id,
+            [target.domain for target in decision.primary],
+            [target.domain for target in decision.secondary],
+            decision.fallback_used,
+            decision.reason,
+        )
+
+    @staticmethod
+    def log_query_decision(query: RetrievalQuery, decision: RouteDecision) -> None:
+        del query
+        logger.info(
+            "function=src.core.router.DomainRouter.route_query action=done primary_domains=%s secondary_domains=%s fallback_used=%s reason=%s",
+            [target.domain for target in decision.primary],
+            [target.domain for target in decision.secondary],
+            decision.fallback_used,
+            decision.reason,
+        )
 
     def _fallback(self) -> RouteDecision:
         return RouteDecision(

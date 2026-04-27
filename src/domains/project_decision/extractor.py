@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import re
 from typing import Any
 
@@ -54,6 +55,7 @@ ALTERNATIVE_PATTERNS = (
 ALTERNATIVE_PATTERN = re.compile(r"方案\s*([A-Za-z0-9一二三四五六七八九十]+)")
 DEADLINE_PATTERN = re.compile(r"(截止日期|deadline)[是为:：\s]*([^，。；;\n]+)")
 SENTENCE_SPLIT_PATTERN = re.compile(r"[。！？\n;；]+")
+logger = logging.getLogger(__name__)
 
 
 class ProjectDecisionExtractor:
@@ -66,13 +68,26 @@ class ProjectDecisionExtractor:
     def extract(self, event: NormalizedEvent) -> list[ProjectDecisionCandidate]:
         text = self.collect_text(event)
         if not self.has_decision_signal(text):
+            logger.info(
+                "function=src.domains.project_decision.extractor.ProjectDecisionExtractor.extract action=no_signal event_id=%s text_length=%s",
+                event.event_id,
+                len(text),
+            )
             return []
         candidates = self.extract_from_text(text, context=event.context, event=event)
-        return [
+        admitted = [
             candidate
             for candidate in candidates
             if candidate.is_admissible(self.min_confidence)
         ]
+        logger.info(
+            "function=src.domains.project_decision.extractor.ProjectDecisionExtractor.extract action=done event_id=%s raw_candidate_count=%s admitted_count=%s min_confidence=%.2f",
+            event.event_id,
+            len(candidates),
+            len(admitted),
+            self.min_confidence,
+        )
+        return admitted
 
     def extract_from_text(
         self,
@@ -83,7 +98,15 @@ class ProjectDecisionExtractor:
     ) -> list[ProjectDecisionCandidate]:
         candidates = self._extract_rule_based(text, context=context, event=event)
         if candidates or self.llm_client is None:
+            logger.info(
+                "function=src.domains.project_decision.extractor.ProjectDecisionExtractor.extract_from_text action=rule_based candidate_count=%s llm_enabled=%s",
+                len(candidates),
+                self.llm_client is not None,
+            )
             return candidates
+        logger.info(
+            "function=src.domains.project_decision.extractor.ProjectDecisionExtractor.extract_from_text action=llm_fallback"
+        )
         return self._extract_with_llm(text, context=context, event=event)
 
     def collect_text(self, event: NormalizedEvent) -> str:

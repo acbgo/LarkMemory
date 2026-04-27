@@ -5,6 +5,7 @@
 codeReview
 plans
 logs/
+.larkmemory/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

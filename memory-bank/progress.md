@@ -65,6 +65,10 @@
   - `src/app/logging.py` 会在应用启动时写入 `logs/larkmemory.log`。
   - 可通过 `LARKMEMORY_LOG_DIR` 和 `LARKMEMORY_LOG_FILE` 覆盖日志目录与文件名。
   - `logs/` 已加入 `.gitignore`，避免运行日志进入版本库。
+- 已补充后端函数级链路日志：
+  - ingest 链路覆盖 API 入口、`MemoryService.ingest_event()`、事件写入、领域路由、项目决策抽取、`ProjectDecision.to_memory_core()` 和 MemoryCore 写入。
+  - retrieve 链路覆盖 API 入口、`MemoryService.retrieve()`、active memory 加载、候选构造、`Reranker.rerank()` 和访问记录。
+  - 日志字段包含 `event_id`、`query_id`、`memory_id`、`domain`、`candidate_count`、`result_count` 等调试关键字段。
 - 仓库已有基础 Python 模块：
   - `src/schemas/`
   - `src/storage/`
@@ -108,6 +112,7 @@
 
 - `pytest tests/unit/app -q`：24 passed。
 - `pytest tests/unit/api -q`：20 passed。
+- `pytest tests/unit/api tests/unit/core/test_service.py tests/unit/storage tests/unit/domains/project_decision tests/unit/retrieval -q`：73 passed, 1 skipped。
 - `pytest tests/unit/utils -q`：27 passed。
 - `pytest tests/unit/core -q`：33 passed。
 - `pytest tests/unit/domains/project_decision -q`：21 passed。

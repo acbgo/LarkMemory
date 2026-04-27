@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import uuid
 from typing import Any
 
@@ -13,6 +14,7 @@ from src.storage import MemoryCoreStore
 
 
 router = APIRouter(prefix="/api/v1", tags=["retrieve"])
+logger = logging.getLogger(__name__)
 
 
 def _new_query_id() -> str:
@@ -91,7 +93,15 @@ def retrieve_memories(
     memory_service: MemoryService = Depends(get_memory_service),
 ) -> RetrieveResponse:
     if not request.query_text.strip():
+        logger.warning("function=src.api.retrieve.retrieve_memories action=blank_query")
         raise HTTPException(status_code=422, detail="query_text cannot be blank")
+    logger.info(
+        "function=src.api.retrieve.retrieve_memories action=build_query top_k=%s include_trace=%s user_id=%s project_id=%s",
+        request.top_k,
+        request.include_trace,
+        request.user_id,
+        request.project_id,
+    )
     query = RetrievalQuery(
         query_text=request.query_text,
         user_id=request.user_id,
@@ -123,6 +133,11 @@ def retrieve_memories(
         )
         for ranked in result.ranked_memories
     ]
+    logger.info(
+        "function=src.api.retrieve.retrieve_memories action=done query_id=%s result_count=%s",
+        result.query_id,
+        len(hits),
+    )
     return RetrieveResponse(
         status="ok",
         query_id=result.query_id,
@@ -137,4 +152,5 @@ def search_memories_alias(
     request: RetrieveRequest,
     memory_service: MemoryService = Depends(get_memory_service),
 ) -> RetrieveResponse:
+    logger.info("function=src.api.retrieve.search_memories_alias action=delegate")
     return retrieve_memories(request, memory_service)

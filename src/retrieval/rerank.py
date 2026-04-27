@@ -203,8 +203,18 @@ class Reranker:
     ) -> list[RankedMemory]:
         """对融合后的候选列表进行重排，返回 top_k 结果。"""
         if not candidates:
+            logger.info(
+                "function=src.retrieval.rerank.Reranker.rerank action=empty top_k=%s",
+                top_k,
+            )
             return []
 
+        logger.info(
+            "function=src.retrieval.rerank.Reranker.rerank action=start candidate_count=%s top_k=%s use_llm_rerank=%s",
+            len(candidates),
+            top_k,
+            self._use_llm_rerank,
+        )
         scored = self._multi_factor_score(candidates, query)
 
         if self._use_llm_rerank and self._llm is not None:
@@ -221,6 +231,11 @@ class Reranker:
         result = scored[:top_k]
         for idx, rm in enumerate(result):
             rm.rank = idx + 1
+        logger.info(
+            "function=src.retrieval.rerank.Reranker.rerank action=done result_count=%s top_memory_ids=%s",
+            len(result),
+            [memory.item.memory_id for memory in result],
+        )
         return result
 
     # ------------------------------------------------------------------

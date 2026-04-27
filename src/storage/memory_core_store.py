@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any
 
 from src.schemas import MemoryCore
 
 from .base import SQLiteStore
+
+
+logger = logging.getLogger(__name__)
 
 
 class MemoryCoreStore(SQLiteStore):
@@ -57,6 +61,13 @@ class MemoryCoreStore(SQLiteStore):
         )
 
     def insert_memory_core(self, memory: MemoryCore) -> str:
+        logger.info(
+            "function=src.storage.memory_core_store.MemoryCoreStore.insert_memory_core action=start memory_id=%s domain=%s memory_type=%s status=%s",
+            memory.memory_id,
+            memory.domain,
+            memory.memory_type,
+            memory.status,
+        )
         self.execute(
             """
             INSERT INTO memory_core (
@@ -112,6 +123,10 @@ class MemoryCoreStore(SQLiteStore):
                 memory.created_at,
                 memory.updated_at,
             ),
+        )
+        logger.info(
+            "function=src.storage.memory_core_store.MemoryCoreStore.insert_memory_core action=inserted memory_id=%s",
+            memory.memory_id,
         )
         return memory.memory_id
 
@@ -194,6 +209,12 @@ class MemoryCoreStore(SQLiteStore):
         scope: str | None = None,
         limit: int = 100,
     ) -> list[dict[str, Any]]:
+        logger.info(
+            "function=src.storage.memory_core_store.MemoryCoreStore.list_active_memories action=start domain=%s scope=%s limit=%s",
+            domain,
+            scope,
+            limit,
+        )
         clauses = ["status = 'active'"]
         parameters: list[Any] = []
         if domain is not None:
@@ -210,7 +231,12 @@ class MemoryCoreStore(SQLiteStore):
         """.format(where_clause=" AND ".join(clauses))
         parameters.append(limit)
         rows = self.fetch_all(sql, tuple(parameters))
-        return [self._deserialize_row(row) for row in rows]
+        result = [self._deserialize_row(row) for row in rows]
+        logger.info(
+            "function=src.storage.memory_core_store.MemoryCoreStore.list_active_memories action=done row_count=%s",
+            len(result),
+        )
+        return result
 
     def search_memory_candidates(
         self,
