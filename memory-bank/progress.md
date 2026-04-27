@@ -26,6 +26,23 @@
   - `src/schemas/proactive.py`
   - `src/schemas/benchmark.py`
 - 已新增 `tests/unit/api/`，覆盖 health、ingest、retrieve、update、proactive、benchmark。
+- 已实现 Python Memory Engine 的 `src/utils/` 基础工具层：
+  - `ids.py`
+  - `time.py`
+  - `text.py`
+  - `jsonlog.py`
+- 已新增 `tests/unit/utils/`，覆盖 ID、UTC 时间、文本清洗和 JSON 日志工具。
+- 已实现 Python Memory Engine 的 `src/core/` 基础编排层：
+  - `router.py`
+  - `memory_core.py`
+  - `admission_control.py`
+  - `dedup_merge.py`
+  - `supersede.py`
+  - `decay.py`
+  - `access_tracker.py`
+  - `scheduler.py`
+  - `service.py`
+- 已新增 `tests/unit/core/`，覆盖路由、生命周期、准入、去重合并、覆盖、衰减、访问记录、调度和统一服务。
 - 仓库已有基础 Python 模块：
   - `src/schemas/`
   - `src/storage/`
@@ -39,11 +56,12 @@
 - 拆解 Python Memory Engine 的实现任务。
 - 明确记忆系统的 domain、存储、检索和生命周期治理边界。
 - 将白皮书、Demo 和自证评测报告的要求映射到代码实现计划。
-- 准备进入 core service 或第一个 demo domain 的实现阶段。
+- 准备将 API 层逐步迁移到 `MemoryService`，或进入第一个 demo domain 的实现阶段。
+- 后续 app/API 层可逐步迁移到 `src/utils/` 的 ID、时间、文本和 JSON 日志工具，但当前阶段未强制重构既有模块。
 
 ## 下一步建议
 
-1. 基于已完成的 app/API 层，设计最小 `src/core/service.py`。
+1. 基于已完成的 core 层，将 API 的 ingest/retrieve/update/proactive 逐步迁移为调用 `MemoryService`。
 2. 定义第一阶段最小记忆闭环：
    - ingest 一个 `NormalizedEvent`
    - 生成或写入 `MemoryCore`
@@ -68,6 +86,8 @@
 
 - `pytest tests/unit/app -q`：22 passed。
 - `pytest tests/unit/api -q`：18 passed。
+- `pytest tests/unit/utils -q`：27 passed。
+- `pytest tests/unit/core -q`：33 passed。
 - `pytest tests/unit/app tests/unit/api -q`：41 passed。
-- `pytest -q`：67 passed, 1 skipped。
+- `pytest -q`：127 passed, 1 skipped。
 - `python -m compileall src tests`：通过。
