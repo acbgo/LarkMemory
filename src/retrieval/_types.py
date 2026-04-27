@@ -7,7 +7,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
 from enum import Enum
 from typing import Any, Literal
 
@@ -63,6 +62,97 @@ class MemoryItem:
 
     # 领域专属扩展字段（由各 domain retriever 填充）
     extra: dict[str, Any] = field(default_factory=dict)
+
+
+_MEMORY_CORE_FIELDS = {
+    "memory_id",
+    "domain",
+    "memory_type",
+    "scope",
+    "source_type",
+    "source_ref",
+    "source_event_id",
+    "content_text",
+    "summary_text",
+    "entities",
+    "entities_json",
+    "tags",
+    "tags_json",
+    "importance",
+    "confidence",
+    "freshness_score",
+    "status",
+    "valid_from",
+    "valid_to",
+    "overwrite_of",
+    "superseded_by",
+    "trigger_policy_id",
+    "decay_policy_id",
+    "embedding_id",
+    "created_at",
+    "updated_at",
+}
+
+
+def memory_item_from_core(
+    memory: Any,
+    *,
+    extra: dict[str, Any] | None = None,
+) -> MemoryItem:
+    """将 schemas.MemoryCore 或 MemoryCoreStore row 转为检索层 MemoryItem。"""
+    data = memory if isinstance(memory, dict) else {
+        name: getattr(memory, name)
+        for name in _MEMORY_CORE_FIELDS
+        if hasattr(memory, name)
+    }
+
+    item_extra = {
+        key: value
+        for key, value in data.items()
+        if key not in _MEMORY_CORE_FIELDS and value is not None
+    }
+    for key in (
+        "source_type",
+        "source_event_id",
+        "valid_from",
+        "valid_to",
+        "overwrite_of",
+        "superseded_by",
+        "trigger_policy_id",
+        "decay_policy_id",
+        "embedding_id",
+    ):
+        value = data.get(key)
+        if value is not None:
+            item_extra[key] = value
+    if extra:
+        item_extra.update(extra)
+
+    entities = data.get("entities")
+    if entities is None:
+        entities = data.get("entities_json") or []
+    tags = data.get("tags")
+    if tags is None:
+        tags = data.get("tags_json") or []
+
+    return MemoryItem(
+        memory_id=str(data["memory_id"]),
+        domain=MemoryDomain(data["domain"]),
+        memory_type=str(data["memory_type"]),
+        content_text=str(data["content_text"]),
+        importance=float(data.get("importance", 0.5) or 0.0),
+        confidence=float(data.get("confidence", 0.5) or 0.0),
+        status=data.get("status", "active"),
+        scope=MemoryScope(data.get("scope", MemoryScope.USER.value)),
+        summary_text=data.get("summary_text"),
+        freshness_score=data.get("freshness_score"),
+        tags=list(tags),
+        entities=list(entities),
+        source_ref=data.get("source_ref"),
+        created_at=data.get("created_at"),
+        updated_at=data.get("updated_at"),
+        extra=item_extra,
+    )
 
 
 # ---------------------------------------------------------------------------
