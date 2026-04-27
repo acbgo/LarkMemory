@@ -73,6 +73,7 @@
   - `src/storage/team_retention_store.py` 只保留 SQLite 表结构、写入、读取、查询、复习计划更新和行转换。
   - `src/domains/team_retention/handler.py` 继续负责领域写入编排、重复强化、版本覆盖、复习提醒和领域更新动作。
   - `memory-bank/architecture.md` 已补充 `handler.py` 架构职责，并将 domain payload 表述统一为 domain memory。
+  - `memory-bank/architecture.md` 已将 `cli_workflow`、`personal_preference` 也补齐为包含 `handler.py` 的标准 domain 结构。
 - 已更新根目录 `README.md`，写入后端安装、测试、启动和手工验证步骤。
 - 已更新 OpenClaw 插件链路：
   - hook 从 `before_agent_reply` 调整为 `before_prompt_build`。

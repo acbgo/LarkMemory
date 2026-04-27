@@ -61,6 +61,7 @@ LarkMemory/
 │   ├── cli_workflow/               # CLI 命令、排障、部署和工作流
 │   │   ├── models.py
 │   │   ├── extractor.py
+│   │   ├── handler.py
 │   │   ├── retriever.py
 │   │   ├── ranker.py
 │   │   └── workflow_miner.py
@@ -74,6 +75,7 @@ LarkMemory/
 │   ├── personal_preference/        # 用户偏好、习惯和默认配置
 │   │   ├── models.py
 │   │   ├── extractor.py
+│   │   ├── handler.py
 │   │   ├── retriever.py
 │   │   ├── ranker.py
 │   │   └── pattern_miner.py
