@@ -163,7 +163,7 @@ class MemoryService:
                 if (
                     version_decision.should_supersede
                     and version_decision.old_memory_id
-                    and memory_id == candidate.decision.decision_id
+                        and memory_id == candidate.decision.decision_id
                 ):
                     self.project_decision_version_manager.apply_supersede(
                         version_decision.old_memory_id,
