@@ -29,6 +29,7 @@ class AppSettings:
 
 
 def _env_str(name: str, default: str | None) -> str | None:
+    """从环境变量读取字符串类型值，空值返回None"""
     value = os.getenv(name)
     if value is None:
         return default
@@ -38,6 +39,7 @@ def _env_str(name: str, default: str | None) -> str | None:
 
 
 def _env_int(name: str, default: int) -> int:
+    """从环境变量读取整数类型值，格式错误抛出异常"""
     value = os.getenv(name)
     if value is None or value == "":
         return default
@@ -48,6 +50,7 @@ def _env_int(name: str, default: int) -> int:
 
 
 def _env_float(name: str, default: float) -> float:
+    """从环境变量读取浮点类型值，格式错误抛出异常"""
     value = os.getenv(name)
     if value is None or value == "":
         return default
@@ -58,6 +61,7 @@ def _env_float(name: str, default: float) -> float:
 
 
 def _env_bool(name: str, default: bool) -> bool:
+    """从环境变量读取布尔类型值，支持1/true/yes/on和0/false/no/off格式"""
     value = os.getenv(name)
     if value is None or value == "":
         return default
@@ -70,6 +74,7 @@ def _env_bool(name: str, default: bool) -> bool:
 
 
 def load_settings() -> AppSettings:
+    """加载应用配置，优先从环境变量读取，否则使用默认值"""
     return AppSettings(
         app_name=_env_str("LARKMEMORY_APP_NAME", "LarkMemory Engine") or "LarkMemory Engine",
         env=_env_str("LARKMEMORY_ENV", "local") or "local",

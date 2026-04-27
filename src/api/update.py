@@ -11,6 +11,7 @@ router = APIRouter(prefix="/api/v1", tags=["update"])
 
 
 def _require(value: str | float | None, name: str) -> None:
+    """校验必填字段，缺失时抛出 400 错误。"""
     if value is None:
         raise HTTPException(status_code=400, detail=f"{name} is required")
 
@@ -19,6 +20,7 @@ def _update_memory_core(
     request: MemoryUpdateRequest,
     memory_service: MemoryService,
 ) -> MemoryUpdateResponse:
+    """根据动作类型执行记忆更新并统一返回结果。"""
     action = request.action
 
     try:
@@ -94,6 +96,7 @@ def update_memory(
     request: MemoryUpdateRequest,
     memory_service: MemoryService = Depends(get_memory_service),
 ) -> MemoryUpdateResponse:
+    """处理记忆更新主路由请求。"""
     return _update_memory_core(request, memory_service)
 
 
@@ -102,4 +105,5 @@ def update_memory_alias(
     request: MemoryUpdateRequest,
     memory_service: MemoryService = Depends(get_memory_service),
 ) -> MemoryUpdateResponse:
+    """处理记忆更新别名路由请求。"""
     return _update_memory_core(request, memory_service)

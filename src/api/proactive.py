@@ -20,6 +20,7 @@ def get_proactive_suggestions(
     limit: int = Query(default=10, ge=1, le=50),
     memory_service: MemoryService = Depends(get_memory_service),
 ) -> ProactiveResponse:
+    """按上下文查询主动提醒建议列表。"""
     suggestions = memory_service.proactive_suggestions(
         user_id=user_id,
         project_id=project_id,

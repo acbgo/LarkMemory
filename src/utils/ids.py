@@ -8,6 +8,7 @@ _PREFIX_PATTERN = re.compile(r"^[a-z0-9_]+$")
 
 
 def _normalize_prefix(prefix: str) -> str:
+    """规范化并校验 ID 前缀格式。"""
     normalized = prefix.strip().lower()
     if not normalized:
         raise ValueError("prefix cannot be empty")
@@ -17,6 +18,7 @@ def _normalize_prefix(prefix: str) -> str:
 
 
 def new_id(prefix: str, *, size: int = 12) -> str:
+    """按前缀生成指定长度随机后缀的 typed ID。"""
     normalized = _normalize_prefix(prefix)
     if size <= 0:
         raise ValueError("size must be greater than 0")
@@ -26,26 +28,32 @@ def new_id(prefix: str, *, size: int = 12) -> str:
 
 
 def event_id() -> str:
+    """生成事件类型 ID。"""
     return new_id("evt")
 
 
 def memory_id() -> str:
+    """生成记忆类型 ID。"""
     return new_id("mem")
 
 
 def query_id() -> str:
+    """生成查询类型 ID。"""
     return new_id("qry")
 
 
 def benchmark_run_id() -> str:
+    """生成评测运行类型 ID。"""
     return new_id("bench")
 
 
 def request_id() -> str:
+    """生成请求类型 ID。"""
     return new_id("req")
 
 
 def parse_typed_id(value: str) -> tuple[str, str]:
+    """解析 typed ID，返回前缀与随机部分。"""
     stripped = value.strip()
     if "-" not in stripped:
         raise ValueError(f"invalid typed id: {value!r}")
@@ -57,6 +65,7 @@ def parse_typed_id(value: str) -> tuple[str, str]:
 
 
 def is_typed_id(value: str, prefix: str | None = None) -> bool:
+    """判断字符串是否为合法 typed ID，并可限定前缀。"""
     try:
         parsed_prefix, _ = parse_typed_id(value)
         if prefix is None:
