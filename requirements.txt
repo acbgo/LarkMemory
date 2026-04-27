@@ -1,3 +1,4 @@
 fastapi
+neo4j
 uvicorn
 pytest

@@ -154,3 +154,16 @@
 - `python -m pytest tests -q -p no:cacheprovider`：177 passed, 6 subtests passed。
 - HTTP 手工验证：`/health`、`/api/v1/ingest`、`/api/v1/retrieve` 通过。
 - 插件轻量验证：`openclaw.plugin.json` 可解析；旧 `before_agent_reply` 和 mock 后端调用无残留。
+
+## 2026-04-27 图数据库 Store 进展
+
+- 已新增 `src/storage/graph_store.py`，采用 Neo4j 作为旁路 Graph Memory Index，不替代 SQLite 主存储。
+- 已定义 `Neo4jGraphConfig` 和 `Neo4jGraphStore`，支持 Neo4j 约束/索引初始化、Memory 节点写入、Entity 关系写入、Project/Team/Workspace/User 上下文关系写入、版本覆盖关系写入。
+- 已提供三类示例查询：`get_version_chain()`、`find_memories_by_entity()`、`find_project_context()`。
+- 已新增 `tests/unit/storage/test_graph_store.py`，通过 fake driver 验证 Cypher、参数和查询返回，不依赖本机 Neo4j 服务。
+- 已在 `requirements.txt` 增加 `neo4j` Python driver。
+- 验证：`python -m pytest tests\unit\storage -q -p no:cacheprovider`，27 passed。
+- 验证：`python -m pytest tests -q -p no:cacheprovider`，184 passed, 6 subtests passed。
+- 已补充显式 `Decision` 图模型：`Decision` 节点约束/索引、`upsert_project_decision()`、`MADE_DECISION`、`RECORDED_AS`、`BELONGS_TO`、`find_decisions_by_user()` 和 `find_project_decisions()`。
+- 验证：`python -m pytest tests\unit\storage -q -p no:cacheprovider`，32 passed。
+- 验证：`python -m pytest tests -q -p no:cacheprovider`，189 passed, 6 subtests passed。
