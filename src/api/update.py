@@ -37,6 +37,21 @@ def _update_memory_core(
                 updated=result.updated,
                 message=result.message,
             )
+        if action in {"reviewed", "snooze"}:
+            result = memory_service.update_memory(
+                action,
+                memory_id=request.memory_id,
+                feedback_signal=request.feedback_signal,
+                reviewed_at=request.reviewed_at,
+                snooze_days=request.snooze_days,
+            )
+            return MemoryUpdateResponse(
+                status="ok",
+                action=result.action,
+                memory_id=result.memory_id,
+                updated=result.updated,
+                message=result.message,
+            )
         if action == "feedback":
             if request.memory_id and request.feedback_signal:
                 result = memory_service.update_memory(

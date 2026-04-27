@@ -36,7 +36,11 @@ class DomainRouter:
             return self._single("project_decision", "decision keywords")
         if contains_any(text, ["偏好", "习惯", "默认", "喜欢", "prefer"]):
             return self._single("personal_preference", "preference keywords")
-        if contains_any(text, ["提醒", "截止", "合规", "风险", "复习", "保留", "deadline", "risk"]):
+        if contains_any(text, [
+            "提醒", "截止", "合规", "风险", "复习", "保留",
+            "长期记住", "团队记住", "不要忘", "请记录", "客户要求", "客户偏好",
+            "密钥", "竞品", "遗忘", "deadline", "risk", "remember", "retention",
+        ]):
             return self._single("team_retention", "retention keywords")
         return self._fallback()
 
@@ -64,7 +68,11 @@ class DomainRouter:
             return self._single("project_decision", "query decision keywords")
         if contains_any(text, ["偏好", "习惯", "默认", "prefer", "usually"]):
             return self._single("personal_preference", "query preference keywords")
-        if contains_any(text, ["提醒", "deadline", "risk", "合规", "风险", "截止"]):
+        if contains_any(text, [
+            "提醒", "deadline", "risk", "合规", "风险", "截止",
+            "长期记住", "团队记住", "不要忘", "客户要求", "客户偏好",
+            "密钥", "竞品", "遗忘", "复习", "remember", "retention",
+        ]):
             return self._single("team_retention", "query retention keywords")
         return self._fallback()
 

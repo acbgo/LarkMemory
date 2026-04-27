@@ -5,7 +5,7 @@ from functools import lru_cache
 from src.app.config import AppSettings, load_settings
 from src.core import MemoryService
 from src.llm import LLMClient
-from src.storage import EmbeddingStore, EventStore, MemoryCoreStore
+from src.storage import EmbeddingStore, EventStore, MemoryCoreStore, TeamRetentionStore
 
 
 @lru_cache(maxsize=1)
@@ -23,6 +23,13 @@ def get_event_store() -> EventStore:
 @lru_cache(maxsize=1)
 def get_memory_core_store() -> MemoryCoreStore:
     store = MemoryCoreStore(get_settings().sqlite_path)
+    store.create_table()
+    return store
+
+
+@lru_cache(maxsize=1)
+def get_team_retention_store() -> TeamRetentionStore:
+    store = TeamRetentionStore(get_settings().sqlite_path)
     store.create_table()
     return store
 
@@ -59,6 +66,7 @@ def get_memory_service() -> MemoryService:
     return MemoryService(
         event_store=get_event_store(),
         memory_store=get_memory_core_store(),
+        team_retention_store=get_team_retention_store(),
         embedding_store=get_embedding_store(),
         llm_client=get_llm_client(),
     )
@@ -68,6 +76,7 @@ def reset_dependency_cache() -> None:
     get_settings.cache_clear()
     get_event_store.cache_clear()
     get_memory_core_store.cache_clear()
+    get_team_retention_store.cache_clear()
     get_embedding_store.cache_clear()
     get_llm_client.cache_clear()
     get_memory_service.cache_clear()

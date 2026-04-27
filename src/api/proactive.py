@@ -1,7 +1,9 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
 
+from src.app.dependencies import get_memory_service
+from src.core import MemoryService
 from src.schemas import ProactiveResponse
 
 
@@ -13,11 +15,21 @@ def get_proactive_suggestions(
     user_id: str | None = None,
     project_id: str | None = None,
     team_id: str | None = None,
+    workspace_id: str | None = None,
+    now: str | None = None,
     limit: int = Query(default=10, ge=1, le=50),
+    memory_service: MemoryService = Depends(get_memory_service),
 ) -> ProactiveResponse:
-    del user_id, project_id, team_id, limit
+    suggestions = memory_service.proactive_suggestions(
+        user_id=user_id,
+        project_id=project_id,
+        team_id=team_id,
+        workspace_id=workspace_id,
+        limit=limit,
+        now=now,
+    )
     return ProactiveResponse(
         status="ok",
-        suggestions=[],
-        message="proactive scheduler not implemented",
+        suggestions=suggestions,
+        message="team_retention review scheduler",
     )

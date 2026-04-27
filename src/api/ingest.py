@@ -62,6 +62,7 @@ def ingest_event(
         status="ok",
         event_id=result.event_id,
         stored=result.stored,
+        memory_ids=result.memory_ids,
         memory_candidates=result.candidate_count,
         message=result.message,
     )

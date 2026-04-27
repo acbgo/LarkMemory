@@ -13,6 +13,8 @@ UpdateAction = Literal[
     "forget",
     "confidence",
     "importance",
+    "reviewed",
+    "snooze",
 ]
 
 
@@ -25,6 +27,8 @@ class MemoryUpdateRequest(BaseModel):
     importance: float | None = None
     feedback_signal: str | None = None
     content_text: str | None = None
+    reviewed_at: str | None = None
+    snooze_days: int | None = None
     context: dict[str, Any] = Field(default_factory=dict)
 
 
