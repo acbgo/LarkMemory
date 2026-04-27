@@ -50,3 +50,40 @@ def test_detects_and_applies_team_retention_supersede() -> None:
         assert team_store.get_review_schedule("mem-old").active is False
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+def test_does_not_supersede_different_projects_in_same_team() -> None:
+    root = Path.cwd() / ".tmp-tests"
+    root.mkdir(exist_ok=True)
+    temp_dir = root / f"team-retention-version-scope-{uuid.uuid4().hex}"
+    temp_dir.mkdir()
+    try:
+        db_path = str(temp_dir / "memory.db")
+        memory_store = MemoryCoreStore(db_path)
+        memory_store.create_table()
+        team_store = TeamRetentionStore(db_path)
+        team_store.create_table()
+        old = TeamRetentionMemory(
+            retention_id="mem-old",
+            team_id="team-1",
+            project_id="project-a",
+            fact_type="customer_preference",
+            fact_value="客户 A 要求导出 xlsx",
+            version_group="team-1:customer-a-export",
+        )
+        new = TeamRetentionMemory(
+            retention_id="mem-new",
+            team_id="team-1",
+            project_id="project-b",
+            fact_type="customer_preference",
+            fact_value="客户 A 现在接受 csv",
+            version_group="team-1:customer-a-export",
+        )
+        memory_store.insert_memory_core(old.to_memory_core())
+        team_store.insert_memory(old)
+
+        decision = TeamRetentionVersionManager(memory_store, team_store).detect_update(new)
+
+        assert not decision.should_supersede
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)

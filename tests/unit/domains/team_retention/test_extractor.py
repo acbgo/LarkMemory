@@ -50,5 +50,29 @@ def test_extracts_from_payload_fields() -> None:
     assert candidates[0].memory.risk_level == "high"
 
 
+def test_masks_api_key_secret_in_fact_value() -> None:
+    candidates = TeamRetentionExtractor().extract(
+        _event(
+            "请团队长期记住：api key = sk-abcdefghijklmnopqrstuvwxyz 已更新，旧 key 不再使用。",
+        )
+    )
+
+    assert len(candidates) == 1
+    assert "sk-abcdefghijklmnopqrstuvwxyz" not in candidates[0].memory.fact_value
+    assert "[REDACTED]" in candidates[0].memory.fact_value
+
+
+def test_auto_version_group_uses_customer_identifier() -> None:
+    first = TeamRetentionExtractor().extract(
+        _event("请团队长期记住：客户 A 要求所有导出文件使用 xlsx。")
+    )[0].memory
+    second = TeamRetentionExtractor().extract(
+        _event("请团队长期记住：客户 B 要求所有导出文件使用 csv。")
+    )[0].memory
+
+    assert first.version_group != second.version_group
+    assert "customer-a" in first.version_group
+
+
 def test_without_retention_signal_returns_empty_list() -> None:
     assert TeamRetentionExtractor().extract(_event("下午同步一下项目状态")) == []

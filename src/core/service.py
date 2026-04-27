@@ -140,6 +140,14 @@ class MemoryService:
         elif primary_domain == "team_retention":
             candidates = self.team_retention_extractor.extract(event)
             for candidate in candidates:
+                duplicate_retention_id = self._find_duplicate_team_retention(candidate.memory)
+                if duplicate_retention_id is not None:
+                    memory_ids.append(duplicate_retention_id)
+                    self.team_retention_store.reinforce_review(
+                        duplicate_retention_id,
+                        observed_at=event.occurred_at,
+                    )
+                    continue
                 version_decision = self.team_retention_version_manager.detect_update(
                     candidate.memory
                 )
@@ -159,6 +167,11 @@ class MemoryService:
                             version_decision.old_memory_id,
                             memory_id,
                         )
+                else:
+                    self.team_retention_store.reinforce_review(
+                        memory_id,
+                        observed_at=event.occurred_at,
+                    )
         return IngestResult(
             event_id=event_id,
             stored=True,
@@ -194,28 +207,32 @@ class MemoryService:
         query_id = new_query_id()
         intent = _run_async(IntentAnalyzer(self.llm_client).analyze(query))
         primary_domains = {domain.value for domain in intent.primary_domains}
-        if "team_retention" in primary_domains:
+        scoped_query = bool(query.team_id or query.project_id or query.workspace_id)
+        explicit_team_intent = bool(intent.keywords or scoped_query)
+        if "team_retention" in primary_domains and explicit_team_intent:
             results = self.team_retention_retriever.retrieve(query, limit=top_k)
-            if results:
-                ranked = [result.to_ranked_memory(rank=index + 1) for index, result in enumerate(results)]
-                for result in ranked:
-                    self.access_tracker.record_access(result.item.memory_id, query_id=query_id)
-                trace = None
-                if include_trace:
-                    trace = {
-                        "mode": "team_retention",
-                        "candidate_count": len(results),
-                        "result_count": len(ranked),
-                        "intent": [domain.value for domain in intent.primary_domains],
-                    }
-                return RetrieveResult(
-                    query_id=query_id,
-                    ranked_memories=ranked,
-                    trace=trace,
-                    message="team_retention retriever",
-                )
+            ranked = [result.to_ranked_memory(rank=index + 1) for index, result in enumerate(results)]
+            for result in ranked:
+                self.access_tracker.record_access(result.item.memory_id, query_id=query_id)
+            trace = None
+            if include_trace:
+                trace = {
+                    "mode": "team_retention",
+                    "candidate_count": len(results),
+                    "result_count": len(ranked),
+                    "intent": [domain.value for domain in intent.primary_domains],
+                }
+            return RetrieveResult(
+                query_id=query_id,
+                ranked_memories=ranked,
+                trace=trace,
+                message="team_retention retriever",
+            )
         rewritten = _run_async(QueryRewriter(self.llm_client).rewrite(query, intent))
-        rows = self.memory_store.list_active_memories(limit=max(top_k * 5, 20))
+        rows = self._filter_rows_by_query_scope(
+            self.memory_store.list_active_memories(limit=max(top_k * 5, 20)),
+            query,
+        )
         candidates = [
             FusedCandidate(
                 item=memory_item_from_core(row),
@@ -257,22 +274,27 @@ class MemoryService:
         if action in {"expire", "forget"}:
             if memory_id is None:
                 raise ValueError("memory_id is required")
+            self._require_memory_exists(memory_id)
             self.memory_store.update_memory_status(memory_id, "expired" if action == "expire" else "forgotten")
             self.team_retention_store.deactivate_review(memory_id)
             return UpdateResult(action=action, memory_id=memory_id, updated=True)
         if action == "supersede":
             if memory_id is None or new_memory_id is None:
                 raise ValueError("memory_id and new_memory_id are required")
+            self._require_memory_exists(memory_id)
+            self._require_memory_exists(new_memory_id)
             self.supersede.mark_superseded(memory_id, new_memory_id)
             return UpdateResult(action=action, memory_id=memory_id, updated=True)
         if action == "confidence":
             if memory_id is None or confidence is None:
                 raise ValueError("memory_id and confidence are required")
+            self._require_memory_exists(memory_id)
             self.memory_store.update_confidence(memory_id, confidence)
             return UpdateResult(action=action, memory_id=memory_id, updated=True)
         if action == "importance":
             if memory_id is None or importance is None:
                 raise ValueError("memory_id and importance are required")
+            self._require_memory_exists(memory_id)
             self.memory_store.update_importance(memory_id, importance)
             return UpdateResult(action=action, memory_id=memory_id, updated=True)
         if action == "feedback":
@@ -319,10 +341,12 @@ class MemoryService:
         workspace_id: str | None = None,
         limit: int = 10,
         now: str | None = None,
+        warning_window_hours: int = 24,
     ) -> list[dict[str, Any]]:
         del user_id
         due = self.team_retention_store.list_due_reviews(
             now=now,
+            warning_window_hours=warning_window_hours,
             team_id=team_id,
             project_id=project_id,
             workspace_id=workspace_id,
@@ -366,7 +390,61 @@ class MemoryService:
         return suggestions
 
     def run_maintenance(self) -> dict[str, ScheduledTaskResult]:
-        return Scheduler(self.memory_store, self.decay_policy).run_once()
+        return Scheduler(
+            self.memory_store,
+            self.decay_policy,
+            team_retention_store=self.team_retention_store,
+        ).run_once()
+
+    def _require_memory_exists(self, memory_id: str) -> None:
+        if self.memory_store.get_memory(memory_id) is None:
+            raise ValueError(f"memory not found: {memory_id}")
+
+    def _filter_rows_by_query_scope(
+        self,
+        rows: list[dict[str, Any]],
+        query: RetrievalQuery,
+    ) -> list[dict[str, Any]]:
+        scoped_query = bool(query.team_id or query.project_id or query.workspace_id or query.user_id)
+        result: list[dict[str, Any]] = []
+        for row in rows:
+            if row.get("domain") == "team_retention" and not scoped_query:
+                continue
+            terms = [
+                *(row.get("entities") or row.get("entities_json") or []),
+                row.get("source_ref") or "",
+            ]
+            if query.team_id and not self._row_has_scope(terms, "team_id", query.team_id):
+                continue
+            if query.project_id and not self._row_has_scope(terms, "project_id", query.project_id):
+                continue
+            if query.workspace_id and not self._row_has_scope(terms, "workspace_id", query.workspace_id):
+                continue
+            if query.user_id and row.get("scope") == "user" and not self._row_has_scope(terms, "user_id", query.user_id):
+                continue
+            result.append(row)
+        return result
+
+    def _row_has_scope(self, terms: list[str], key: str, value: str) -> bool:
+        return value in terms or f"{key}:{value}" in terms
+
+    def _find_duplicate_team_retention(self, memory: Any) -> str | None:
+        if not memory.version_group:
+            return None
+        existing = self.team_retention_store.list_memories(
+            team_id=memory.team_id,
+            project_id=memory.project_id,
+            workspace_id=memory.workspace_id,
+            fact_type=memory.fact_type,
+            version_group=memory.version_group,
+            limit=20,
+        )
+        for item in existing:
+            if item.fact_value.strip() == memory.fact_value.strip():
+                row = self.memory_store.get_memory(item.retention_id)
+                if row is not None and row.get("status") == "active":
+                    return item.retention_id
+        return None
 
 
 def _run_async(awaitable: Any) -> Any:

@@ -502,19 +502,23 @@ class TeamRetentionStore(SQLiteStore):
         self,
         *,
         now: str | None = None,
+        warning_window_hours: int = 0,
         team_id: str | None = None,
         project_id: str | None = None,
         workspace_id: str | None = None,
         limit: int = 10,
     ) -> list[TeamReviewSchedule]:
         effective_now = now or utc_now_iso()
+        cutoff = effective_now
+        if warning_window_hours > 0:
+            cutoff = format_iso(parse_iso(effective_now) + timedelta(hours=warning_window_hours))
         clauses = [
             "domain = 'team_retention'",
             "active = 1",
             "next_review_at IS NOT NULL",
             "next_review_at <= ?",
         ]
-        parameters: list[Any] = [effective_now]
+        parameters: list[Any] = [cutoff]
         for column, value in (
             ("team_id", team_id),
             ("project_id", project_id),
@@ -570,9 +574,17 @@ class TeamRetentionStore(SQLiteStore):
         )
         return next_review_at
 
+    def reinforce_review(self, memory_id: str, *, observed_at: str | None = None) -> str:
+        """Strengthen a repeated team memory mention by advancing its review curve."""
+        if self.get_memory(memory_id) is None:
+            raise ValueError(f"team retention memory not found: {memory_id}")
+        return self.mark_reviewed(memory_id, reviewed_at=observed_at)
+
     def snooze_review(self, memory_id: str, *, days: int = 1, now: str | None = None) -> str:
         if days <= 0:
             raise ValueError("days must be greater than 0")
+        if self.get_review_schedule(memory_id) is None:
+            raise ValueError(f"review schedule not found: {memory_id}")
         reference = parse_iso(now or utc_now_iso())
         next_review_at = format_iso(reference + timedelta(days=days))
         self.execute(

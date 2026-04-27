@@ -57,3 +57,17 @@ def test_retrieve_filters_by_team_id_and_query_text() -> None:
         assert "query_text" in results[0].matched_fields
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+def test_retrieve_requires_scope_to_avoid_cross_team_leakage() -> None:
+    memory_store, team_store, temp_dir = _stores()
+    try:
+        _insert(memory_store, team_store, "mem-team-1", team_id="team-1")
+
+        results = TeamRetentionRetriever(memory_store, team_store).retrieve(
+            TeamRetentionQuery(query_text="客户 A xlsx")
+        )
+
+        assert results == []
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)

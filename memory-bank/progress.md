@@ -62,6 +62,7 @@
   - `MemoryService.proactive_suggestions()` 已可基于复习计划输出 `review_reminder`。
   - `MemoryService.update_memory()` 已支持 `reviewed` 和 `snooze`，用于推进遗忘曲线复习计划。
   - `src/api/proactive.py` 已接入 `MemoryService`，支持 team/project/workspace/now 过滤。
+  - 已补强方向 D 的安全与边界：team_retention 路由优先级高于 project_decision 显式保留消息；团队检索必须带 scope；MemoryCore fallback 默认不返回无 scope 的团队记忆；版本覆盖要求项目/团队/工作区维度一致；自动 version_group 使用更细的客户/事项标识；重复注入会强化复习计划；后台 `Scheduler.scan_review_due()` 已接入团队复习提醒；复习提醒支持提前预警窗口；更新不存在 memory 会报错；API key/token/password 等敏感值会掩码后存储和推送。
 - 已更新根目录 `README.md`，写入后端安装、测试、启动和手工验证步骤。
 - 已更新 OpenClaw 插件链路：
   - hook 从 `before_agent_reply` 调整为 `before_prompt_build`。
@@ -121,7 +122,8 @@
 - `pytest tests/unit/core -q`：33 passed。
 - `pytest tests/unit/domains/project_decision -q`：21 passed。
 - `python -m pytest tests/unit/storage/test_team_retention_store.py tests/unit/domains/team_retention tests/unit/core/test_service.py tests/unit/api/test_proactive_api.py tests/unit/api/test_update_api.py -q`：26 passed。
-- `python -m pytest tests -q -p no:cacheprovider`：165 passed, 6 subtests passed。
+- `python -m pytest tests/unit/core/test_router.py tests/unit/domains/team_retention tests/unit/storage/test_team_retention_store.py tests/unit/core/test_service.py tests/unit/api/test_proactive_api.py tests/unit/api/test_update_api.py -q -p no:cacheprovider`：40 passed。
+- `python -m pytest tests -q -p no:cacheprovider`：175 passed, 6 subtests passed。
 - `pytest tests/unit/app tests/unit/api tests/unit/core tests/unit/domains/project_decision -q`：99 passed。
 - `pytest tests/unit/app tests/unit/api -q`：41 passed。
 - `pytest -q`：152 passed, 1 skipped。

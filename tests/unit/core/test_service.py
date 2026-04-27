@@ -227,3 +227,63 @@ class TestService(unittest.TestCase):
         self.assertEqual(self.memory_store.get_memory(old_id)["status"], "superseded")
         self.assertEqual(self.memory_store.get_memory(old_id)["superseded_by"], new_id)
         self.assertFalse(self.team_retention_store.get_review_schedule(old_id).active)
+
+    def test_team_retention_retrieve_without_scope_returns_empty_no_fallback(self) -> None:
+        event = NormalizedEvent(
+            event_id="event-retention-scope",
+            event_type="chat_message",
+            source_type="feishu_chat",
+            occurred_at="2026-04-27T00:00:00Z",
+            context=EventContext(team_id="team-1", project_id="project-1"),
+            content_text="请团队长期记住：客户 A 要求所有导出文件使用 xlsx。",
+        )
+        self.service.ingest_event(event)
+
+        result = self.service.retrieve(RetrievalQuery("team 客户 A xlsx"), include_trace=True)
+
+        self.assertEqual(result.ranked_memories, [])
+        self.assertEqual(result.trace["mode"], "team_retention")
+
+    def test_duplicate_team_retention_reinforces_review_schedule(self) -> None:
+        event = NormalizedEvent(
+            event_id="event-retention-dup-1",
+            event_type="chat_message",
+            source_type="feishu_chat",
+            occurred_at="2026-04-27T00:00:00Z",
+            context=EventContext(team_id="team-1", project_id="project-1"),
+            content_text="请团队长期记住：客户 A 要求导出文件使用 xlsx。",
+        )
+        duplicate = NormalizedEvent(
+            event_id="event-retention-dup-2",
+            event_type="chat_message",
+            source_type="feishu_chat",
+            occurred_at="2026-04-28T00:00:00Z",
+            context=EventContext(team_id="team-1", project_id="project-1"),
+            content_text="请团队长期记住：客户 A 要求导出文件使用 xlsx。",
+        )
+
+        memory_id = self.service.ingest_event(event).memory_ids[0]
+        duplicate_id = self.service.ingest_event(duplicate).memory_ids[0]
+
+        self.assertEqual(duplicate_id, memory_id)
+        self.assertEqual(self.team_retention_store.get_review_schedule(memory_id).review_count, 1)
+
+    def test_update_missing_memory_returns_error(self) -> None:
+        with self.assertRaises(ValueError):
+            self.service.update_memory("expire", memory_id="missing-memory")
+
+    def test_maintenance_includes_team_review_due_suggestions(self) -> None:
+        event = NormalizedEvent(
+            event_id="event-retention-maintenance",
+            event_type="chat_message",
+            source_type="feishu_chat",
+            occurred_at="2026-04-27T00:00:00Z",
+            context=EventContext(team_id="team-1", project_id="project-1"),
+            content_text="请团队长期记住：API key 已更新，旧 key 不再使用。",
+        )
+        self.service.ingest_event(event)
+
+        result = self.service.run_maintenance()
+
+        self.assertIn("review_due", result)
+        self.assertGreaterEqual(len(result["review_due"].suggestions), 1)
