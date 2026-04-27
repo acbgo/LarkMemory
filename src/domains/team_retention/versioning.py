@@ -3,7 +3,9 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from src.storage import MemoryCoreStore, TeamRetentionMemory, TeamRetentionStore
+from src.storage import MemoryCoreStore, TeamRetentionStore
+
+from .models import TeamRetentionMemory
 
 
 @dataclass(slots=True)
@@ -72,12 +74,17 @@ class TeamRetentionVersionManager:
         self.team_retention_store.deactivate_review(old_memory_id)
 
     def _same_scope(self, left: TeamRetentionMemory, right: TeamRetentionMemory) -> bool:
-        if left.team_id and right.team_id:
-            return left.team_id == right.team_id
-        if left.project_id and right.project_id:
-            return left.project_id == right.project_id
-        if left.workspace_id and right.workspace_id:
-            return left.workspace_id == right.workspace_id
+        if left.project_id or right.project_id:
+            if not left.project_id or not right.project_id or left.project_id != right.project_id:
+                return False
+        if left.team_id or right.team_id:
+            if not left.team_id or not right.team_id or left.team_id != right.team_id:
+                return False
+        if left.workspace_id or right.workspace_id:
+            if not left.workspace_id or not right.workspace_id or left.workspace_id != right.workspace_id:
+                return False
+        if left.project_id or left.team_id or left.workspace_id or right.project_id or right.team_id or right.workspace_id:
+            return True
         return False
 
     def _version_group_score(self, left: TeamRetentionMemory, right: TeamRetentionMemory) -> float:

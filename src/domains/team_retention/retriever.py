@@ -5,9 +5,10 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from src.retrieval import MemoryItem, RankedMemory, RetrievalQuery, memory_item_from_core
-from src.storage import MemoryCoreStore, TeamRetentionMemory, TeamRetentionStore
+from src.storage import MemoryCoreStore, TeamRetentionStore
 from src.utils.text import clean_text
 
+from .models import TeamRetentionMemory
 from .ranker import TeamRetentionRanker
 
 
@@ -79,6 +80,8 @@ class TeamRetentionRetriever:
         if effective_limit < 1:
             raise ValueError("limit must be greater than 0")
         domain_query = self._coerce_query(query, limit=effective_limit)
+        if not (domain_query.team_id or domain_query.project_id or domain_query.workspace_id):
+            return []
         rows = self._load_candidates(domain_query, limit=effective_limit)
         filtered = self._filter_candidates(rows, domain_query)
         scored = self._score_matches(filtered, domain_query)

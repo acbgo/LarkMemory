@@ -4,7 +4,8 @@ import shutil
 import uuid
 from pathlib import Path
 
-from src.storage import TeamRetentionMemory, TeamRetentionStore
+from src.domains.team_retention.models import TeamRetentionMemory
+from src.storage import TeamRetentionStore
 
 
 def _store() -> TeamRetentionStore:
@@ -66,5 +67,37 @@ def test_review_schedule_due_review_and_mark_reviewed() -> None:
         assert due[0].memory_id == "mem-team-1"
         assert next_review_at == "2026-04-30T00:00:00Z"
         assert store.get_review_schedule("mem-team-1").review_count == 1
+    finally:
+        _cleanup(store)
+
+
+def test_due_reviews_support_warning_window_and_snooze_missing_schedule_fails() -> None:
+    store = _store()
+    try:
+        memory = TeamRetentionMemory(
+            retention_id="mem-team-1",
+            team_id="team-1",
+            fact_value="客户 A 要求导出 xlsx",
+            risk_level="medium",
+            created_at="2026-04-27T00:00:00Z",
+        )
+        store.insert_memory(memory)
+        store.create_review_schedule(memory)
+
+        not_due = store.list_due_reviews(now="2026-04-27T12:00:00Z", team_id="team-1")
+        warning = store.list_due_reviews(
+            now="2026-04-27T12:00:00Z",
+            warning_window_hours=12,
+            team_id="team-1",
+        )
+
+        assert not_due == []
+        assert len(warning) == 1
+        try:
+            store.snooze_review("missing")
+        except ValueError as exc:
+            assert "review schedule not found" in str(exc)
+        else:
+            raise AssertionError("missing schedule should fail")
     finally:
         _cleanup(store)

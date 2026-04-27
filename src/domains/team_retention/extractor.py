@@ -1,12 +1,21 @@
 from __future__ import annotations
 
+import hashlib
 import re
 from dataclasses import dataclass
 from typing import Any
 
 from src.schemas import EventContext, NormalizedEvent
-from src.storage import TeamRetentionMemory
 from src.utils.text import clean_text
+
+from .models import TeamRetentionMemory
+
+
+SECRET_PATTERNS = (
+    re.compile(r"(?i)(api[_\s-]*key|secret|token|password|passwd|pwd)(\s*[:=]\s*)([A-Za-z0-9_\-./+=]{6,})"),
+    re.compile(r"\b(sk-[A-Za-z0-9_\-]{8,})\b"),
+    re.compile(r"\b(AKIA[0-9A-Z]{12,})\b"),
+)
 
 
 RETENTION_KEYWORDS = (
@@ -89,7 +98,8 @@ class TeamRetentionExtractor:
         event: NormalizedEvent,
     ) -> TeamRetentionCandidate:
         payload = event.payload
-        fact_value = self._payload_str(payload, "fact_value") or self._infer_fact_value(text)
+        raw_fact_value = self._payload_str(payload, "fact_value") or self._infer_fact_value(text)
+        fact_value = self._mask_secrets(raw_fact_value)
         fact_type = self._payload_str(payload, "fact_type") or self._infer_fact_type(text)
         risk_level = self._payload_str(payload, "risk_level") or self._infer_risk_level(text, fact_type)
         review_policy = self._payload_str(payload, "review_policy") or "ebbinghaus"
@@ -130,6 +140,7 @@ class TeamRetentionExtractor:
             metadata={
                 "signals": signals,
                 "source_payload_keys": sorted(payload.keys()),
+                "secret_masked": fact_value != raw_fact_value,
             },
         )
         return TeamRetentionCandidate(
@@ -191,9 +202,33 @@ class TeamRetentionExtractor:
         context: EventContext,
     ) -> str:
         scope = context.team_id or context.project_id or context.workspace_id or "global"
-        terms = re.findall(r"[\u4e00-\u9fff]{2,}|[A-Za-z0-9_\-]{2,}", fact_value)
-        topic = terms[0] if terms else "general"
+        topic = self._infer_version_topic(fact_value)
         return f"{scope}:{fact_type}:{topic}".lower()
+
+    def _infer_version_topic(self, fact_value: str) -> str:
+        customer_match = re.search(r"(客户|客戶)\s*([A-Za-z0-9_\-\u4e00-\u9fff]{1,12})", fact_value)
+        if customer_match:
+            tail = re.findall(r"导出|文件|密钥|key|合规|截止|竞品|偏好|要求", fact_value, flags=re.IGNORECASE)
+            suffix = "-".join(tail[:2]) if tail else "general"
+            return f"customer-{customer_match.group(2)}-{suffix}"
+        key_terms = [
+            term
+            for term in re.findall(r"[\u4e00-\u9fff]{2,}|[A-Za-z0-9_\-]{2,}", fact_value)
+            if term not in {"客户", "要求", "团队", "长期", "记住", "现在", "接受", "必须"}
+        ]
+        if key_terms:
+            return "-".join(key_terms[:3])
+        digest = hashlib.sha1(fact_value.encode("utf-8")).hexdigest()[:10]
+        return f"fact-{digest}"
+
+    def _mask_secrets(self, text: str) -> str:
+        masked = text
+        for pattern in SECRET_PATTERNS:
+            if pattern.groups >= 3:
+                masked = pattern.sub(lambda m: f"{m.group(1)}{m.group(2)}[REDACTED]", masked)
+            else:
+                masked = pattern.sub("[REDACTED]", masked)
+        return masked
 
     def _source_ref(self, context: EventContext, event: NormalizedEvent) -> str:
         for key in ("source_ref", "message_id", "doc_id", "meeting_id"):

@@ -43,8 +43,14 @@ class Scheduler:
                 result.errors.append(str(exc))
         return result
 
-    def scan_review_due(self, *, limit: int = 100) -> ScheduledTaskResult:
-        del limit
+    def scan_review_due(
+        self,
+        *,
+        limit: int = 100,
+        now: str | None = None,
+        warning_window_hours: int = 24,
+    ) -> ScheduledTaskResult:
+        del limit, now, warning_window_hours
         return ScheduledTaskResult(task_name="review_due")
 
     def run_once(self) -> dict[str, ScheduledTaskResult]:

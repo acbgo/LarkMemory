@@ -4,6 +4,8 @@ from functools import lru_cache
 
 from src.app.config import AppSettings, load_settings
 from src.core import MemoryService
+from src.domains.project_decision import ProjectDecisionDomainHandler
+from src.domains.team_retention.handler import TeamRetentionDomainHandler
 from src.llm import LLMClient
 from src.storage import EmbeddingStore, EventStore, MemoryCoreStore, TeamRetentionStore
 
@@ -73,9 +75,19 @@ def get_memory_service() -> MemoryService:
     return MemoryService(
         event_store=get_event_store(),
         memory_store=get_memory_core_store(),
-        team_retention_store=get_team_retention_store(),
         embedding_store=get_embedding_store(),
         llm_client=get_llm_client(),
+        domain_handlers=[
+            ProjectDecisionDomainHandler(
+                get_memory_core_store(),
+                llm_client=get_llm_client(),
+            ),
+            TeamRetentionDomainHandler(
+                get_memory_core_store(),
+                get_team_retention_store(),
+                llm_client=get_llm_client(),
+            ),
+        ],
     )
 
 

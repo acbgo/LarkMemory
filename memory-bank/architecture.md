@@ -47,6 +47,7 @@ LarkMemory/
 │
 ├── core/                           # 业务编排与记忆生命周期治理
 │   ├── service.py                  # 统一业务入口
+│   ├── domain_handler.py           # domain handler 协议与运行时接口
 │   ├── router.py                   # 事件和查询的领域路由
 │   ├── memory_core.py              # 统一记忆对象与状态流转
 │   ├── admission_control.py        # 长期记忆准入判断
@@ -66,6 +67,7 @@ LarkMemory/
 │   ├── project_decision/           # 项目决策、理由、备选方案和取舍
 │   │   ├── models.py
 │   │   ├── extractor.py
+│   │   ├── handler.py
 │   │   ├── retriever.py
 │   │   ├── ranker.py
 │   │   └── versioning.py
@@ -78,6 +80,7 @@ LarkMemory/
 │   └── team_retention/             # 团队关键事实、风险、提醒和复习
 │       ├── models.py
 │       ├── extractor.py
+│       ├── handler.py
 │       ├── retriever.py
 │       ├── ranker.py
 │       ├── review_planner.py
@@ -94,10 +97,10 @@ LarkMemory/
 ├── storage/                        # 持久化与索引层
 │   ├── event_store.py              # 原始或标准化事件存储
 │   ├── memory_core_store.py        # 统一记忆主数据存储
-│   ├── cli_workflow_store.py       # CLI 领域 payload 存储
-│   ├── project_decision_store.py   # 决策领域 payload 存储
-│   ├── personal_preference_store.py # 偏好领域 payload 存储
-│   ├── team_retention_store.py     # 团队保留领域 payload 存储
+│   ├── cli_workflow_store.py       # CLI 领域 memory 持久化
+│   ├── project_decision_store.py   # 决策领域 memory 持久化
+│   ├── personal_preference_store.py # 偏好领域 memory 持久化
+│   ├── team_retention_store.py     # 团队保留领域 memory 持久化
 │   ├── embedding_store.py          # 向量索引和语义检索
 │   ├── access_log_store.py         # 命中、采纳和反馈日志
 │   └── review_schedule_store.py    # 复习计划和提醒时间
@@ -205,6 +208,7 @@ LarkMemory/
 典型模块：
 
 - `service.py`：统一业务入口，API 层优先调用它。
+- `domain_handler.py`：定义 `MemoryDomainHandler` 协议、写入运行时和领域更新结果，core 通过该协议调用 domain。
 - `router.py`：根据事件类型、上下文或查询意图选择 domain。
 - `memory_core.py`：统一记忆对象和状态流转规则。
 - `admission_control.py`：决定候选信息是否进入长期记忆。
@@ -213,6 +217,13 @@ LarkMemory/
 - `decay.py`：记忆衰减、归档和遗忘策略。
 - `access_tracker.py`：记录命中、采纳和反馈。
 - `scheduler.py`：调度后台复习、提醒和过期扫描。
+
+core 与 domain 的边界：
+
+- `MemoryService` 只依赖 `MemoryDomainHandler` 协议，不直接 import 具体 domain 类。
+- `app/dependencies.py` 负责注册 `ProjectDecisionDomainHandler`、`TeamRetentionDomainHandler` 等具体 handler。
+- domain handler 封装本领域的 extractor、retriever、versioning 和领域 store 协作，对 core 暴露统一的 ingest、retrieve、update、proactive 接口。
+- 新增 domain 时优先新增 domain package 和 handler，并在依赖注入处注册；不应继续扩展 `MemoryService` 的硬编码 if/elif。
 
 ## 6. 领域层 `domains/`
 
@@ -232,6 +243,7 @@ domains/
 
 - `models.py`：领域结构化数据模型。
 - `extractor.py`：从事件、文本或上下文中抽取领域记忆。
+- `handler.py`：对 core 暴露统一领域接口，编排本领域抽取、召回、版本和领域 store。
 - `retriever.py`：根据查询、scope、topic、time 等条件召回领域记忆。
 - `ranker.py`：领域内排序。
 - 领域专属辅助模块：如 workflow mining、pattern mining、review planning、versioning。
@@ -284,6 +296,12 @@ domains/
 - 复习计划。
 - 需要长期保留但容易被遗忘的信息。
 
+当前模型边界：
+
+- `TeamRetentionMemory`、`TeamReviewSchedule`、`RetentionFactType`、`RetentionRiskLevel`、`RetentionReviewPolicy` 定义在 `domains/team_retention/models.py`。
+- `storage/team_retention_store.py` 只负责 `TeamRetentionMemory` 与 SQLite 表之间的写入、读取、查询、复习计划更新和行转换。
+- `domains/team_retention/handler.py` 负责把 extractor 产出的 `TeamRetentionMemory` 写入 `MemoryCoreStore` 和 `TeamRetentionStore`，并处理重复强化、版本覆盖、复习提醒和领域更新动作。
+
 ## 7. 检索层 `retrieval/`
 
 检索层负责把多个领域召回结果转成统一、可排序、可解释的记忆结果。
@@ -325,7 +343,7 @@ RetrievalQuery
 
 - `event_store`：原始或标准化事件，用于回放、调试和评测。
 - `memory_core_store`：统一记忆主表，保存跨领域公共字段。
-- domain payload store：保存各领域专属结构化字段。
+- domain memory store：持久化各领域 `models.py` 中定义的结构化 memory 字段。
 - `embedding_store`：保存向量索引和语义检索信息。
 - `access_log_store`：保存检索命中、采纳、反馈等访问记录。
 - `review_schedule_store`：保存复习计划和下一次提醒时间。
@@ -334,7 +352,8 @@ RetrievalQuery
 
 - 只处理持久化、读取、索引和基础查询。
 - 复杂生命周期决策应放在 `core/`。
-- 领域特定结构应通过 domain payload 扩展，不污染统一 memory core。
+- 领域特定结构应通过 domain memory store 扩展，不污染统一 memory core。
+- 领域 dataclass/model 定义放在 `domains/*/models.py`；storage 复用这些模型完成数据库交互，不在 store 内重新定义业务模型。
 - API、core、retrieval 应通过明确接口访问存储，而不是直接依赖文件或数据库细节。
 
 ## 9. LLM 层 `llm/`
@@ -398,7 +417,7 @@ raw event
 -> NormalizedEvent
 -> domain router
 -> domain extractor
--> MemoryCore + domain payload
+-> MemoryCore + domain memory
 -> admission control
 -> dedup / merge / supersede
 -> storage write
@@ -411,7 +430,7 @@ raw event
 - domain extractor 将事件转为候选记忆。
 - admission control 决定是否写入长期记忆。
 - dedup / merge / supersede 负责生命周期治理。
-- storage 保存 memory core、domain payload 和索引。
+- storage 保存 memory core、domain memory 和索引。
 
 ### 检索流
 
@@ -480,7 +499,7 @@ user feedback / correction / conflict / expiry signal
 - `created_at`
 - `updated_at`
 
-### Domain Payload
+### Domain Memory
 
 领域专属结构化数据。它与 Memory Core 通过 `memory_id` 关联。
 

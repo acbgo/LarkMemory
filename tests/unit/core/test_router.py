@@ -39,6 +39,14 @@ class TestRouter(unittest.TestCase):
             "team_retention",
         )
 
+    def test_retention_signal_wins_over_decision_keywords(self) -> None:
+        event = self._event(
+            "chat_message",
+            "请团队长期记住：我们决定客户 A 导出使用 xlsx。",
+        )
+
+        self.assertEqual(self.router.route_event(event).primary[0].domain, "team_retention")
+
     def test_fallback_not_empty(self) -> None:
         decision = self.router.route_event(self._event("chat_message", "hello"))
 
