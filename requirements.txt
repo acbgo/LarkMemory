@@ -1,4 +1,5 @@
 fastapi
 neo4j
+lark-oapi
 uvicorn
 pytest

@@ -31,6 +31,21 @@ LarkMemory/
 │   ├── package.json                # 插件工程配置
 │   └── openclaw.plugin.json        # OpenClaw 插件元信息
 │
+├── sources/                        # 外部消息源接入层
+│   └── feishu/                     # 飞书消息源、卡片推送和回调适配
+│       ├── client/                 # 飞书 SDK 连接与监听
+│       │   ├── config.py           # 飞书企业自建应用凭证和运行配置
+│       │   ├── sdk.py              # lark-oapi OpenAPI/WebSocket client 工厂
+│       │   └── listener.py         # 飞书 WebSocket 事件监听入口
+│       ├── events/                 # 飞书事件模型、标准化和分发
+│       │   ├── models.py           # 飞书消息、卡片动作和原始事件模型
+│       │   ├── normalizer.py       # 飞书消息转 NormalizedEvent
+│       │   └── dispatcher.py       # 标准化事件分发到 MemoryService
+│       └── proactive/              # 飞书主动服务输出与反馈
+│           ├── cards.py            # 主动提醒 suggestion 转飞书互动卡片
+│           ├── notifier.py         # 调用飞书 API 发送文本和互动卡片
+│           └── callbacks.py        # 卡片按钮动作转 MemoryService 更新
+│
 ├── app/                            # Python Memory Engine 服务入口
 │   ├── main.py                     # FastAPI 应用启动与 router 注册
 │   ├── config.py                   # 端口、路径、模型参数、运行开关
@@ -156,7 +171,59 @@ LarkMemory/
 - 跨领域排序和语义重排。
 - 领域抽取策略。
 
-## 4. 服务与 API 层 `app/`、`api/`
+## 4. Source Adapter 层 `sources/`
+
+Source Adapter 层负责监听外部平台事件、调用外部平台 API，并把平台原始事件转换为项目统一协议；它不承载长期记忆业务判断。
+
+### `sources/feishu/`
+
+飞书接入按三层拆分：`client/` 负责平台连接，`events/` 负责事件标准化与分发，`proactive/` 负责主动卡片推送和按钮反馈。
+
+典型链路：
+
+```text
+Feishu WebSocket / OpenAPI
+-> sources/feishu/client
+-> sources/feishu/events
+-> NormalizedEvent
+-> MemoryService
+-> domain handlers
+```
+
+主动服务链路：
+
+```text
+MemoryService.proactive_suggestions()
+-> sources/feishu/proactive/cards.py
+-> sources/feishu/proactive/notifier.py
+-> Feishu interactive card
+-> card.action.trigger
+-> sources/feishu/proactive/callbacks.py
+-> MemoryService.update_memory()
+```
+
+文件职责：
+
+- `client/config.py`：读取 `LARKMEMORY_FEISHU_*` 配置；`APP_ID` 和 `APP_SECRET` 是飞书企业自建应用凭证，不是用户登录态。
+- `client/sdk.py`：懒加载 `lark-oapi`，创建飞书 OpenAPI client 和 WebSocket client。
+- `client/listener.py`：注册飞书消息事件和卡片回调，收到事件后委托 events/proactive 层处理。
+- `events/models.py`：定义飞书消息、卡片动作和原始事件 envelope 的内部模型。
+- `events/normalizer.py`：将飞书 IM 消息转成 `NormalizedEvent(event_type="chat_message", source_type="feishu_chat")`。
+- `events/dispatcher.py`：调用 `MemoryService.ingest_event()`，并容忍飞书重试导致的重复事件。
+- `proactive/cards.py`：将 `review_reminder` suggestion 渲染为飞书 interactive card JSON。
+- `proactive/notifier.py`：封装 `im.v1.message.create`，发送飞书文本和互动卡片。
+- `proactive/callbacks.py`：解析卡片按钮，将 `reviewed`、`snooze`、`expire`、`forget` 映射到 `MemoryService.update_memory()`。
+
+当前约定：飞书 `chat_id` 暂时映射到 `EventContext.team_id`，并写入 `payload["chat_id"]`，用于方向 D 的群级团队记忆和后续主动推送。
+
+边界约束：
+
+- `core/`、`domains/`、`storage/` 不依赖 `sources/feishu/`。
+- 飞书 listener 不做长期记忆判断，不直接调用 domain extractor。
+- 飞书卡片 JSON 构造不调用飞书 API；发送逻辑只放在 notifier。
+- 当前本地实现可以进程内调用 `MemoryService`；后续可替换为 HTTP 调用 `/api/v1/ingest` 和 `/api/v1/update`。
+
+## 5. 服务与 API 层 `app/`、`api/`
 
 服务层负责启动 Python Memory Engine，并提供稳定 HTTP API。
 
@@ -194,7 +261,7 @@ LarkMemory/
 - `POST /benchmark/run`：运行评测任务。
 - `GET /health`：服务和依赖健康检查。
 
-## 5. 业务编排层 `core/`
+## 6. 业务编排层 `core/`
 
 `core/` 是长期记忆系统的业务中枢，负责把 API、domain、storage、retrieval 连接成完整流程。
 
@@ -227,7 +294,7 @@ core 与 domain 的边界：
 - domain handler 封装本领域的 extractor、retriever、versioning 和领域 store 协作，对 core 暴露统一的 ingest、retrieve、update、proactive 接口。
 - 新增 domain 时优先新增 domain package 和 handler，并在依赖注入处注册；不应继续扩展 `MemoryService` 的硬编码 if/elif。
 
-## 6. 领域层 `domains/`
+## 7. 领域层 `domains/`
 
 领域层按记忆类型拆分，每个 domain 负责本领域的结构化模型、抽取、召回和领域内排序。
 
@@ -304,7 +371,7 @@ domains/
 - `storage/team_retention_store.py` 只负责 `TeamRetentionMemory` 与 SQLite 表之间的写入、读取、查询、复习计划更新和行转换。
 - `domains/team_retention/handler.py` 负责把 extractor 产出的 `TeamRetentionMemory` 写入 `MemoryCoreStore` 和 `TeamRetentionStore`，并处理重复强化、版本覆盖、复习提醒和领域更新动作。
 
-## 7. 检索层 `retrieval/`
+## 8. 检索层 `retrieval/`
 
 检索层负责把多个领域召回结果转成统一、可排序、可解释的记忆结果。
 
@@ -337,7 +404,7 @@ RetrievalQuery
 - 不负责存储写入生命周期。
 - domain retriever 输出应适配为 `DomainRecallResult`，跨领域逻辑交给 fusion 和 rerank。
 
-## 8. 存储层 `storage/`
+## 9. 存储层 `storage/`
 
 存储层负责数据持久化和检索索引，不承载复杂业务决策。
 
@@ -358,7 +425,7 @@ RetrievalQuery
 - 领域 dataclass/model 定义放在 `domains/*/models.py`；storage 复用这些模型完成数据库交互，不在 store 内重新定义业务模型。
 - API、core、retrieval 应通过明确接口访问存储，而不是直接依赖文件或数据库细节。
 
-## 9. LLM 层 `llm/`
+## 10. LLM 层 `llm/`
 
 LLM 层封装模型供应商和结构化调用能力。
 
@@ -377,7 +444,7 @@ LLM 层封装模型供应商和结构化调用能力。
 - `client.py`：统一业务 client。
 - prompt 相关模块：集中管理抽取、决策、检索等任务的提示词。
 
-## 10. Schema 层 `schemas/`
+## 11. Schema 层 `schemas/`
 
 Schema 层定义系统内外的数据协议，是 API、core、storage、retrieval 之间的共同语言。
 
@@ -398,7 +465,7 @@ Schema 层定义系统内外的数据协议，是 API、core、storage、retriev
 - API 层和 storage 层都应复用 schema，减少重复模型。
 - 跨模块传递的数据优先使用结构化模型，而不是裸 dict。
 
-## 11. 后台任务层 `jobs/`
+## 12. 后台任务层 `jobs/`
 
 后台任务层处理不适合阻塞 API 请求的长期任务。
 
@@ -410,7 +477,7 @@ Schema 层定义系统内外的数据协议，是 API、core、storage、retriev
 
 后台任务不直接暴露给插件，应通过 API 或 core service 提供触发和查询能力。
 
-## 12. 核心数据流
+## 13. 核心数据流
 
 ### 写入流
 
@@ -477,7 +544,7 @@ user feedback / correction / conflict / expiry signal
 - 检索默认优先返回 active 记忆。
 - 不同 domain 可以使用不同 decay 和 forgetting 策略。
 
-## 13. 关键数据概念
+## 14. 关键数据概念
 
 ### Memory Core
 
@@ -523,7 +590,7 @@ user feedback / correction / conflict / expiry signal
 - 可解释的 score breakdown。
 - 可选 trace/debug 信息。
 
-## 14. 模块边界约束
+## 15. 模块边界约束
 
 - 插件层只做接入和注入，不做长期记忆治理。
 - API 层只做协议边界，不直接写复杂业务逻辑。
@@ -533,8 +600,9 @@ user feedback / correction / conflict / expiry signal
 - storage 层负责持久化和索引，不做 admission、dedup、supersede 决策。
 - llm 层负责模型调用封装，不绑定具体业务流程。
 - schemas 层定义协议，不依赖业务实现。
+- sources 层负责外部平台接入和标准化，不做长期记忆治理，core/domain/storage 不反向依赖 sources。
 
-## 15. Agent 接手时的阅读顺序
+## 16. Agent 接手时的阅读顺序
 
 为了快速理解架构，建议按以下顺序阅读：
 

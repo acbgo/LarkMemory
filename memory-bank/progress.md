@@ -172,3 +172,24 @@
 - 已补充显式 `Decision` 图模型：`Decision` 节点约束/索引、`upsert_project_decision()`、`MADE_DECISION`、`RECORDED_AS`、`BELONGS_TO`、`find_decisions_by_user()` 和 `find_project_decisions()`。
 - 验证：`python -m pytest tests\unit\storage -q -p no:cacheprovider`，32 passed。
 - 验证：`python -m pytest tests -q -p no:cacheprovider`，189 passed, 6 subtests passed。
+
+## 2026-04-28 飞书 Source Adapter 架构进展
+
+- 已在 `memory-bank/architecture.md` 增加飞书 Source Adapter 分层设计，明确 `client/`、`events/`、`proactive/` 三层边界。
+- 已新增 `src/sources/feishu/client/`：
+  - `config.py` 读取 `LARKMEMORY_FEISHU_*` 应用凭证与运行配置，`APP_ID/APP_SECRET` 定位为飞书企业自建应用凭证，不是用户登录态。
+  - `sdk.py` 懒加载 `lark-oapi`，封装 OpenAPI client 和 WebSocket client 创建。
+  - `listener.py` 作为 WebSocket source worker 入口，注册消息事件和卡片回调，并委托 events/proactive 层处理。
+- 已新增 `src/sources/feishu/events/`：
+  - `models.py` 定义 `FeishuMessageEvent`、`FeishuCardActionEvent`、`FeishuEventEnvelope`。
+  - `normalizer.py` 将飞书 IM 消息标准化为现有 `NormalizedEvent`，当前将 `chat_id` 映射到 `EventContext.team_id` 并保留在 payload 中。
+  - `dispatcher.py` 调用 `MemoryService.ingest_event()`，并容忍飞书重试导致的重复事件。
+- 已新增 `src/sources/feishu/proactive/`：
+  - `cards.py` 将 `review_reminder` suggestion 渲染为飞书 interactive card JSON。
+  - `notifier.py` 封装 `im.v1.message.create` 发送文本和互动卡片。
+  - `callbacks.py` 将卡片按钮 `reviewed`、`snooze`、`expire`、`forget` 映射到 `MemoryService.update_memory()`。
+- 已在 `requirements.txt` 增加 `lark-oapi`，用于真实飞书 WebSocket 监听、消息发送和卡片交互。
+- 已新增 `tests/unit/sources/feishu/`，覆盖飞书消息标准化、事件分发入 core、重复事件容忍、复习卡片构造和卡片按钮动作映射。
+- 验证：`python -m pytest tests\unit\sources\feishu -q -p no:cacheprovider`，7 passed。
+- 验证：`python -m compileall src tests`，通过。
+- 验证：`python -m pytest tests -q -p no:cacheprovider`，197 passed, 6 subtests passed。
