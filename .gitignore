@@ -8,6 +8,8 @@ plans
 logs/
 .larkmemory/
 .pip-tmp
+lark-oapi-demo
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
