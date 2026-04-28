@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 import re
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ._types import (
     IntentResult,
@@ -18,6 +18,9 @@ from ._types import (
     RewrittenQuery,
     TimeWindow,
 )
+
+if TYPE_CHECKING:
+    from src.llm import LLMClient
 
 logger = logging.getLogger(__name__)
 
@@ -230,8 +233,8 @@ class QueryRewriter:
         LLMClient 实例。传 None 则使用纯规则策略。
     """
 
-    def __init__(self, llm_client: Any | None = None) -> None:
-        # TODO: 类型标注改为 from src.llm import LLMClient
+    def __init__(self, llm_client: "LLMClient | None" = None) -> None:
+        """初始化查询改写器，输入可选 LLMClient；未传入时使用规则策略。"""
         self._llm = llm_client
 
     async def rewrite(

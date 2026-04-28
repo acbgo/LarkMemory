@@ -2,7 +2,7 @@
  * LarkMemory OpenClaw Plugin
  *
  * Core flow:
- *   1. before_prompt_build  -> ingest current user message, retrieve memories, inject prompt context.
+ *   1. before_prompt_build  -> retrieve memories, inject prompt context.
  *   2. agent_end            -> ingest final agent reply for later extraction.
  */
 
@@ -234,6 +234,7 @@ async function ingestEvent(
   event: unknown,
   ctx: unknown,
   config: PluginConfig,
+  hook: string,
   tags: string[],
 ) {
   if (!contentText.trim()) {
@@ -249,7 +250,7 @@ async function ingestEvent(
     title: stringOrUndefined(evt.title),
     content_text: contentText,
     payload: {
-      hook: "before_prompt_build",
+      hook,
       event_keys: Object.keys(evt),
     },
     raw_payload: jsonSafe(evt) as JsonObject,
@@ -323,18 +324,11 @@ export default definePluginEntry({
   register(api) {
     api.on("before_prompt_build", async (event, ctx) => {
       const config = readConfig(ctx);
-      sep("HOOK: before_prompt_build → memory ingest/retrieve");
+      sep("HOOK: before_prompt_build → memory retrieve");
       const userMessage = extractText(event);
       const context = collectContext(event, ctx, config);
       log("INPUT", `Prompt message: "${userMessage}"`);
       log("CONTEXT", "Prompt context", context);
-
-      const ingestResponse = await ingestEvent(userMessage, event, ctx, config, [
-        "openclaw",
-        "before_prompt_build",
-        "feishu_inbound",
-      ]);
-      log("INGEST", "Backend ingest result", ingestResponse);
 
       const memories = await retrieveMemories(userMessage, event, ctx, config);
       const memoryContext = buildMemoryContext(memories);
@@ -352,11 +346,14 @@ export default definePluginEntry({
       sep("HOOK: agent_end → reply ingest");
       const reply = extractReply(event);
       log("OUTPUT", `Agent reply: ${reply.substring(0, 300)}`);
-      const result = await ingestEvent(reply, event, ctx, config, [
-        "openclaw",
+      const result = await ingestEvent(
+        reply,
+        event,
+        ctx,
+        config,
         "agent_end",
-        "agent_reply",
-      ]);
+        ["openclaw", "agent_end", "agent_reply"],
+      );
       log("INGEST", "Reply ingest result", result);
       sep("agent_end complete");
       console.log();

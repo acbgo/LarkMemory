@@ -10,11 +10,12 @@ import logging
 import time
 import uuid
 from contextlib import contextmanager
-from typing import Any, Generator
+from typing import Any, Callable, Generator
 
 from ._types import RetrievalTrace, TraceStep
 
 logger = logging.getLogger(__name__)
+TracePersistFn = Callable[[dict[str, Any]], None]
 
 
 # ---------------------------------------------------------------------------
@@ -41,6 +42,7 @@ class TraceContext:
     """
 
     def __init__(self, query_id: str) -> None:
+        """初始化单次检索追踪上下文，输入 query_id 并准备步骤栈。"""
         self._query_id = query_id
         self._start = time.monotonic()
         self._steps: list[TraceStep] = []
@@ -92,9 +94,11 @@ class TraceContext:
     # ------------------------------------------------------------------
 
     def set_metadata(self, key: str, value: Any) -> None:
+        """设置 trace 级元数据，输入键和值。"""
         self._metadata[key] = value
 
     def set_result_count(self, count: int) -> None:
+        """设置最终结果数量，输入检索返回条数。"""
         self._result_count = count
 
     def finish(self) -> RetrievalTrace:
@@ -117,6 +121,7 @@ class TraceContext:
 
     @property
     def trace(self) -> RetrievalTrace:
+        """返回当前 RetrievalTrace；未完成时会先结束追踪。"""
         if not self._finished:
             return self.finish()
         return RetrievalTrace(
@@ -134,15 +139,19 @@ class StepHandle:
     """step context manager 返回的句柄，用于设置输出和元数据。"""
 
     def __init__(self, step: TraceStep) -> None:
+        """初始化步骤句柄，输入需要被补充信息的 TraceStep。"""
         self._step = step
 
     def set_input(self, data: dict[str, Any]) -> None:
+        """合并步骤输入摘要，输入字段字典。"""
         self._step.input_summary.update(data)
 
     def set_output(self, data: dict[str, Any]) -> None:
+        """合并步骤输出摘要，输入字段字典。"""
         self._step.output_summary.update(data)
 
     def set_metadata(self, key: str, value: Any) -> None:
+        """设置步骤元数据，输入键和值。"""
         self._step.metadata[key] = value
 
 
@@ -162,9 +171,9 @@ class RetrievalTracer:
 
     def __init__(
         self,
-        persist_fn: Any | None = None,
+        persist_fn: TracePersistFn | None = None,
     ) -> None:
-        # TODO: persist_fn 后续接入 storage/access_log_store 或 event_store
+        """初始化追踪器，输入可选持久化回调。"""
         self._persist_fn = persist_fn
         self._recent_traces: list[RetrievalTrace] = []
         self._max_recent = 100
@@ -191,6 +200,7 @@ class RetrievalTracer:
             self._store(trace)
 
     def _store(self, trace: RetrievalTrace) -> None:
+        """保存完成的 trace 到近期列表，并在提供回调时传出字典表示。"""
         self._recent_traces.append(trace)
         if len(self._recent_traces) > self._max_recent:
             self._recent_traces = self._recent_traces[-self._max_recent:]
@@ -203,9 +213,11 @@ class RetrievalTracer:
 
     @property
     def recent_traces(self) -> list[RetrievalTrace]:
+        """返回近期 trace 的列表副本。"""
         return list(self._recent_traces)
 
     def get_trace(self, query_id: str) -> RetrievalTrace | None:
+        """按 query_id 从近期 trace 中查找单条记录。"""
         for t in reversed(self._recent_traces):
             if t.query_id == query_id:
                 return t
@@ -217,6 +229,7 @@ class RetrievalTracer:
 # ---------------------------------------------------------------------------
 
 def _step_to_dict(step: TraceStep) -> dict[str, Any]:
+    """将单个 TraceStep 递归序列化为字典。"""
     return {
         "name": step.name,
         "duration_ms": round(step.duration_ms, 2),

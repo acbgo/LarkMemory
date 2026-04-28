@@ -13,6 +13,7 @@ from src.retrieval import (
     QueryRewriter,
     ResultFusion,
     RetrievalQuery,
+    RetrievalTracer,
     RewrittenQuery,
     Reranker,
     memory_item_from_core,
@@ -115,6 +116,18 @@ class _FakeRewriteLLM:
         }
 
 
+class _FakeIntentLLM:
+    async def ajson(self, *_args: object, **_kwargs: object) -> dict[str, object]:
+        return {
+            "primary_domains": ["project_decision", "unknown_domain"],
+            "secondary_domains": ["project_decision", "team_retention"],
+            "intent_type": "decision_lookup",
+            "keywords": ["方案B"],
+            "time_hint": "last_week",
+            "confidence": 0.9,
+        }
+
+
 def test_llm_rewrite_merges_rule_boosts() -> None:
     rewriter = QueryRewriter(_FakeRewriteLLM())
     query = RetrievalQuery("为什么选方案B", project_id="project-1")
@@ -132,6 +145,39 @@ def test_keyword_fallback_defaults_to_collaboration_domains() -> None:
 
     assert result.primary_domains == [MemoryDomain.TEAM_RETENTION]
     assert result.secondary_domains == [MemoryDomain.PROJECT_DECISION]
+
+
+def test_intent_analyzer_uses_typed_llm_client_and_filters_domains() -> None:
+    result = asyncio.run(IntentAnalyzer(_FakeIntentLLM()).analyze(RetrievalQuery("为什么选方案B")))
+
+    assert result.primary_domains == [MemoryDomain.PROJECT_DECISION]
+    assert result.secondary_domains == [MemoryDomain.TEAM_RETENTION]
+    assert result.intent_type == "decision_lookup"
+    assert result.keywords == ["方案B"]
+    assert result.time_hint == "last_week"
+    assert result.confidence == 0.9
+
+
+def test_retrieval_tracer_persists_trace_dict_and_keeps_recent_copy() -> None:
+    persisted: list[dict[str, object]] = []
+    tracer = RetrievalTracer(persist_fn=persisted.append)
+
+    with tracer.start_trace("query-1") as ctx:
+        ctx.set_metadata("mode", "test")
+        with ctx.step("intent") as step:
+            step.set_input({"query": "方案B"})
+            step.set_output({"domain": "project_decision"})
+        ctx.set_result_count(1)
+
+    recent = tracer.recent_traces
+
+    assert len(persisted) == 1
+    assert persisted[0]["query_id"] == "query-1"
+    assert persisted[0]["final_result_count"] == 1
+    assert persisted[0]["metadata"] == {"mode": "test"}
+    assert tracer.get_trace("query-1") is not None
+    recent.clear()
+    assert tracer.get_trace("query-1") is not None
 
 
 def test_memory_item_from_core_accepts_schema_object() -> None:

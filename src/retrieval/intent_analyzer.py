@@ -8,9 +8,12 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ._types import IntentResult, MemoryDomain, RetrievalQuery
+
+if TYPE_CHECKING:
+    from src.llm import LLMClient
 
 logger = logging.getLogger(__name__)
 
@@ -180,6 +183,7 @@ def _keyword_fallback(query: RetrievalQuery) -> IntentResult:
 
 
 def _extract_time_hint(text: str) -> str | None:
+    """从查询文本中提取粗粒度时间提示，返回 recent/last_week/last_month 或 None。"""
     if re.search(r"(最近|recently|刚才|just now|今天|today)", text):
         return "recent"
     if re.search(r"(上周|last\s*week|这周|this\s*week)", text):
@@ -202,8 +206,8 @@ class IntentAnalyzer:
         LLMClient 实例。传 None 则始终使用关键词降级策略。
     """
 
-    def __init__(self, llm_client: Any | None = None) -> None:
-        # TODO: 类型标注改为 from src.llm import LLMClient 当包结构稳定后
+    def __init__(self, llm_client: "LLMClient | None" = None) -> None:
+        """初始化意图分析器，输入可选 LLMClient；未传入时使用关键词规则。"""
         self._llm = llm_client
 
     async def analyze(self, query: RetrievalQuery) -> IntentResult:
@@ -219,6 +223,7 @@ class IntentAnalyzer:
         return _keyword_fallback(query)
 
     async def _analyze_with_llm(self, query: RetrievalQuery) -> IntentResult:
+        """调用 LLM 进行意图分类，输入检索查询并返回解析后的 IntentResult。"""
         user_prompt = self._build_user_prompt(query)
         raw: dict[str, Any] = await self._llm.ajson(
             _SYSTEM_PROMPT,
@@ -234,6 +239,7 @@ class IntentAnalyzer:
 
     @staticmethod
     def _build_user_prompt(query: RetrievalQuery) -> str:
+        """将 RetrievalQuery 构造成 LLM 用户提示，包含查询文本和可用上下文。"""
         parts = [f"Query: {query.query_text}"]
         if query.project_id:
             parts.append(f"Project: {query.project_id}")
@@ -248,6 +254,7 @@ class IntentAnalyzer:
 
     @staticmethod
     def _parse_llm_output(raw: dict[str, Any]) -> IntentResult:
+        """解析 LLM JSON 输出，过滤非法领域并补齐默认主查/辅查领域。"""
         primary = [
             MemoryDomain(d) for d in raw.get("primary_domains", [])
             if d in {m.value for m in MemoryDomain}
@@ -269,5 +276,5 @@ class IntentAnalyzer:
             intent_type=raw.get("intent_type", "general"),
             keywords=raw.get("keywords", []),
             time_hint=raw.get("time_hint"),
-        confidence=float(raw.get("confidence", 0.5)),
+            confidence=float(raw.get("confidence", 0.5)),
         )

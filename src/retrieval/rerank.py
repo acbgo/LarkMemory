@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 import math
 from datetime import datetime, timezone
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ._types import (
     FusedCandidate,
@@ -19,6 +19,9 @@ from ._types import (
     RankedMemory,
     RewrittenQuery,
 )
+
+if TYPE_CHECKING:
+    from src.llm import LLMClient
 
 logger = logging.getLogger(__name__)
 
@@ -184,12 +187,12 @@ class Reranker:
 
     def __init__(
         self,
-        llm_client: Any | None = None,
+        llm_client: "LLMClient | None" = None,
         *,
         factor_weights: dict[str, float] | None = None,
         use_llm_rerank: bool = False,
     ) -> None:
-        # TODO: 类型标注改为 from src.llm import LLMClient
+        """初始化重排器，输入可选 LLMClient、因子权重和是否启用 LLM 重排。"""
         self._llm = llm_client
         self._weights = factor_weights or dict(DEFAULT_FACTOR_WEIGHTS)
         self._use_llm_rerank = use_llm_rerank and llm_client is not None
