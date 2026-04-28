@@ -7,7 +7,7 @@ codeReview
 plans
 logs/
 .larkmemory/
-
+.pip-tmp
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
@@ -154,6 +154,7 @@ venv/
 ENV/
 env.bak/
 venv.bak/
+.tmp-venv
 
 # Spyder project settings
 .spyderproject
