@@ -1,5 +1,6 @@
 fastapi
 neo4j
 lark-oapi
+openai
 uvicorn
 pytest

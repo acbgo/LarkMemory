@@ -5,6 +5,7 @@ import sys
 import time
 import uuid
 from collections.abc import Callable, Mapping
+from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
 
 from starlette.datastructures import Headers
@@ -18,7 +19,7 @@ def setup_logging(
     log_dir: str | Path = "logs",
     log_file: str = "larkmemory.log",
 ) -> None:
-    """配置根日志级别、控制台 handler 和文件 handler，输入为日志级别与文件路径配置。"""
+    """配置根日志级别、控制台 handler 和按日切分的文件 handler。"""
     resolved_level = getattr(logging, level.upper(), logging.INFO)
     if not isinstance(resolved_level, int):
         resolved_level = logging.INFO
@@ -63,7 +64,13 @@ def setup_logging(
         file_handler = None
 
     if file_handler is None:
-        file_handler = logging.FileHandler(log_path, encoding="utf-8")
+        file_handler = TimedRotatingFileHandler(
+            log_path,
+            when="midnight",
+            interval=1,
+            backupCount=14,
+            encoding="utf-8",
+        )
         setattr(file_handler, "_larkmemory_file_handler", True)
         root_logger.addHandler(file_handler)
     file_handler.setLevel(resolved_level)

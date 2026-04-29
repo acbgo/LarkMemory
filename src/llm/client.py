@@ -1,14 +1,21 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any
 
+from .base import LLMJSONDecodeError, LLMProvider
 from .openai_provider import OpenAIProvider
 from src.schemas import LLMResponse, Message, ProviderConfig
 
 
+logger = logging.getLogger(__name__)
+
+
 class LLMClient:
-    def __init__(self, provider: OpenAIProvider) -> None:
+    """High-level LLM facade that delegates provider-specific calls to LLMProvider."""
+
+    def __init__(self, provider: LLMProvider) -> None:
         self.provider = provider
 
     @classmethod
@@ -47,6 +54,8 @@ class LLMClient:
         response_format: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> LLMResponse:
+        """Forward a chat completion request to the configured provider."""
+
         return await self.provider.acomplete(
             messages,
             temperature=temperature,
@@ -66,6 +75,8 @@ class LLMClient:
         max_tokens: int | None = None,
         **kwargs: Any,
     ) -> str:
+        """Build a prompt from system/user text and return response content."""
+
         messages: list[Message] = []
         if system_prompt:
             messages.append(Message.system(system_prompt))
@@ -89,15 +100,14 @@ class LLMClient:
         max_tokens: int | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
-        response_format = None
-        if schema:
-            response_format = {
-                "type": "json_schema",
-                "json_schema": {
-                    "name": "larkmemory_schema",
-                    "schema": schema,
-                },
-            }
+        """Return a JSON object or raise LLMJSONDecodeError with raw content."""
+
+        response_format = self.provider.json_response_format(schema)
+        if response_format and response_format.get("type") == "json_object":
+            system_prompt, user_prompt = self._ensure_json_mode_prompt(
+                system_prompt,
+                user_prompt,
+            )
 
         content = await self.atext(
             system_prompt,
@@ -107,4 +117,38 @@ class LLMClient:
             response_format=response_format,
             **kwargs,
         )
-        return json.loads(content)
+        try:
+            result = json.loads(content)
+        except json.JSONDecodeError as error:
+            logger.warning(
+                "function=src.llm.client.LLMClient.ajson action=json_decode_failed content_length=%s raw_content_preview=%r",
+                len(content),
+                content,
+            )
+            raise LLMJSONDecodeError(
+                "LLM response is not valid JSON.",
+                content=content,
+                cause=error,
+            ) from error
+
+        if not isinstance(result, dict):
+            raise LLMJSONDecodeError(
+                "LLM JSON response must be an object.",
+                content=content,
+            )
+        return result
+
+    @staticmethod
+    def _ensure_json_mode_prompt(
+        system_prompt: str | None,
+        user_prompt: str,
+    ) -> tuple[str | None, str]:
+        """Ensure JSON-mode providers receive an explicit JSON instruction."""
+
+        combined = f"{system_prompt or ''}\n{user_prompt}".lower()
+        if "json" in combined:
+            return system_prompt, user_prompt
+        instruction = "Return only a valid JSON object."
+        if system_prompt:
+            return f"{system_prompt}\n{instruction}", user_prompt
+        return instruction, user_prompt

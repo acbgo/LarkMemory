@@ -38,6 +38,37 @@ class TestAdmissionControl(unittest.TestCase):
 
         self.assertTrue(decision.admitted)
 
+    def test_llm_event_gate_rejects_non_memory_event(self) -> None:
+        class FakeLLM:
+            def __init__(self) -> None:
+                self.calls: list[dict[str, object]] = []
+
+            async def ajson(self, system_prompt: str | None, user_prompt: str, **kwargs: object) -> dict[str, object]:
+                self.calls.append({"system_prompt": system_prompt or "", "user_prompt": user_prompt, "kwargs": kwargs})
+                return {"should_extract": False}
+
+        llm = FakeLLM()
+        controller = AdmissionController(llm_client=llm)
+
+        decision = controller.evaluate_event(self._event("chat_message", "收到，下午见"), domain="project_decision")
+
+        self.assertFalse(decision.admitted)
+        self.assertIn("LLM judged no long-term memory", decision.reason)
+        self.assertEqual(decision.metadata["domain"], "project_decision")
+        self.assertEqual(len(llm.calls), 1)
+
+    def test_llm_event_gate_failure_falls_back_to_rules(self) -> None:
+        class FailingLLM:
+            async def ajson(self, *_args: object, **_kwargs: object) -> dict[str, object]:
+                raise RuntimeError("llm unavailable")
+
+        controller = AdmissionController(llm_client=FailingLLM())
+
+        decision = controller.evaluate_event(self._event("chat_message", "决定采用方案 B"))
+
+        self.assertTrue(decision.admitted)
+        self.assertEqual(decision.reason, "strong memory signal")
+
     def test_memory_confidence_rules(self) -> None:
         low = create_memory_core(
             domain="project_decision",
@@ -62,4 +93,3 @@ class TestAdmissionControl(unittest.TestCase):
 
         self.assertEqual(self.controller.evaluate_memory(low).status, "candidate")
         self.assertEqual(self.controller.evaluate_memory(high).status, "active")
-

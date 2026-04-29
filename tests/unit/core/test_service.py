@@ -15,6 +15,18 @@ from src.schemas import EventContext, NormalizedEvent
 from src.storage import EventStore, MemoryCoreStore, TeamRetentionStore
 
 
+class FakeIngestLLM:
+    def __init__(self, payloads: list[dict[str, object]]) -> None:
+        self.payloads = list(payloads)
+        self.calls: list[dict[str, object]] = []
+
+    async def ajson(self, system_prompt: str | None, user_prompt: str, **kwargs: object) -> dict[str, object]:
+        self.calls.append({"system_prompt": system_prompt or "", "user_prompt": user_prompt, "kwargs": kwargs})
+        if not self.payloads:
+            raise AssertionError("unexpected LLM call")
+        return self.payloads.pop(0)
+
+
 class TestService(unittest.TestCase):
     def setUp(self) -> None:
         root = Path.cwd() / ".tmp-tests"
@@ -54,6 +66,90 @@ class TestService(unittest.TestCase):
         self.assertEqual(result.candidate_count, 1)
         self.assertEqual(len(result.memory_ids), 1)
         self.assertIsNotNone(self.memory_store.get_memory(result.memory_ids[0]))
+
+    def test_llm_memory_gate_can_skip_extraction(self) -> None:
+        llm = FakeIngestLLM(
+            [
+                {
+                    "domain": "project_decision",
+                },
+                {
+                    "should_extract": False,
+                }
+            ]
+        )
+        service = MemoryService(
+            event_store=self.event_store,
+            memory_store=self.memory_store,
+            llm_client=llm,
+            domain_handlers=[ProjectDecisionDomainHandler(self.memory_store, llm_client=llm)],
+        )
+        event = NormalizedEvent(
+            event_id="event-llm-skip",
+            event_type="chat_message",
+            source_type="feishu_chat",
+            occurred_at="2026-04-27T00:00:00Z",
+            context=EventContext(project_id="project-1"),
+            content_text="收到，下午见",
+        )
+
+        result = service.ingest_event(event)
+
+        self.assertTrue(result.stored)
+        self.assertEqual(result.candidate_count, 0)
+        self.assertEqual(result.memory_ids, [])
+        self.assertEqual(len(llm.calls), 2)
+        self.assertIn("admission rejected", result.message or "")
+
+    def test_llm_ingest_routes_extracts_and_stores_project_decision(self) -> None:
+        llm = FakeIngestLLM(
+            [
+                {
+                    "domain": "project_decision",
+                },
+                {
+                    "should_extract": True,
+                },
+                {
+                    "memories": [
+                        {
+                            "topic": "storage choice",
+                            "content": "use SQLite for local demo",
+                            "confidence": 0.9,
+                        }
+                    ],
+                },
+            ]
+        )
+        service = MemoryService(
+            event_store=self.event_store,
+            memory_store=self.memory_store,
+            llm_client=llm,
+            domain_handlers=[ProjectDecisionDomainHandler(self.memory_store, llm_client=llm)],
+        )
+        event = NormalizedEvent(
+            event_id="event-llm-project",
+            event_type="chat_message",
+            source_type="feishu_chat",
+            occurred_at="2026-04-27T00:00:00Z",
+            context=EventContext(project_id="project-1"),
+            content_text="team aligned on SQLite for the local demo",
+        )
+
+        with self.assertLogs(level="INFO") as captured:
+            result = service.ingest_event(event)
+
+        logs = "\n".join(captured.output)
+        self.assertEqual(result.candidate_count, 1)
+        self.assertEqual(len(result.memory_ids), 1)
+        row = self.memory_store.get_memory(result.memory_ids[0])
+        self.assertEqual(row["domain"], "project_decision")
+        self.assertIn("use SQLite for local demo", row["content_text"])
+        self.assertEqual(len(llm.calls), 3)
+        self.assertIn("action=llm_memory_gate", logs)
+        self.assertIn("action=llm_route", logs)
+        self.assertIn("ProjectDecisionExtractor._extract_with_llm action=done", logs)
+        self.assertIn("ProjectDecisionDomainHandler.ingest_event action=stored", logs)
 
     def test_ingest_event_emits_function_level_logs(self) -> None:
         event = NormalizedEvent(

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import asyncio
 import re
 from typing import Any
 
@@ -58,6 +59,30 @@ SENTENCE_SPLIT_PATTERN = re.compile(r"[。！？\n;；]+")
 logger = logging.getLogger(__name__)
 
 
+_LLM_EXTRACTION_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "memories": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "topic": {"type": "string"},
+                    "content": {"type": "string"},
+                    "confidence": {"type": "number"},
+                },
+                "required": ["topic", "content", "confidence"],
+            },
+        },
+    },
+    "required": ["memories"],
+}
+
+_LLM_EXTRACTION_SYSTEM_PROMPT = """Return JSON only: {"memories":[{"topic":"...","content":"...","confidence":0.8}]}.
+Extract project decision memories only. If there is no project decision, return {"memories":[]}.
+Keep topic short. Put the decision or conclusion in content."""
+
+
 class ProjectDecisionExtractor:
     """Rule-based project decision extractor with an optional LLM hook."""
 
@@ -66,15 +91,14 @@ class ProjectDecisionExtractor:
         self.min_confidence = min_confidence
 
     def extract(self, event: NormalizedEvent) -> list[ProjectDecisionCandidate]:
-        text = self.collect_text(event)
-        if not self.has_decision_signal(text):
+        if self.llm_client is None and not self.has_decision_signal(event.content_text):
             logger.info(
                 "function=src.domains.project_decision.extractor.ProjectDecisionExtractor.extract action=no_signal event_id=%s text_length=%s",
                 event.event_id,
-                len(text),
+                len(event.content_text),
             )
             return []
-        candidates = self.extract_from_text(text, context=event.context, event=event)
+        candidates = self.extract_from_text(event.content_text, context=event.context, event=event)
         admitted = [
             candidate
             for candidate in candidates
@@ -96,34 +120,31 @@ class ProjectDecisionExtractor:
         context: EventContext | None = None,
         event: NormalizedEvent | None = None,
     ) -> list[ProjectDecisionCandidate]:
-        candidates = self._extract_rule_based(text, context=context, event=event)
-        if candidates or self.llm_client is None:
-            logger.info(
-                "function=src.domains.project_decision.extractor.ProjectDecisionExtractor.extract_from_text action=rule_based candidate_count=%s llm_enabled=%s",
-                len(candidates),
-                self.llm_client is not None,
-            )
-            return candidates
-        logger.info(
-            "function=src.domains.project_decision.extractor.ProjectDecisionExtractor.extract_from_text action=llm_fallback"
-        )
-        return self._extract_with_llm(text, context=context, event=event)
+        if self.llm_client is not None:
+            try:
+                candidates = self._extract_with_llm(text, context=context, event=event)
+            except Exception:
+                logger.exception(
+                    "function=src.domains.project_decision.extractor.ProjectDecisionExtractor.extract_from_text action=llm_failed fallback=rule_based"
+                )
+            else:
+                logger.info(
+                    "function=src.domains.project_decision.extractor.ProjectDecisionExtractor.extract_from_text action=llm_done candidate_count=%s",
+                    len(candidates),
+                )
+                return candidates
 
-    def collect_text(self, event: NormalizedEvent) -> str:
-        parts: list[str] = []
-        for value in (event.title, event.content_text):
-            cleaned = clean_text(value)
-            if cleaned:
-                parts.append(cleaned)
-        for key in ("text", "content", "message", "summary", "body"):
-            value = event.payload.get(key)
-            if isinstance(value, str) and clean_text(value):
-                parts.append(clean_text(value))
-        parts.extend(self._string_values(event.payload))
-        parts.extend(self._string_values(event.raw_payload))
-        return clean_text(" ".join(dict.fromkeys(part for part in parts if part)))
+        candidates = self._extract_rule_based(text, context=context, event=event)
+        logger.info(
+            "function=src.domains.project_decision.extractor.ProjectDecisionExtractor.extract_from_text action=rule_based candidate_count=%s llm_enabled=%s",
+            len(candidates),
+            self.llm_client is not None,
+        )
+        return candidates
+
 
     def has_decision_signal(self, text: str) -> bool:
+        """未启用LLM的时候，fallback到规则匹配"""
         lowered = text.lower()
         if any(keyword in text for keyword in ("决定", "拍板", "采用", "选择", "结论", "最终", "不采用", "否决")):
             return True
@@ -221,7 +242,90 @@ class ProjectDecisionExtractor:
         context: EventContext | None,
         event: NormalizedEvent | None,
     ) -> list[ProjectDecisionCandidate]:
-        return []
+        raw = _run_async(
+            self.llm_client.ajson(  # type: ignore[union-attr]
+                _LLM_EXTRACTION_SYSTEM_PROMPT,
+                self._build_llm_user_prompt(text, context=context, event=event),
+                schema=_LLM_EXTRACTION_SCHEMA,
+                temperature=0,
+                max_tokens=600,
+            )
+        )
+        memories = raw.get("memories") if isinstance(raw.get("memories"), list) else []
+        logger.info(
+            "function=src.domains.project_decision.extractor.ProjectDecisionExtractor._extract_with_llm action=parsed event_id=%s raw_memory_count=%s",
+            event.event_id if event else None,
+            len(memories),
+        )
+
+        candidates: list[ProjectDecisionCandidate] = []
+        for item in memories:
+            if not isinstance(item, dict):
+                continue
+            candidate = self._candidate_from_llm_item(item, context=context, event=event)
+            if candidate is not None:
+                candidates.append(candidate)
+        logger.info(
+            "function=src.domains.project_decision.extractor.ProjectDecisionExtractor._extract_with_llm action=done event_id=%s candidate_count=%s",
+            event.event_id if event else None,
+            len(candidates),
+        )
+        return candidates
+
+    def _build_llm_user_prompt(
+        self,
+        text: str,
+        *,
+        context: EventContext | None,
+        event: NormalizedEvent | None,
+    ) -> str:
+        """Build a compact extraction prompt with source context for the LLM."""
+        return (
+            "Extract project decision memories from this event.\n"
+            f"event_id={event.event_id if event else None}\n"
+            f"occurred_at={event.occurred_at if event else None}\n"
+            f"source_type={event.source_type if event else None}\n"
+            f"context={context}\n"
+            f"text={text}"
+        )
+
+    def _candidate_from_llm_item(
+        self,
+        item: dict[str, Any],
+        *,
+        context: EventContext | None,
+        event: NormalizedEvent | None,
+    ) -> ProjectDecisionCandidate | None:
+        """Convert one LLM decision object into a validated project decision candidate."""
+        topic = clean_text(str(item.get("topic") or ""), max_chars=120)
+        decision_text = clean_text(str(item.get("content") or ""), max_chars=240)
+        evidence_text = decision_text
+        if not topic or not decision_text:
+            return None
+        confidence = _as_float(item.get("confidence"), default=0.7)
+        decision = ProjectDecision(
+            project_id=context.project_id if context else None,
+            workspace_id=context.workspace_id if context else None,
+            team_id=context.team_id if context else None,
+            thread_id=context.thread_id if context else None,
+            topic=topic,
+            decision=decision_text,
+            conclusion=decision_text,
+            status="confirmed",
+            source_event_id=event.event_id if event else None,
+            source_type=event.source_type if event else "feishu_chat",
+            source_ref=self._source_ref(context, event),
+            decided_at=event.occurred_at if event else None,
+            tags=list(event.tags) if event else [],
+            confidence=max(0.0, min(1.0, confidence)),
+            importance=0.7,
+        )
+        return ProjectDecisionCandidate(
+            decision=decision,
+            evidence_text=evidence_text,
+            signals=["llm_extraction"],
+            needs_review=confidence < 0.65,
+        )
 
     def _string_values(self, value: Any) -> list[str]:
         if isinstance(value, str):
@@ -352,3 +456,18 @@ class ProjectDecisionExtractor:
         if context and context.thread_id:
             return context.thread_id
         return event.event_id if event else None
+
+
+def _run_async(awaitable: Any) -> Any:
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(awaitable)
+    raise RuntimeError("ProjectDecisionExtractor sync API cannot run inside an active event loop")
+
+
+def _as_float(value: object, *, default: float) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default

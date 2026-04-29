@@ -32,7 +32,24 @@ class ValidationError(ProviderError):
     pass
 
 
+class LLMJSONDecodeError(Exception):
+    """Raised when an LLM JSON helper cannot produce a JSON object."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        content: str | None = None,
+        cause: Exception | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.content = content
+        self.cause = cause
+
+
 class LLMProvider(ABC):
+    """Abstract interface implemented by concrete LLM provider adapters."""
+
     def __init__(self, config: ProviderConfig | None = None) -> None:
         self.config = config or ProviderConfig()
 
@@ -44,6 +61,19 @@ class LLMProvider(ABC):
     @property
     def supports_tools(self) -> bool:
         return False
+
+    def json_response_format(self, schema: dict[str, Any] | None) -> dict[str, Any] | None:
+        """Return the provider-specific response_format for JSON object calls."""
+
+        if schema is None:
+            return None
+        return {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "larkmemory_schema",
+                "schema": schema,
+            },
+        }
 
     async def acomplete(
         self,

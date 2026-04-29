@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+import asyncio
+from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from src.retrieval import IntentResult, RetrievalQuery
@@ -10,6 +11,30 @@ from src.utils.text import contains_any
 
 
 logger = logging.getLogger(__name__)
+
+
+_ROUTE_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "domain": {
+            "type": "string",
+            "enum": [
+                "project_decision",
+                "team_retention",
+                "personal_preference",
+                "cli_workflow",
+            ],
+        },
+    },
+    "required": ["domain"],
+}
+
+_ROUTE_SYSTEM_PROMPT = """Return JSON only: {"domain": "..."}.
+Choose exactly one domain:
+- project_decision: decisions, choices, rationales, architecture or technical selection.
+- team_retention: facts a team must remember, risks, compliance, deadlines, customer requirements.
+- personal_preference: user habits, preferences, defaults.
+- cli_workflow: shell commands, build, deploy, troubleshooting workflows."""
 
 
 @dataclass(slots=True)
@@ -29,10 +54,16 @@ class RouteDecision:
 
 
 class DomainRouter:
-    def __init__(self, default_domain: str = "team_retention") -> None:
+    def __init__(self, default_domain: str = "team_retention", llm_client: Any | None = None) -> None:
+        """Route events and queries to memory domains, optionally using an LLM for event routing."""
         self.default_domain = default_domain
+        self.llm_client = llm_client
 
     def route_event(self, event: NormalizedEvent) -> RouteDecision:
+        if self.llm_client is not None:
+            decision = self._route_event_with_llm(event)
+            if decision is not None:
+                return self._log_event_decision(event, decision)
         text = self._event_text(event)
         if event.event_type in {"command_finished", "command_failed"}:
             return self._log_event_decision(event, self._single("cli_workflow", "command event"))
@@ -159,6 +190,38 @@ class DomainRouter:
             ],
         )
 
+    def _route_event_with_llm(self, event: NormalizedEvent) -> RouteDecision | None:
+        """Ask the LLM to choose the primary domain; invalid or low-confidence output falls back to rules."""
+        try:
+            raw = _run_async(
+                self.llm_client.ajson(  # type: ignore[union-attr]
+                    _ROUTE_SYSTEM_PROMPT,
+                    f"Route this event:\n{event.content_text}",
+                    schema=_ROUTE_SCHEMA,
+                    temperature=0,
+                    max_tokens=200,
+                )
+            )
+        except Exception:
+            logger.exception(
+                "function=src.core.router.DomainRouter.route_event action=llm_route_failed event_id=%s",
+                event.event_id,
+            )
+            return None
+
+        primary = str(raw.get("domain") or "")
+        logger.info(
+            "function=src.core.router.DomainRouter.route_event action=llm_route event_id=%s primary_domain=%s",
+            event.event_id,
+            primary,
+        )
+        if primary not in {"project_decision", "team_retention", "personal_preference", "cli_workflow"}:
+            return None
+        return RouteDecision(
+            primary=[RouteTarget(domain=primary, priority=1.0, reason="llm route")],
+            reason="llm route",
+        )
+
     def _log_event_decision(self, event: NormalizedEvent, decision: RouteDecision) -> RouteDecision:
         primary = decision.primary[0].domain if decision.primary else None
         logger.info(
@@ -169,3 +232,11 @@ class DomainRouter:
             decision.reason,
         )
         return decision
+
+
+def _run_async(awaitable: Any) -> Any:
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(awaitable)
+    raise RuntimeError("DomainRouter sync API cannot run inside an active event loop")

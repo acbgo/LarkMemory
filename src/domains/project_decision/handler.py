@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from src.core.domain_handler import DomainIngestResult, DomainRuntime, DomainUpdateResult
@@ -10,6 +11,9 @@ from src.storage import MemoryCoreStore
 from .extractor import ProjectDecisionExtractor
 from .retriever import ProjectDecisionRetriever
 from .versioning import ProjectDecisionVersionManager
+
+
+logger = logging.getLogger(__name__)
 
 
 class ProjectDecisionDomainHandler:
@@ -30,6 +34,10 @@ class ProjectDecisionDomainHandler:
         self.version_manager = version_manager or ProjectDecisionVersionManager(memory_store)
 
     def ingest_event(self, event: NormalizedEvent, runtime: DomainRuntime) -> DomainIngestResult:
+        logger.info(
+            "function=src.domains.project_decision.handler.ProjectDecisionDomainHandler.ingest_event action=start event_id=%s",
+            event.event_id,
+        )
         candidates = self.extractor.extract(event)
         memory_ids: list[str] = []
         for candidate in candidates:
@@ -44,6 +52,18 @@ class ProjectDecisionDomainHandler:
                 and memory_id == candidate.decision.decision_id
             ):
                 self.version_manager.apply_supersede(version_decision.old_memory_id, memory_id)
+            logger.info(
+                "function=src.domains.project_decision.handler.ProjectDecisionDomainHandler.ingest_event action=stored event_id=%s memory_id=%s topic=%s",
+                event.event_id,
+                memory_id,
+                candidate.decision.topic,
+            )
+        logger.info(
+            "function=src.domains.project_decision.handler.ProjectDecisionDomainHandler.ingest_event action=done event_id=%s candidate_count=%s memory_count=%s",
+            event.event_id,
+            len(candidates),
+            len(memory_ids),
+        )
         return DomainIngestResult(
             memory_ids=memory_ids,
             candidate_count=len(candidates),

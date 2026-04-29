@@ -4,6 +4,7 @@ import logging
 import shutil
 import unittest
 import uuid
+from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -76,6 +77,19 @@ class TestLogging(unittest.TestCase):
         log_path = self.temp_dir / "service.log"
         self.assertTrue(log_path.exists())
         self.assertIn("file log ready", log_path.read_text(encoding="utf-8"))
+
+    def test_setup_logging_uses_daily_rotating_file_handler(self) -> None:
+        setup_logging("INFO", self.temp_dir, "service.log")
+
+        file_handlers = [
+            handler
+            for handler in logging.getLogger().handlers
+            if getattr(handler, "_larkmemory_file_handler", False)
+        ]
+
+        self.assertEqual(len(file_handlers), 1)
+        self.assertIsInstance(file_handlers[0], TimedRotatingFileHandler)
+        self.assertEqual(file_handlers[0].when, "MIDNIGHT")
 
     def test_request_log_middleware_writes_request_id_header(self) -> None:
         app = FastAPI()

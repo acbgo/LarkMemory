@@ -4,6 +4,16 @@ from src.domains.project_decision import ProjectDecisionExtractor
 from src.schemas import EventContext, NormalizedEvent
 
 
+class FakeExtractionLLM:
+    def __init__(self, payload: dict[str, object]) -> None:
+        self.payload = payload
+        self.calls: list[dict[str, object]] = []
+
+    async def ajson(self, system_prompt: str | None, user_prompt: str, **kwargs: object) -> dict[str, object]:
+        self.calls.append({"system_prompt": system_prompt or "", "user_prompt": user_prompt, "kwargs": kwargs})
+        return self.payload
+
+
 def _event(
     *,
     content_text: str | None,
@@ -75,3 +85,26 @@ def test_low_confidence_candidate_is_filtered_by_threshold() -> None:
 
     assert candidates == []
 
+
+def test_llm_extracts_structured_decision_without_rule_signal() -> None:
+    llm = FakeExtractionLLM(
+        {
+            "memories": [
+                {
+                    "topic": "search backend",
+                    "content": "use SQLite first",
+                    "confidence": 0.92,
+                }
+            ],
+        }
+    )
+
+    candidates = ProjectDecisionExtractor(llm_client=llm).extract(
+        _event(content_text="team aligned on SQLite first for the local demo")
+    )
+
+    assert len(candidates) == 1
+    assert candidates[0].decision.topic == "search backend"
+    assert candidates[0].decision.decision == "use SQLite first"
+    assert candidates[0].decision.confidence == 0.92
+    assert len(llm.calls) == 1

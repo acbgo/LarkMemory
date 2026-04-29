@@ -103,6 +103,21 @@
   - `src/llm/`
 - 仓库已有对应单元测试目录。
 - 已按指定结构建立 `AGENTS.md` 和 `memory-bank/` 长期上下文文档。
+- 已补强 LLM provider 抽象与 OpenAI 依赖：
+  - `requirements.txt` 已加入 `openai`。
+  - `LLMClient` 构造参数已改为依赖 `LLMProvider` 抽象，保留 `from_openai_compatible()` 工厂。
+  - `LLMClient.ajson()` 已明确异常契约：JSON 解析失败或非 object 响应统一抛出 `LLMJSONDecodeError`，并保留原始 content/cause 便于调试。
+  - 已新增 OpenAI provider 单测，使用 fake SDK client 覆盖请求参数、响应解析和模型必填校验。
+- 已修复 DeepSeek OpenAI-compatible JSON Output 兼容：
+  - `LLMClient.atext()` 恢复为返回 `LLMResponse.content` 字符串，避免 `ajson()` 收到 `LLMResponse` 对象。
+  - `OpenAIProvider` 会识别 `https://api.deepseek.com`，DeepSeek 下 `ajson()` 统一使用 `response_format={"type":"json_object"}`。
+  - 普通 OpenAI-compatible base URL 继续使用 `json_schema`。
+  - SDK 响应 content 仍统一在 provider 内从 `choices[0].message.content` 提取，业务 ingest/router/extractor 不直接绑定 SDK 响应结构。
+- 已将事件级长期记忆准入迁入 `AdmissionController.evaluate_event()`：
+  - `MemoryService.ingest_event()` 不再单独维护 `_should_extract_long_term_memory()`。
+  - `AdmissionController` 在注入 LLM 时执行 `should_extract` 判断，失败时降级到规则准入。
+  - `MemoryService` 会使用 `AdmissionDecision.admitted` 截断非长期记忆事件，保留事件写入但不进入 domain handler。
+- 已更新 `AGENTS.md`：以后读取项目文档必须显式指定 UTF-8 编码。
 
 ## 进行中
 
@@ -159,6 +174,10 @@
 - `python -m pytest tests -q -p no:cacheprovider`：190 passed, 6 subtests passed。
 - HTTP 手工验证：`/health`、`/api/v1/ingest`、`/api/v1/retrieve` 通过。
 - 插件轻量验证：`openclaw.plugin.json` 可解析；旧 `before_agent_reply` 和 mock 后端调用无残留。
+- `python -m pytest tests\unit\llm -q -p no:cacheprovider`：6 passed。
+- `python -m compileall src tests`：通过。
+- `python -m pytest tests\unit\llm -q -p no:cacheprovider`：11 passed。
+- `python -m pytest tests\unit\core\test_admission_control.py tests\unit\core\test_service.py -q -p no:cacheprovider`：24 passed。
 
 ## 2026-04-27 图数据库 Store 进展
 

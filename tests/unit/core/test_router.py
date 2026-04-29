@@ -7,6 +7,16 @@ from src.retrieval import IntentResult, MemoryDomain, RetrievalQuery
 from src.schemas import EventContext, NormalizedEvent
 
 
+class FakeRouteLLM:
+    def __init__(self, payload: dict[str, object]) -> None:
+        self.payload = payload
+        self.calls: list[dict[str, object]] = []
+
+    async def ajson(self, system_prompt: str | None, user_prompt: str, **kwargs: object) -> dict[str, object]:
+        self.calls.append({"system_prompt": system_prompt or "", "user_prompt": user_prompt, "kwargs": kwargs})
+        return self.payload
+
+
 class TestRouter(unittest.TestCase):
     def setUp(self) -> None:
         self.router = DomainRouter()
@@ -52,6 +62,20 @@ class TestRouter(unittest.TestCase):
 
         self.assertTrue(decision.fallback_used)
         self.assertTrue(decision.primary)
+
+    def test_route_event_uses_llm_when_available(self) -> None:
+        llm = FakeRouteLLM(
+            {
+                "domain": "project_decision",
+            }
+        )
+        router = DomainRouter(llm_client=llm)
+
+        decision = router.route_event(self._event("chat_message", "我们准备定方案"))
+
+        self.assertEqual(decision.primary[0].domain, "project_decision")
+        self.assertEqual(decision.secondary, [])
+        self.assertEqual(len(llm.calls), 1)
 
     def test_route_query_uses_intent_first(self) -> None:
         decision = self.router.route_query(

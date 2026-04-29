@@ -75,8 +75,12 @@ class MemoryService:
         self.memory_store = memory_store
         self.embedding_store = embedding_store
         self.llm_client = llm_client
-        self.router = router or DomainRouter()
-        self.admission = admission or AdmissionController()
+        self.router = router or DomainRouter(llm_client=llm_client)
+        if router is not None and getattr(router, "llm_client", None) is None:
+            router.llm_client = llm_client
+        self.admission = admission or AdmissionController(llm_client=llm_client)
+        if admission is not None and getattr(admission, "llm_client", None) is None:
+            admission.llm_client = llm_client
         self.dedup = dedup or DedupMergeEngine()
         self.supersede = supersede or SupersedeManager(memory_store)
         self.decay_policy = decay_policy or DecayPolicy()
@@ -93,10 +97,25 @@ class MemoryService:
             event.event_type,
             event.source_type,
         )
+        # 先存一份原始事件
         event_id = self.event_store.insert_event(event)
+        # LLM 做路由
         route_decision = self.router.route_event(event)
         primary_domain = route_decision.primary[0].domain if route_decision.primary else None
-        self.admission.evaluate_event(event, domain=primary_domain)
+        # 决定要不要抽取长期记忆
+        # TODO：这里是不是应该先做判断再路由？
+        event_admission = self.admission.evaluate_event(event, domain=primary_domain)
+        if not event_admission.admitted:
+            logger.info(
+                "function=src.core.service.MemoryService.ingest_event action=event_admission_rejected event_id=%s reason=%s",
+                event.event_id,
+                event_admission.reason,
+            )
+            return IngestResult(
+                event_id=event_id,
+                stored=True,
+                message=f"event stored; admission rejected: {event_admission.reason}",
+            )
         handler = self.domain_handlers.get(primary_domain or "")
         if handler is None:
             return IngestResult(
@@ -383,3 +402,4 @@ def _run_async(awaitable: Any) -> Any:
         return asyncio.run(awaitable)
     else:
         raise RuntimeError("MemoryService sync API cannot run inside an active event loop")
+

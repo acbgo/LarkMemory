@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+from urllib.parse import urlparse
 from typing import Any
 
 from .base import (
@@ -60,6 +61,23 @@ class OpenAIProvider(LLMProvider):
     @property
     def supports_tools(self) -> bool:
         return True
+
+    @property
+    def is_deepseek_compatible(self) -> bool:
+        """Return True when the configured base URL targets DeepSeek's API."""
+
+        base_url = self.config.base_url or ""
+        hostname = urlparse(base_url).hostname or ""
+        return hostname.lower().endswith("api.deepseek.com")
+
+    def json_response_format(self, schema: dict[str, Any] | None) -> dict[str, Any] | None:
+        """Return JSON response_format supported by OpenAI-compatible providers."""
+
+        if self.is_deepseek_compatible:
+            return {"type": "json_object"}
+        if schema is None:
+            return None
+        return super().json_response_format(schema)
 
     def _convert_messages(self, messages: list[Message]) -> list[dict[str, Any]]:
         payload: list[dict[str, Any]] = []
