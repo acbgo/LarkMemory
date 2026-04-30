@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from ._types import IntentResult, MemoryDomain, RetrievalQuery
 
@@ -23,64 +23,14 @@ logger = logging.getLogger(__name__)
 
 _SYSTEM_PROMPT = """\
 You are an intent classifier for a memory retrieval system.
-Given a user query and optional context, determine which memory domains are relevant.
+Classify the user query into exactly one of these four labels:
+cli_workflow
+project_decision
+personal_preference
+team_retention
 
-Available domains:
-- cli_workflow: CLI commands, deployment, build, troubleshooting, shell operations
-- project_decision: project decisions, rationale, alternatives, why something was chosen
-- personal_preference: user habits, preferences, routines, personalized defaults
-- team_retention: team critical facts, reminders, compliance rules, review schedules
-
-Respond with a JSON object:
-{
-  "primary_domains": ["<domain>", ...],
-  "secondary_domains": ["<domain>", ...],
-  "intent_type": "<short label>",
-  "keywords": ["<keyword>", ...],
-  "time_hint": "<recent | last_week | last_month | null>",
-  "confidence": <0.0-1.0>
-}
-
-Rules:
-- primary_domains: 1-2 domains most relevant to the query (never empty)
-- secondary_domains: 0-2 domains that may provide supplementary info
-- A domain should not appear in both primary and secondary
-- intent_type: a short English label like "deployment", "decision_lookup", "preference", "reminder", "general"
-- time_hint: if the query implies a time range, specify it; otherwise null
-- confidence: how confident you are in the classification
+Only output the label. Do not output JSON, explanations, punctuation, or extra text.
 """
-
-_INTENT_JSON_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "properties": {
-        "primary_domains": {
-            "type": "array",
-            "items": {
-                "type": "string",
-                "enum": [d.value for d in MemoryDomain],
-            },
-        },
-        "secondary_domains": {
-            "type": "array",
-            "items": {
-                "type": "string",
-                "enum": [d.value for d in MemoryDomain],
-            },
-        },
-        "intent_type": {"type": "string"},
-        "keywords": {"type": "array", "items": {"type": "string"}},
-        "time_hint": {"type": ["string", "null"]},
-        "confidence": {"type": "number"},
-    },
-    "required": [
-        "primary_domains",
-        "secondary_domains",
-        "intent_type",
-        "keywords",
-        "confidence",
-    ],
-    "additionalProperties": False,
-}
 
 # ---------------------------------------------------------------------------
 # 关键词降级规则
@@ -223,15 +173,14 @@ class IntentAnalyzer:
         return _keyword_fallback(query)
 
     async def _analyze_with_llm(self, query: RetrievalQuery) -> IntentResult:
-        """调用 LLM 进行意图分类，输入检索查询并返回解析后的 IntentResult。"""
+        """调用 LLM 做四分类意图识别，复杂检索信号由规则补齐。"""
         user_prompt = self._build_user_prompt(query)
-        raw: dict[str, Any] = await self._llm.ajson(
+        label = await self._llm.atext(
             _SYSTEM_PROMPT,
             user_prompt,
-            schema=_INTENT_JSON_SCHEMA,
             temperature=0,
         )
-        return self._parse_llm_output(raw)
+        return self._parse_llm_label(label, query)
 
     # ------------------------------------------------------------------
     # 内部方法
@@ -253,28 +202,28 @@ class IntentAnalyzer:
         return "\n".join(parts)
 
     @staticmethod
-    def _parse_llm_output(raw: dict[str, Any]) -> IntentResult:
-        """解析 LLM JSON 输出，过滤非法领域并补齐默认主查/辅查领域。"""
-        primary = [
-            MemoryDomain(d) for d in raw.get("primary_domains", [])
-            if d in {m.value for m in MemoryDomain}
-        ]
-        secondary = [
-            MemoryDomain(d) for d in raw.get("secondary_domains", [])
-            if d in {m.value for m in MemoryDomain}
-        ]
-        if not primary:
-            primary = [MemoryDomain.TEAM_RETENTION]
+    def _parse_llm_label(label: str, query: RetrievalQuery) -> IntentResult:
+        """解析四分类标签，并用规则补齐辅查域、关键词和时间提示。"""
+        normalized = label.strip().lower()
+        matched = next(
+            (domain for domain in MemoryDomain if domain.value in normalized),
+            None,
+        )
+        if matched is None:
+            raise ValueError(f"invalid intent label: {label!r}")
 
-        secondary = [d for d in secondary if d not in primary]
-        if not secondary and primary == [MemoryDomain.TEAM_RETENTION]:
-            secondary = [MemoryDomain.PROJECT_DECISION]
+        fallback = _keyword_fallback(query)
+        primary = [matched]
+        secondary = [
+            domain for domain in _SECONDARY_AFFINITY.get(matched, [])
+            if domain not in primary
+        ]
 
         return IntentResult(
             primary_domains=primary,
             secondary_domains=secondary,
-            intent_type=raw.get("intent_type", "general"),
-            keywords=raw.get("keywords", []),
-            time_hint=raw.get("time_hint"),
-            confidence=float(raw.get("confidence", 0.5)),
+            intent_type=matched.value,
+            keywords=fallback.keywords,
+            time_hint=fallback.time_hint,
+            confidence=0.8,
         )

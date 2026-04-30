@@ -105,37 +105,47 @@ def test_chinese_topic_extraction_keeps_domain_terms() -> None:
 
 
 class _FakeRewriteLLM:
-    async def ajson(self, *_args: object, **_kwargs: object) -> dict[str, object]:
-        return {
-            "rewritten_text": "查找项目决策",
-            "extracted_topics": ["项目决策"],
-            "time_start": None,
-            "time_end": None,
-            "time_description": None,
-            "boost_signals": {"semantic_match": 0.9},
-        }
+    async def atext(self, *_args: object, **_kwargs: object) -> str:
+        return "查询项目中为什么选择方案 B 的历史决策和理由"
 
 
 class _FakeIntentLLM:
-    async def ajson(self, *_args: object, **_kwargs: object) -> dict[str, object]:
-        return {
-            "primary_domains": ["project_decision", "unknown_domain"],
-            "secondary_domains": ["project_decision", "team_retention"],
-            "intent_type": "decision_lookup",
-            "keywords": ["方案B"],
-            "time_hint": "last_week",
-            "confidence": 0.9,
-        }
+    async def atext(self, *_args: object, **_kwargs: object) -> str:
+        return "project_decision"
 
 
-def test_llm_rewrite_merges_rule_boosts() -> None:
+class _FakeNoisyIntentLLM:
+    async def atext(self, *_args: object, **_kwargs: object) -> str:
+        return "类别: project_decision"
+
+
+def test_llm_rewrite_returns_plain_query_and_keeps_rule_boosts() -> None:
     rewriter = QueryRewriter(_FakeRewriteLLM())
     query = RetrievalQuery("为什么选方案B", project_id="project-1")
     intent = IntentResult(primary_domains=[MemoryDomain.PROJECT_DECISION])
 
     rewritten = asyncio.run(rewriter.rewrite(query, intent))
 
-    assert rewritten.boost_signals["semantic_match"] == 0.9
+    assert rewritten.rewritten_text == "查询项目中为什么选择方案 B 的历史决策和理由"
+    assert rewritten.boost_signals["project_match"] == 0.7
+    assert rewritten.boost_signals["topic_match"] == 0.8
+
+
+def test_llm_rewrite_preserves_rule_topics_scope_and_time_window() -> None:
+    rewriter = QueryRewriter(_FakeRewriteLLM())
+    query = RetrievalQuery("为什么选方案B", project_id="project-1")
+    intent = IntentResult(
+        primary_domains=[MemoryDomain.PROJECT_DECISION],
+        keywords=["方案B"],
+        time_hint="last_week",
+    )
+
+    rewritten = asyncio.run(rewriter.rewrite(query, intent))
+
+    assert rewritten.rewritten_text == "查询项目中为什么选择方案 B 的历史决策和理由"
+    assert "方案B" in rewritten.extracted_topics
+    assert rewritten.time_window is not None
+    assert rewritten.scope_filters == {"project_id": "project-1"}
     assert rewritten.boost_signals["project_match"] == 0.7
     assert rewritten.boost_signals["topic_match"] == 0.8
 
@@ -147,15 +157,24 @@ def test_keyword_fallback_defaults_to_collaboration_domains() -> None:
     assert result.secondary_domains == [MemoryDomain.PROJECT_DECISION]
 
 
-def test_intent_analyzer_uses_typed_llm_client_and_filters_domains() -> None:
+def test_intent_analyzer_uses_single_four_class_label() -> None:
     result = asyncio.run(IntentAnalyzer(_FakeIntentLLM()).analyze(RetrievalQuery("为什么选方案B")))
 
     assert result.primary_domains == [MemoryDomain.PROJECT_DECISION]
     assert result.secondary_domains == [MemoryDomain.TEAM_RETENTION]
-    assert result.intent_type == "decision_lookup"
-    assert result.keywords == ["方案B"]
-    assert result.time_hint == "last_week"
-    assert result.confidence == 0.9
+    assert result.intent_type == "project_decision"
+    assert result.keywords == ["为什么", "方案"]
+    assert result.confidence == 0.8
+
+
+def test_intent_analyzer_accepts_label_with_extra_text() -> None:
+    result = asyncio.run(IntentAnalyzer(_FakeNoisyIntentLLM()).analyze(RetrievalQuery("为什么选方案B")))
+
+    assert result.primary_domains == [MemoryDomain.PROJECT_DECISION]
+    assert result.secondary_domains == [MemoryDomain.TEAM_RETENTION]
+    assert result.intent_type == "project_decision"
+    assert result.keywords == ["为什么", "方案"]
+    assert result.confidence == 0.8
 
 
 def test_retrieval_tracer_persists_trace_dict_and_keeps_recent_copy() -> None:

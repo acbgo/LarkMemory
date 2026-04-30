@@ -125,6 +125,10 @@
 - 已简化 ingest 链路日志 message：
   - 删除日志文本中的 `function=...` 前缀，保留 `action=...` 和关键字段。
   - 依赖 logger 名称展示文件/模块来源，降低日志正文噪音。
+- 已简化 retrieve 链路 LLM 前处理：
+  - `IntentAnalyzer` 的 LLM 路径从复杂 JSON schema 改为四分类纯文本标签，只输出 `cli_workflow`、`project_decision`、`personal_preference` 或 `team_retention`。
+  - `QueryRewriter` 的 LLM 路径从结构化 JSON 改为只输出一条改写后的检索语句。
+  - topic、时间窗口、scope filter 和 boost signal 继续由规则补齐，降低小模型输出复杂结构的失败概率。
 - 已更新 `AGENTS.md`：以后读取项目文档必须显式指定 UTF-8 编码。
 
 ## 进行中
@@ -189,6 +193,9 @@
 - `python -m pytest tests\unit\domains\project_decision tests\unit\storage\test_graph_store.py tests\unit\core\test_service.py tests\unit\core\test_router.py tests\unit\core\test_admission_control.py tests\unit\llm -q -p no:cacheprovider`：75 passed。
 - `python -m pytest tests\unit\core\test_service.py tests\unit\core\test_router.py tests\unit\domains\project_decision\test_extractor.py tests\unit\api\test_ingest_api.py tests\unit\storage\test_event_store.py tests\unit\storage\test_memory_core_store.py -q -p no:cacheprovider`：46 passed。
 - `python -m pytest tests\unit\domains\project_decision tests\unit\core\test_service.py tests\unit\api\test_ingest_api.py tests\unit\storage\test_event_store.py tests\unit\storage\test_memory_core_store.py -q -p no:cacheprovider`：56 passed。
+- `uv run pytest tests\unit\retrieval\test_retrieval_components.py -q`：12 passed。
+- `uv run python -m compileall src tests`：通过。
+- `uv run pytest tests\unit\retrieval tests\unit\api\test_retrieve_api.py tests\unit\core\test_service.py -q`：32 passed, 2 failed；失败项为旧日志断言仍期待 `function=...` 前缀。
 
 ## 2026-04-27 图数据库 Store 进展
 

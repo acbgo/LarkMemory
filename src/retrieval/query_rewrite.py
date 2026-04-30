@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 import re
 from datetime import datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from ._types import (
     IntentResult,
@@ -30,51 +30,10 @@ logger = logging.getLogger(__name__)
 
 _SYSTEM_PROMPT = """\
 You are a query rewriter for a memory retrieval system.
-Given a user query, its detected intent, and optional context, extract structured retrieval signals.
+Rewrite the user query into one clear search query for memory retrieval.
 
-Respond with a JSON object:
-{
-  "rewritten_text": "<clarified and enriched version of the query>",
-  "extracted_topics": ["<topic1>", "<topic2>", ...],
-  "time_start": "<ISO datetime or null>",
-  "time_end": "<ISO datetime or null>",
-  "time_description": "<human-readable time range or null>",
-  "boost_signals": {
-    "<signal_name>": <weight 0.0-1.0>,
-    ...
-  }
-}
-
-Rules:
-- rewritten_text: rephrase for clarity; expand abbreviations; add implicit context
-- extracted_topics: key topics/entities mentioned or implied
-- time fields: if the query implies a time range, fill in; otherwise null
-- boost_signals: factors that should boost certain results, e.g. {"repo_match": 0.8, "recency": 0.6}
+Only output the rewritten query. Do not output JSON, explanations, bullet points, or extra text.
 """
-
-_REWRITE_JSON_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "properties": {
-        "rewritten_text": {"type": "string"},
-        "extracted_topics": {
-            "type": "array",
-            "items": {"type": "string"},
-        },
-        "time_start": {"type": ["string", "null"]},
-        "time_end": {"type": ["string", "null"]},
-        "time_description": {"type": ["string", "null"]},
-        "boost_signals": {
-            "type": "object",
-            "additionalProperties": {"type": "number"},
-        },
-    },
-    "required": [
-        "rewritten_text",
-        "extracted_topics",
-        "boost_signals",
-    ],
-    "additionalProperties": False,
-}
 
 # ---------------------------------------------------------------------------
 # 时间窗口推算规则
@@ -220,6 +179,16 @@ def _extract_topics_by_rules(text: str) -> list[str]:
     return deduped[:15]
 
 
+def _clean_rewritten_text(text: str) -> str:
+    """清理 LLM 纯文本改写结果，只保留第一条可用检索语句。"""
+    cleaned_lines = [
+        line.strip().strip("\"'`")
+        for line in text.splitlines()
+        if line.strip()
+    ]
+    return cleaned_lines[0] if cleaned_lines else ""
+
+
 # ---------------------------------------------------------------------------
 # QueryRewriter
 # ---------------------------------------------------------------------------
@@ -268,36 +237,19 @@ class QueryRewriter:
         intent: IntentResult,
         scope_filters: dict[str, str],
     ) -> RewrittenQuery:
+        """调用 LLM 只生成改写语句，其余检索信号由规则补齐。"""
         user_prompt = self._build_user_prompt(query, intent)
-        raw: dict[str, Any] = await self._llm.ajson(
+        rewritten_text = await self._llm.atext(
             _SYSTEM_PROMPT,
             user_prompt,
-            schema=_REWRITE_JSON_SCHEMA,
             temperature=0,
         )
 
-        time_window = None
-        if raw.get("time_start") or raw.get("time_end"):
-            time_window = TimeWindow(
-                start=raw.get("time_start"),
-                end=raw.get("time_end"),
-                description=raw.get("time_description"),
-            )
-        elif intent.time_hint:
-            time_window = _compute_time_window(intent.time_hint)
-
-        rule_boosts = _compute_boost_signals(intent, query)
-        llm_boosts = raw.get("boost_signals", {})
-        merged_boosts = {**llm_boosts, **rule_boosts}
-
-        return RewrittenQuery(
-            original=query,
-            rewritten_text=raw.get("rewritten_text", query.query_text),
-            extracted_topics=raw.get("extracted_topics", []),
-            time_window=time_window,
-            scope_filters=scope_filters,
-            boost_signals=merged_boosts,
-        )
+        result = self._rewrite_by_rules(query, intent, scope_filters)
+        cleaned = _clean_rewritten_text(rewritten_text)
+        if cleaned:
+            result.rewritten_text = cleaned
+        return result
 
     # ------------------------------------------------------------------
     # 规则策略
