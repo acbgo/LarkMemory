@@ -1,8 +1,6 @@
 from .extractor import ProjectDecisionExtractor
 from .handler import ProjectDecisionDomainHandler
 from .models import (
-    DecisionAlternative,
-    DecisionReason,
     ProjectDecision,
     ProjectDecisionCandidate,
 )
@@ -11,8 +9,6 @@ from .retriever import ProjectDecisionQuery, ProjectDecisionRetriever, ProjectDe
 from .versioning import DecisionVersionDecision, ProjectDecisionVersionManager
 
 __all__ = [
-    "DecisionAlternative",
-    "DecisionReason",
     "ProjectDecision",
     "ProjectDecisionCandidate",
     "ProjectDecisionExtractor",

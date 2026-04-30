@@ -64,7 +64,7 @@ class MemoryCoreStore(SQLiteStore):
     def insert_memory_core(self, memory: MemoryCore) -> str:
         """写入单个 MemoryCore，输入记忆对象并返回 memory_id。"""
         logger.info(
-            "function=src.storage.memory_core_store.MemoryCoreStore.insert_memory_core action=start memory_id=%s domain=%s memory_type=%s status=%s",
+            "action=start memory_id=%s domain=%s memory_type=%s status=%s",
             memory.memory_id,
             memory.domain,
             memory.memory_type,
@@ -127,7 +127,7 @@ class MemoryCoreStore(SQLiteStore):
             ),
         )
         logger.info(
-            "function=src.storage.memory_core_store.MemoryCoreStore.insert_memory_core action=inserted memory_id=%s",
+            "action=inserted memory_id=%s",
             memory.memory_id,
         )
         return memory.memory_id
@@ -219,7 +219,7 @@ class MemoryCoreStore(SQLiteStore):
     ) -> list[dict[str, Any]]:
         """列出 active 状态记忆，可按 domain 和 scope 过滤。"""
         logger.info(
-            "function=src.storage.memory_core_store.MemoryCoreStore.list_active_memories action=start domain=%s scope=%s limit=%s",
+            "action=start domain=%s scope=%s limit=%s",
             domain,
             scope,
             limit,
@@ -242,7 +242,7 @@ class MemoryCoreStore(SQLiteStore):
         rows = self.fetch_all(sql, tuple(parameters))
         result = [self._deserialize_row(row) for row in rows]
         logger.info(
-            "function=src.storage.memory_core_store.MemoryCoreStore.list_active_memories action=done row_count=%s",
+            "action=done row_count=%s",
             len(result),
         )
         return result

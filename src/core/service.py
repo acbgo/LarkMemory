@@ -92,7 +92,7 @@ class MemoryService:
 
     def ingest_event(self, event: NormalizedEvent) -> IngestResult:
         logger.info(
-            "function=src.core.service.MemoryService.ingest_event action=start event_id=%s event_type=%s source_type=%s",
+            "action=start event_id=%s event_type=%s source_type=%s",
             event.event_id,
             event.event_type,
             event.source_type,
@@ -107,7 +107,7 @@ class MemoryService:
         event_admission = self.admission.evaluate_event(event, domain=primary_domain)
         if not event_admission.admitted:
             logger.info(
-                "function=src.core.service.MemoryService.ingest_event action=event_admission_rejected event_id=%s reason=%s",
+                "action=event_admission_rejected event_id=%s reason=%s",
                 event.event_id,
                 event_admission.reason,
             )
@@ -169,13 +169,24 @@ class MemoryService:
             raise ValueError("top_k must be greater than 0")
         query_id = new_query_id()
         logger.info(
-            "function=src.core.service.MemoryService.retrieve_async action=start query_id=%s top_k=%s include_trace=%s",
+            "action=retrieve_async start query_id=%s query_text=%s top_k=%s include_trace=%s",
             query_id,
+            query.query_text,
             top_k,
             include_trace,
         )
         intent = await IntentAnalyzer(self.llm_client).analyze(query)
+        logger.info(
+            "action=llm_intent_analyzer done query_text=%s intent=%s",
+            query.query_text,
+            intent,
+        )
         rewritten = await QueryRewriter(self.llm_client).rewrite(query, intent)
+        logger.info(
+            "action=llm_rewriter done query_text=%s rewritten=%s",
+            query.query_text,
+            rewritten.rewritten_text,
+        )
         target_domains = [
             domain.value
             for domain in [*intent.primary_domains, *intent.secondary_domains]

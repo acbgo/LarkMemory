@@ -199,19 +199,19 @@ class DomainRouter:
                     f"Route this event:\n{event.content_text}",
                     schema=_ROUTE_SCHEMA,
                     temperature=0,
-                    max_tokens=200,
+                    max_tokens=1024,
                 )
             )
         except Exception:
             logger.exception(
-                "function=src.core.router.DomainRouter.route_event action=llm_route_failed event_id=%s",
+                "action=llm_route_failed event_id=%s",
                 event.event_id,
             )
             return None
 
         primary = str(raw.get("domain") or "")
         logger.info(
-            "function=src.core.router.DomainRouter.route_event action=llm_route event_id=%s primary_domain=%s",
+            "action=llm_route event_id=%s primary_domain=%s",
             event.event_id,
             primary,
         )
@@ -225,7 +225,7 @@ class DomainRouter:
     def _log_event_decision(self, event: NormalizedEvent, decision: RouteDecision) -> RouteDecision:
         primary = decision.primary[0].domain if decision.primary else None
         logger.info(
-            "function=src.core.router.DomainRouter.route_event event_id=%s primary_domain=%s fallback_used=%s reason=%s",
+            "event_id=%s primary_domain=%s fallback_used=%s reason=%s",
             event.event_id,
             primary,
             decision.fallback_used,

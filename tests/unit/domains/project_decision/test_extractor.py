@@ -47,8 +47,8 @@ def test_extracts_confirmed_decision_with_alternatives_and_reason() -> None:
     assert decision.project_id == "project-1"
     assert decision.topic == "方案选择"
     assert len(decision.alternatives) == 2
-    assert {item.name for item in decision.alternatives} == {"方案 A", "方案 B"}
-    assert decision.reasons[0].text.startswith("接入成本更低")
+    assert set(decision.alternatives) == {"方案 A", "方案 B"}
+    assert decision.reasons[0].startswith("接入成本更低")
 
 
 def test_extracts_deadline_decision() -> None:

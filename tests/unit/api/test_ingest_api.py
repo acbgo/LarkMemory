@@ -52,7 +52,7 @@ class TestIngestApi(unittest.TestCase):
         assert stored is not None
         self.assertEqual(stored["project_id"], "project-1")
         self.assertIn(
-            "function=src.api.ingest.ingest_event",
+            "action=build_event",
             "\n".join(captured.output),
         )
 

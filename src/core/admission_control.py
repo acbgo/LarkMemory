@@ -91,19 +91,19 @@ class AdmissionController:
                 self.llm_client.ajson(  # type: ignore[union-attr]
                     _MEMORY_WORTHINESS_SYSTEM_PROMPT,
                     f"Judge whether this event should be extracted into long-term memory:\n{event.content_text}",
-                    max_tokens=200,
+                    max_tokens=1024,
                 )
             )
         except Exception:
             logger.exception(
-                "function=src.core.admission_control.AdmissionController.evaluate_event action=llm_memory_gate_failed event_id=%s fallback=rules",
+                "action=llm_memory_gate_failed event_id=%s fallback=rules",
                 event.event_id,
             )
             return None
 
         should_extract = bool(raw.get("should_extract"))
         logger.info(
-            "function=src.core.admission_control.AdmissionController.evaluate_event action=llm_memory_gate event_id=%s should_extract=%s",
+            "action=llm_memory_gate event_id=%s should_extract=%s",
             event.event_id,
             should_extract,
         )

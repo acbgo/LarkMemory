@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from src.utils.time import days_between, is_expired
+from src.utils.time import days_between
 
 from .models import ProjectDecision
 
@@ -87,9 +87,7 @@ class ProjectDecisionRanker:
     def freshness_score(self, decision: ProjectDecision, *, now_iso: str | None = None) -> float:
         if decision.status == "superseded":
             return 0.0
-        if is_expired(decision.valid_to, now=None):
-            return 0.1
-        reference = decision.decided_at or decision.valid_from
+        reference = decision.decided_at
         if not reference:
             return 0.6
         try:
@@ -111,13 +109,9 @@ class ProjectDecisionRanker:
             score += 0.3
         if source == "feishu_chat":
             score += 0.1
-        roles = " ".join(decision.participants).lower()
-        if any(role in roles for role in ("owner", "负责人", "pm", "tech lead")):
-            score += 0.2
         if decision.confidence < 0.45:
             score = min(score, 0.5)
         return self._clamp_score(score)
 
     def _clamp_score(self, value: float) -> float:
         return max(0.0, min(1.0, float(value)))
-

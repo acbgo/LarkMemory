@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 from src.domains.project_decision import (
-    DecisionAlternative,
-    DecisionReason,
     ProjectDecision,
     ProjectDecisionCandidate,
 )
@@ -18,17 +16,13 @@ def _decision() -> ProjectDecision:
         topic="检索层方案",
         decision="采用方案 B",
         stage="技术选型",
-        alternatives=[
-            DecisionAlternative(name="方案 A", status="rejected"),
-            DecisionAlternative(name="方案 B", status="confirmed"),
-        ],
-        reasons=[DecisionReason(text="接入成本更低", reason_type="support")],
-        participants=["pm-owner"],
+        alternatives=["方案 A", "方案 B"],
+        reasons=["接入成本更低"],
+        objections=["方案 A 接入成本更高"],
         source_event_id="event-1",
         source_type="feishu_chat",
         source_ref="message-1",
         decided_at="2026-04-26T00:00:00Z",
-        tags=["retrieval"],
         confidence=1.4,
         importance=-0.2,
     )
@@ -44,6 +38,7 @@ def test_project_decision_content_and_summary_include_core_fields() -> None:
     assert "采用方案 B" in content
     assert "接入成本更低" in content
     assert "方案 A" in content
+    assert "方案 A 接入成本更高" in content
     assert len(summary) <= 200
     assert "采用方案 B" in summary
 
@@ -82,7 +77,6 @@ def test_project_decision_from_memory_core_accepts_dataclass_and_dict() -> None:
             "confidence": memory.confidence,
             "status": memory.status,
             "valid_from": memory.valid_from,
-            "valid_to": memory.valid_to,
             "overwrite_of": memory.overwrite_of,
             "superseded_by": memory.superseded_by,
             "created_at": memory.created_at,
@@ -93,6 +87,7 @@ def test_project_decision_from_memory_core_accepts_dataclass_and_dict() -> None:
     assert from_dataclass.project_id == "project-1"
     assert from_dict.decision == "采用方案 B"
     assert from_dict.stage == "技术选型"
+    assert "接入成本更低" in from_dict.reasons
 
 
 def test_project_decision_candidate_admission_boundaries() -> None:
@@ -115,4 +110,3 @@ def test_project_decision_candidate_admission_boundaries() -> None:
     assert accepted.is_admissible()
     assert not low_confidence.is_admissible()
     assert not missing_topic.is_admissible()
-

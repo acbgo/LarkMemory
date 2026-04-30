@@ -224,8 +224,7 @@ class Neo4jGraphStore:
         """Persist a project decision subgraph.
 
         The decision node is linked back to its Memory node when available. If
-        no explicit decider is provided, participants are treated as decision
-        makers for the graph index so user-centric traversal has useful edges.
+        User-centric traversal is created only when an explicit decider is provided.
         """
         target_memory_id = memory_id or decision.decision_id
         self._run_write(
@@ -244,9 +243,6 @@ class Neo4jGraphStore:
                 d.source_type = $source_type,
                 d.source_ref = $source_ref,
                 d.decided_at = $decided_at,
-                d.valid_from = $valid_from,
-                d.valid_to = $valid_to,
-                d.tags = $tags,
                 d.confidence = $confidence,
                 d.importance = $importance
             WITH d
@@ -270,9 +266,6 @@ class Neo4jGraphStore:
                 "source_type": decision.source_type,
                 "source_ref": decision.source_ref,
                 "decided_at": decision.decided_at,
-                "valid_from": decision.valid_from,
-                "valid_to": decision.valid_to,
-                "tags": decision.tags,
                 "confidence": decision.confidence,
                 "importance": decision.importance,
                 "memory_id": target_memory_id,
@@ -479,8 +472,8 @@ class Neo4jGraphStore:
         *,
         decided_by: str | None,
     ) -> None:
-        """Create MADE_DECISION edges from explicit decider or decision participants."""
-        user_ids = [decided_by] if decided_by else decision.participants
+        """Create MADE_DECISION edges from an explicit decider when available."""
+        user_ids = [decided_by] if decided_by else []
         unique_user_ids = sorted({user_id.strip() for user_id in user_ids if user_id.strip()})
         if not unique_user_ids:
             return

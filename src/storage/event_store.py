@@ -54,7 +54,7 @@ class EventStore(SQLiteStore):
     def insert_event(self, event: NormalizedEvent) -> str:
         """写入单个 NormalizedEvent，输入事件对象并返回 event_id。"""
         logger.info(
-            "function=src.storage.event_store.EventStore.insert_event action=start event_id=%s event_type=%s source_type=%s",
+            "action=start event_id=%s event_type=%s source_type=%s",
             event.event_id,
             event.event_type,
             event.source_type,
@@ -102,7 +102,7 @@ class EventStore(SQLiteStore):
             ),
         )
         logger.info(
-            "function=src.storage.event_store.EventStore.insert_event action=inserted event_id=%s",
+            "action=inserted event_id=%s",
             event.event_id,
         )
         return event.event_id

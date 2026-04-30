@@ -21,10 +21,11 @@ async def retrieve_memories(
 ) -> RetrieveResponse:
     """接收检索请求，异步调用 MemoryService 并返回排序后的记忆命中结果。"""
     if not request.query_text.strip():
-        logger.warning("function=src.api.retrieve.retrieve_memories action=blank_query")
+        logger.warning("action=retrieve_memories blank_query")
         raise HTTPException(status_code=422, detail="query_text cannot be blank")
     logger.info(
-        "function=src.api.retrieve.retrieve_memories action=build_query top_k=%s include_trace=%s user_id=%s project_id=%s",
+        "action=retrieve_memories build_query query_text=%s top_k=%s include_trace=%s user_id=%s project_id=%s",
+        request.query_text,
         request.top_k,
         request.include_trace,
         request.user_id,
@@ -62,7 +63,7 @@ async def retrieve_memories(
         for ranked in result.ranked_memories
     ]
     logger.info(
-        "function=src.api.retrieve.retrieve_memories action=done query_id=%s result_count=%s",
+        "action=retrieve_memories done query_id=%s result_count=%s",
         result.query_id,
         len(hits),
     )

@@ -84,7 +84,7 @@ class ProjectDecisionVersionManager:
             ordered: list[ProjectDecision] = []
             current = sorted(
                 roots,
-                key=lambda decision: (decision.decided_at or decision.valid_from or "", decision.decision_id),
+                key=lambda decision: (decision.decided_at or "", decision.decision_id),
             )[0]
             seen: set[str] = set()
             while current.decision_id not in seen:
@@ -97,13 +97,13 @@ class ProjectDecisionVersionManager:
             ordered.extend(
                 sorted(
                     [decision for decision in decisions if decision.decision_id not in seen],
-                    key=lambda decision: (decision.decided_at or decision.valid_from or "", decision.decision_id),
+                    key=lambda decision: (decision.decided_at or "", decision.decision_id),
                 )
             )
             return ordered
         return sorted(
             decisions,
-            key=lambda decision: (decision.decided_at or decision.valid_from or "", decision.decision_id),
+            key=lambda decision: (decision.decided_at or "", decision.decision_id),
         )
 
     def find_related_decisions(
@@ -164,9 +164,9 @@ class ProjectDecisionVersionManager:
         change_signals = ("改为", "调整为", "延期", "提前", "替换", "不再", "改成", "从", "变更")
         if any(signal in new_text for signal in change_signals):
             return True
-        old_confirmed = {alternative.name for alternative in old.alternatives if alternative.status == "confirmed"}
-        new_confirmed = {alternative.name for alternative in new.alternatives if alternative.status == "confirmed"}
-        if old_confirmed and new_confirmed and old_confirmed != new_confirmed:
+        old_alternatives = set(old.alternatives)
+        new_alternatives = set(new.alternatives)
+        if old_alternatives and new_alternatives and old_alternatives != new_alternatives:
             return True
         if old.decision and new.decision and old.decision != new.decision:
             return True

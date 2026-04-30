@@ -35,7 +35,7 @@ class ProjectDecisionDomainHandler:
 
     def ingest_event(self, event: NormalizedEvent, runtime: DomainRuntime) -> DomainIngestResult:
         logger.info(
-            "function=src.domains.project_decision.handler.ProjectDecisionDomainHandler.ingest_event action=start event_id=%s",
+            "action=start event_id=%s",
             event.event_id,
         )
         candidates = self.extractor.extract(event)
@@ -53,13 +53,13 @@ class ProjectDecisionDomainHandler:
             ):
                 self.version_manager.apply_supersede(version_decision.old_memory_id, memory_id)
             logger.info(
-                "function=src.domains.project_decision.handler.ProjectDecisionDomainHandler.ingest_event action=stored event_id=%s memory_id=%s topic=%s",
+                "action=stored event_id=%s memory_id=%s topic=%s",
                 event.event_id,
                 memory_id,
                 candidate.decision.topic,
             )
         logger.info(
-            "function=src.domains.project_decision.handler.ProjectDecisionDomainHandler.ingest_event action=done event_id=%s candidate_count=%s memory_count=%s",
+            "action=done event_id=%s candidate_count=%s memory_count=%s",
             event.event_id,
             len(candidates),
             len(memory_ids),

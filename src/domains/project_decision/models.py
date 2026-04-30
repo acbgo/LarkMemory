@@ -13,16 +13,7 @@ from src.utils.time import utc_now_iso
 logger = logging.getLogger(__name__)
 
 
-DecisionStatus = Literal["proposed", "confirmed", "rejected", "superseded", "unknown"]
-DecisionConfidenceLevel = Literal["low", "medium", "high"]
-DecisionRelationType = Literal[
-    "supersedes",
-    "superseded_by",
-    "related_to",
-    "blocks",
-    "depends_on",
-]
-DecisionReasonType = Literal["support", "against", "constraint", "risk", "context"]
+DecisionStatus = Literal["confirmed", "superseded"]
 
 
 def _clamp(value: float) -> float:
@@ -61,79 +52,67 @@ def _line_value(text: str, label: str) -> str | None:
     return None
 
 
-@dataclass(slots=True)
-class DecisionAlternative:
-    """A candidate option discussed in a project decision."""
-
-    name: str
-    description: str | None = None
-    pros: list[str] = field(default_factory=list)
-    cons: list[str] = field(default_factory=list)
-    status: DecisionStatus = "unknown"
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "name": self.name,
-            "description": self.description,
-            "pros": list(self.pros),
-            "cons": list(self.cons),
-            "status": self.status,
-        }
-
-
-@dataclass(slots=True)
-class DecisionReason:
-    """A reason, objection, risk, or contextual note for a decision."""
-
-    text: str
-    reason_type: DecisionReasonType = "context"
-    source_ref: str | None = None
-    speaker_id: str | None = None
-    created_at: str | None = None
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "text": self.text,
-            "reason_type": self.reason_type,
-            "source_ref": self.source_ref,
-            "speaker_id": self.speaker_id,
-            "created_at": self.created_at,
-        }
+def _line_list(text: str, label: str) -> list[str]:
+    value = _line_value(text, label)
+    if not value:
+        return []
+    return _unique([part.strip() for part in value.split("；")])
 
 
 @dataclass(slots=True)
 class ProjectDecision:
-    """Structured project decision memory for the project_decision domain."""
+    """历史决策卡片模型，服务决策抽取、召回和主动推送。"""
 
+    # 决策记忆的唯一 ID，同时作为写入 MemoryCore 的 memory_id。
     decision_id: str = field(default_factory=memory_id)
+    # 飞书项目或业务项目 ID，用于限定召回范围。
     project_id: str | None = None
+    # 飞书工作区 ID，用于项目缺失时的上层范围过滤。
     workspace_id: str | None = None
+    # 飞书群聊或团队 ID，用于群聊维度的范围过滤。
     team_id: str | None = None
+    # 飞书消息线程或文档讨论串 ID，用于回溯原始讨论上下文。
     thread_id: str | None = None
+    # 决策主题，例如“数据库选型”或“截止日期”。
     topic: str = ""
+    # 最终采用的决策内容，例如“采用方案 B”。
     decision: str = ""
+    # 更完整的结论说明；为空时默认使用 decision。
     conclusion: str | None = None
+    # 支持该决策的理由列表。
+    reasons: list[str] = field(default_factory=list)
+    # 反对意见、风险或保留意见列表。
+    objections: list[str] = field(default_factory=list)
+    # 被讨论过的备选方案名称，例如“方案 A”“方案 B”。
+    alternatives: list[str] = field(default_factory=list)
+    # 项目阶段，例如“技术选型”“上线前”。
     stage: str | None = None
-    status: DecisionStatus = "confirmed"
-    alternatives: list[DecisionAlternative] = field(default_factory=list)
-    reasons: list[DecisionReason] = field(default_factory=list)
-    participants: list[str] = field(default_factory=list)
-    source_event_id: str | None = None
-    source_type: str = "feishu_chat"
-    source_ref: str | None = None
+    # 决策发生或被确认的时间点。
     decided_at: str | None = None
-    valid_from: str | None = None
-    valid_to: str | None = None
-    tags: list[str] = field(default_factory=list)
+    # 原始事件 ID，用于回链到 ingest event。
+    source_event_id: str | None = None
+    # 来源类型，例如 feishu_chat、feishu_doc。
+    source_type: str = "feishu_chat"
+    # 来源引用，例如 message_id、doc_id 或 thread_id。
+    source_ref: str | None = None
+    # 当前决策状态；只保留活跃确认态和被覆盖态。
+    status: DecisionStatus = "confirmed"
+    # 模型或规则抽取置信度，范围 0 到 1。
     confidence: float = 0.5
+    # 记忆重要性，影响排序和长期保留，范围 0 到 1。
     importance: float = 0.5
+    # 当前决策覆盖的旧决策 ID。
     overwrite_of: str | None = None
+    # 当前决策被哪个新决策覆盖。
     superseded_by: str | None = None
+    # 预留扩展字段，存放非主链路需要的附加信息。
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_memory_core(self) -> MemoryCore:
+        """将历史决策卡片转换为统一 MemoryCore 结构。"""
+
         logger.info(
-            "function=src.domains.project_decision.models.ProjectDecision.to_memory_core action=start decision_id=%s topic=%s status=%s",
+            "action=start decision_id=%s topic=%s status=%s",
             self.decision_id,
             self.topic,
             self.status,
@@ -147,8 +126,6 @@ class ProjectDecision:
                 *( [f"thread_id:{self.thread_id}", self.thread_id] if self.thread_id else [] ),
                 f"topic:{self.topic}",
                 self.topic,
-                *[f"participant:{participant}" for participant in self.participants],
-                *self.participants,
             ]
         )
         tags = _unique(
@@ -156,9 +133,8 @@ class ProjectDecision:
                 "project_decision",
                 f"status:{self.status}",
                 *( [f"stage:{self.stage}", self.stage] if self.stage else [] ),
-                *[f"alternative:{alternative.name}" for alternative in self.alternatives],
-                *[alternative.name for alternative in self.alternatives],
-                *self.tags,
+                *[f"alternative:{alternative}" for alternative in self.alternatives],
+                *self.alternatives,
             ]
         )
         now = utc_now_iso()
@@ -177,15 +153,14 @@ class ProjectDecision:
             importance=_clamp(self.importance),
             confidence=_clamp(self.confidence),
             status="superseded" if self.status == "superseded" else "active",
-            valid_from=self.valid_from or self.decided_at,
-            valid_to=self.valid_to,
+            valid_from=self.decided_at,
             overwrite_of=self.overwrite_of,
             superseded_by=self.superseded_by,
             created_at=self.decided_at or now,
             updated_at=now,
         )
         logger.info(
-            "function=src.domains.project_decision.models.ProjectDecision.to_memory_core action=done decision_id=%s memory_id=%s scope=%s entity_count=%s tag_count=%s",
+            "action=done decision_id=%s memory_id=%s scope=%s entity_count=%s tag_count=%s",
             self.decision_id,
             memory.memory_id,
             memory.scope,
@@ -195,6 +170,8 @@ class ProjectDecision:
         return memory
 
     def build_content_text(self) -> str:
+        """构造可检索、可展示的决策正文。"""
+
         lines = [
             f"项目决策: {self.topic}",
             f"结论: {self.decision}",
@@ -205,22 +182,12 @@ class ProjectDecision:
             lines.append(f"阶段: {self.stage}")
         if self.status:
             lines.append(f"状态: {self.status}")
-        support = [reason.text for reason in self.reasons if reason.reason_type in {"support", "context"}]
-        against = [reason.text for reason in self.reasons if reason.reason_type in {"against", "risk"}]
-        constraints = [reason.text for reason in self.reasons if reason.reason_type == "constraint"]
-        if support:
-            lines.append("理由: " + "；".join(support))
-        if against:
-            lines.append("反对意见: " + "；".join(against))
-        if constraints:
-            lines.append("约束: " + "；".join(constraints))
+        if self.reasons:
+            lines.append("理由: " + "；".join(_unique(self.reasons)))
+        if self.objections:
+            lines.append("反对意见: " + "；".join(_unique(self.objections)))
         if self.alternatives:
-            parts = [
-                f"{alternative.name}({alternative.status})"
-                for alternative in self.alternatives
-                if alternative.name
-            ]
-            lines.append("备选方案: " + "；".join(parts))
+            lines.append("备选方案: " + "；".join(_unique(self.alternatives)))
         if self.decided_at:
             lines.append(f"决策时间: {self.decided_at}")
         if self.source_ref:
@@ -228,25 +195,33 @@ class ProjectDecision:
         return "\n".join(line for line in lines if line.strip())
 
     def build_summary_text(self) -> str:
+        """构造用于列表和检索排序的短摘要。"""
+
         stage = f"[{self.stage}] " if self.stage else ""
         summary = f"{stage}{self.topic}: {self.decision}"
         return truncate_text(clean_text(summary), 200)
 
     def to_card(self) -> dict[str, Any]:
+        """输出历史决策卡片所需的最小字段。"""
+
         return {
             "type": "project_decision_card",
             "title": f"历史决策: {self.topic}",
             "topic": self.topic,
             "decision": self.decision,
+            "conclusion": self.conclusion,
+            "reasons": list(self.reasons),
+            "objections": list(self.objections),
+            "alternatives": list(self.alternatives),
             "stage": self.stage,
             "decided_at": self.decided_at,
-            "reasons": [reason.to_dict() for reason in self.reasons],
-            "alternatives": [alternative.to_dict() for alternative in self.alternatives],
             "source_ref": self.source_ref,
             "confidence": _clamp(self.confidence),
         }
 
     def to_dict(self) -> dict[str, Any]:
+        """输出便于测试、调试和后续持久化的字典结构。"""
+
         return {
             "decision_id": self.decision_id,
             "project_id": self.project_id,
@@ -256,18 +231,15 @@ class ProjectDecision:
             "topic": self.topic,
             "decision": self.decision,
             "conclusion": self.conclusion,
+            "reasons": list(self.reasons),
+            "objections": list(self.objections),
+            "alternatives": list(self.alternatives),
             "stage": self.stage,
-            "status": self.status,
-            "alternatives": [alternative.to_dict() for alternative in self.alternatives],
-            "reasons": [reason.to_dict() for reason in self.reasons],
-            "participants": list(self.participants),
+            "decided_at": self.decided_at,
             "source_event_id": self.source_event_id,
             "source_type": self.source_type,
             "source_ref": self.source_ref,
-            "decided_at": self.decided_at,
-            "valid_from": self.valid_from,
-            "valid_to": self.valid_to,
-            "tags": list(self.tags),
+            "status": self.status,
             "confidence": _clamp(self.confidence),
             "importance": _clamp(self.importance),
             "overwrite_of": self.overwrite_of,
@@ -277,6 +249,8 @@ class ProjectDecision:
 
     @classmethod
     def from_memory_core(cls, memory: MemoryCore | dict[str, Any]) -> ProjectDecision:
+        """从 MemoryCore 行恢复历史决策卡片模型。"""
+
         data = memory if isinstance(memory, dict) else {
             name: getattr(memory, name)
             for name in MemoryCore.__dataclass_fields__
@@ -303,20 +277,12 @@ class ProjectDecision:
                 if tag.startswith("stage:"):
                     stage = tag.split(":", 1)[1]
                     break
-        status: DecisionStatus = "confirmed"
-        if data.get("status") == "superseded":
-            status = "superseded"
-        else:
-            for tag in tags:
-                if tag.startswith("status:"):
-                    status = tag.split(":", 1)[1]  # type: ignore[assignment]
-                    break
+        status: DecisionStatus = "superseded" if data.get("status") == "superseded" else "confirmed"
         alternatives = [
-            DecisionAlternative(name=tag.split(":", 1)[1])
+            tag.split(":", 1)[1]
             for tag in tags
             if tag.startswith("alternative:") and tag.split(":", 1)[1]
         ]
-        decided_at = data.get("valid_from") or data.get("created_at")
         return cls(
             decision_id=str(data.get("memory_id")),
             project_id=project_id,
@@ -325,16 +291,16 @@ class ProjectDecision:
             thread_id=thread_id,
             topic=topic or clean_text(summary) or "未命名决策",
             decision=decision or clean_text(content) or clean_text(summary),
+            conclusion=_line_value(content, "完整结论"),
+            reasons=_line_list(content, "理由"),
+            objections=_line_list(content, "反对意见"),
+            alternatives=_unique(alternatives or _line_list(content, "备选方案")),
             stage=stage,
-            status=status,
-            alternatives=alternatives,
+            decided_at=data.get("valid_from") or data.get("created_at"),
             source_event_id=data.get("source_event_id"),
             source_type=str(data.get("source_type") or "feishu_chat"),
             source_ref=data.get("source_ref"),
-            decided_at=decided_at,
-            valid_from=data.get("valid_from"),
-            valid_to=data.get("valid_to"),
-            tags=[tag for tag in tags if not tag.startswith(("stage:", "status:", "alternative:"))],
+            status=status,
             confidence=float(data.get("confidence") or 0.0),
             importance=float(data.get("importance") or 0.0),
             overwrite_of=data.get("overwrite_of"),
@@ -344,18 +310,22 @@ class ProjectDecision:
 
 @dataclass(slots=True)
 class ProjectDecisionCandidate:
-    """A project decision extracted from source text before admission."""
+    """抽取出的候选决策，进入 MemoryCore 前先做准入判断。"""
 
+    # 候选决策卡片本体。
     decision: ProjectDecision
+    # 支撑该候选的原文片段。
     evidence_text: str
+    # 抽取命中的信号，例如关键词或 LLM 来源。
     signals: list[str] = field(default_factory=list)
+    # 是否需要人工复核。
     needs_review: bool = False
 
     def is_admissible(self, min_confidence: float = 0.45) -> bool:
+        """判断候选决策是否满足最小入库条件。"""
+
         if not clean_text(self.decision.topic) or not clean_text(self.decision.decision):
             return False
         if self.decision.confidence < min_confidence:
-            return False
-        if self.decision.status == "unknown" and not self.signals:
             return False
         return True

@@ -174,7 +174,6 @@ class TestNeo4jGraphStore(unittest.TestCase):
             topic="graph index",
             decision="Use Neo4j for relationship traversal",
             status="confirmed",
-            participants=["user-2", "user-1", "user-1"],
             source_event_id="event-1",
             source_ref="thread-1",
             decided_at="2026-04-27T20:00:00Z",
@@ -182,7 +181,7 @@ class TestNeo4jGraphStore(unittest.TestCase):
             importance=0.8,
         )
 
-        decision_id = self.store.upsert_project_decision(decision)
+        decision_id = self.store.upsert_project_decision(decision, decided_by="user-1")
 
         self.assertEqual(decision_id, "decision-1")
         self.assertIn("MERGE (d:Decision", self.driver.calls[0]["query"])
@@ -193,7 +192,7 @@ class TestNeo4jGraphStore(unittest.TestCase):
         self.assertIn("MERGE (n:Team {team_id: $value})", self.driver.calls[2]["query"])
         self.assertIn("MERGE (n:Workspace {workspace_id: $value})", self.driver.calls[3]["query"])
         self.assertIn("MADE_DECISION", self.driver.calls[4]["query"])
-        self.assertEqual(self.driver.calls[4]["parameters"]["user_ids"], ["user-1", "user-2"])
+        self.assertEqual(self.driver.calls[4]["parameters"]["user_ids"], ["user-1"])
         self.assertEqual(self.driver.calls[4]["parameters"]["source_event_id"], "event-1")
 
     def test_upsert_project_decision_allows_explicit_decider(self) -> None:
@@ -202,7 +201,6 @@ class TestNeo4jGraphStore(unittest.TestCase):
             project_id="project-1",
             topic="graph index",
             decision="Use Neo4j",
-            participants=["participant-1"],
         )
 
         self.store.upsert_project_decision(

@@ -9,8 +9,6 @@ from src.schemas import EventContext, NormalizedEvent
 from src.utils.text import clean_text
 
 from .models import (
-    DecisionAlternative,
-    DecisionReason,
     ProjectDecision,
     ProjectDecisionCandidate,
 )
@@ -91,24 +89,30 @@ class ProjectDecisionExtractor:
         self.min_confidence = min_confidence
 
     def extract(self, event: NormalizedEvent) -> list[ProjectDecisionCandidate]:
-        if self.llm_client is None and not self.has_decision_signal(event.content_text):
+        text = self.collect_text(event)
+        if self.llm_client is None and not self.has_decision_signal(text):
             logger.info(
-                "function=src.domains.project_decision.extractor.ProjectDecisionExtractor.extract action=no_signal event_id=%s text_length=%s",
+                "action=no_signal event_id=%s text_length=%s",
                 event.event_id,
-                len(event.content_text),
+                len(text),
             )
             return []
-        candidates = self.extract_from_text(event.content_text, context=event.context, event=event)
+        candidates = self.extract_from_text(text, context=event.context, event=event)
         admitted = [
             candidate
             for candidate in candidates
             if candidate.is_admissible(self.min_confidence)
         ]
+        admitted_confidence = [
+            candidate.decision.confidence
+            for candidate in admitted
+        ]
         logger.info(
-            "function=src.domains.project_decision.extractor.ProjectDecisionExtractor.extract action=done event_id=%s raw_candidate_count=%s admitted_count=%s min_confidence=%.2f",
+            "action=done event_id=%s raw_candidate_count=%s admitted_count=%s admitted_confidence=%s min_confidence=%.2f",
             event.event_id,
             len(candidates),
             len(admitted),
+            admitted_confidence,
             self.min_confidence,
         )
         return admitted
@@ -125,26 +129,44 @@ class ProjectDecisionExtractor:
                 candidates = self._extract_with_llm(text, context=context, event=event)
             except Exception:
                 logger.exception(
-                    "function=src.domains.project_decision.extractor.ProjectDecisionExtractor.extract_from_text action=llm_failed fallback=rule_based"
+                    "action=llm_failed fallback=rule_based"
                 )
             else:
                 logger.info(
-                    "function=src.domains.project_decision.extractor.ProjectDecisionExtractor.extract_from_text action=llm_done candidate_count=%s",
+                    "action=llm_candidates_done candidate_count=%s",
                     len(candidates),
                 )
                 return candidates
 
         candidates = self._extract_rule_based(text, context=context, event=event)
         logger.info(
-            "function=src.domains.project_decision.extractor.ProjectDecisionExtractor.extract_from_text action=rule_based candidate_count=%s llm_enabled=%s",
+            "action=extract_rule_based cond candidate_count=%s llm_enabled=%s",
             len(candidates),
             self.llm_client is not None,
         )
         return candidates
 
+    def collect_text(self, event: NormalizedEvent) -> str:
+        """Collect searchable decision text from event title, content, payload, and raw payload."""
 
-    def has_decision_signal(self, text: str) -> bool:
+        parts: list[str] = []
+        for value in (event.title, event.content_text):
+            cleaned = clean_text(value)
+            if cleaned:
+                parts.append(cleaned)
+        for key in ("text", "content", "message", "summary", "body"):
+            value = event.payload.get(key)
+            if isinstance(value, str) and clean_text(value):
+                parts.append(clean_text(value))
+        parts.extend(self._string_values(event.payload))
+        parts.extend(self._string_values(event.raw_payload))
+        return clean_text(" ".join(dict.fromkeys(part for part in parts if part)))
+
+    def has_decision_signal(self, text: str | None) -> bool:
         """未启用LLM的时候，fallback到规则匹配"""
+        text = clean_text(text)
+        if not text:
+            return False
         lowered = text.lower()
         if any(keyword in text for keyword in ("决定", "拍板", "采用", "选择", "结论", "最终", "不采用", "否决")):
             return True
@@ -201,8 +223,9 @@ class ProjectDecisionExtractor:
         evidence_text: str,
         context: EventContext | None,
         event: NormalizedEvent | None,
-        reasons: list[DecisionReason] | None = None,
-        alternatives: list[DecisionAlternative] | None = None,
+        reasons: list[str] | None = None,
+        objections: list[str] | None = None,
+        alternatives: list[str] | None = None,
         confidence: float = 0.5,
         signals: list[str] | None = None,
         status: str = "confirmed",
@@ -220,11 +243,11 @@ class ProjectDecisionExtractor:
             status=status,  # type: ignore[arg-type]
             alternatives=alternatives or [],
             reasons=reasons or [],
+            objections=objections or [],
             source_event_id=event.event_id if event else None,
             source_type=event.source_type if event else "feishu_chat",
             source_ref=self._source_ref(context, event),
             decided_at=event.occurred_at if event else None,
-            tags=list(event.tags) if event else [],
             confidence=confidence,
             importance=0.85 if any(term in evidence_text for term in important_terms) else 0.7,
         )
@@ -247,13 +270,12 @@ class ProjectDecisionExtractor:
                 _LLM_EXTRACTION_SYSTEM_PROMPT,
                 self._build_llm_user_prompt(text, context=context, event=event),
                 schema=_LLM_EXTRACTION_SCHEMA,
-                temperature=0,
-                max_tokens=600,
+                max_tokens=1024,
             )
         )
         memories = raw.get("memories") if isinstance(raw.get("memories"), list) else []
         logger.info(
-            "function=src.domains.project_decision.extractor.ProjectDecisionExtractor._extract_with_llm action=parsed event_id=%s raw_memory_count=%s",
+            "action=extract_with_llm parsed event_id=%s raw_memory_count=%s",
             event.event_id if event else None,
             len(memories),
         )
@@ -266,7 +288,7 @@ class ProjectDecisionExtractor:
             if candidate is not None:
                 candidates.append(candidate)
         logger.info(
-            "function=src.domains.project_decision.extractor.ProjectDecisionExtractor._extract_with_llm action=done event_id=%s candidate_count=%s",
+            "action=extract_with_llm done event_id=%s candidate_count=%s",
             event.event_id if event else None,
             len(candidates),
         )
@@ -316,7 +338,6 @@ class ProjectDecisionExtractor:
             source_type=event.source_type if event else "feishu_chat",
             source_ref=self._source_ref(context, event),
             decided_at=event.occurred_at if event else None,
-            tags=list(event.tags) if event else [],
             confidence=max(0.0, min(1.0, confidence)),
             importance=0.7,
         )
@@ -344,13 +365,11 @@ class ProjectDecisionExtractor:
         return []
 
     def _infer_status(self, text: str) -> str:
-        if any(keyword in text for keyword in ("不采用", "否决", "不再")):
-            return "rejected"
         if any(keyword in text for keyword in ("决定", "确认", "拍板", "采用", "选择", "结论", "最终")):
             return "confirmed"
         if any(keyword in text.lower() for keyword in ("decided", "confirmed", "choose")):
             return "confirmed"
-        return "unknown"
+        return "confirmed"
 
     def _infer_topic(self, text: str, *, event: NormalizedEvent | None) -> str:
         if event and event.title:
@@ -384,17 +403,9 @@ class ProjectDecisionExtractor:
             score += 0.1
         return min(score, 0.95)
 
-    def _extract_alternatives(self, text: str) -> list[DecisionAlternative]:
+    def _extract_alternatives(self, text: str) -> list[str]:
         names = [f"方案 {match.group(1)}" for match in ALTERNATIVE_PATTERN.finditer(text)]
-        alternatives: list[DecisionAlternative] = []
-        for name in dict.fromkeys(names):
-            status = "unknown"
-            if f"采用{name}" in text or f"选择{name}" in text or f"采用 {name}" in text:
-                status = "confirmed"
-            if f"不采用{name}" in text or f"不是{name}" in text or f"不选{name}" in text:
-                status = "rejected"
-            alternatives.append(DecisionAlternative(name=name, status=status))  # type: ignore[arg-type]
-        return alternatives
+        return list(dict.fromkeys(names))
 
     def _extract_reasons(
         self,
@@ -402,8 +413,8 @@ class ProjectDecisionExtractor:
         decision_index: int,
         *,
         event: NormalizedEvent | None,
-    ) -> list[DecisionReason]:
-        reasons: list[DecisionReason] = []
+    ) -> list[str]:
+        reasons: list[str] = []
         if not sentences:
             return reasons
         start = max(decision_index - 2, 0)
@@ -414,17 +425,8 @@ class ProjectDecisionExtractor:
             if marker in text:
                 reason_text = clean_text(text.split(marker, 1)[1], max_chars=120)
                 if reason_text:
-                    reasons.append(
-                        DecisionReason(
-                            text=reason_text,
-                            reason_type="support",
-                            source_ref=self._source_ref(event.context if event else None, event),
-                            created_at=event.occurred_at if event else None,
-                        )
-                    )
+                    reasons.append(reason_text)
                 break
-        if "风险" in text:
-            reasons.append(DecisionReason(text="文本中提到风险因素", reason_type="risk"))
         return reasons
 
     def _split_sentences(self, text: str) -> list[str]:

@@ -148,10 +148,10 @@ class TestService(unittest.TestCase):
         self.assertEqual(len(llm.calls), 3)
         self.assertIn("action=llm_memory_gate", logs)
         self.assertIn("action=llm_route", logs)
-        self.assertIn("ProjectDecisionExtractor._extract_with_llm action=done", logs)
-        self.assertIn("ProjectDecisionDomainHandler.ingest_event action=stored", logs)
+        self.assertIn("action=done event_id=event-llm-project candidate_count=1", logs)
+        self.assertIn("action=stored event_id=event-llm-project", logs)
 
-    def test_ingest_event_emits_function_level_logs(self) -> None:
+    def test_ingest_event_emits_action_level_logs(self) -> None:
         event = NormalizedEvent(
             event_id="event-log",
             event_type="chat_message",
@@ -166,19 +166,19 @@ class TestService(unittest.TestCase):
 
         logs = "\n".join(captured.output)
         self.assertEqual(result.candidate_count, 1)
-        self.assertIn("function=src.core.service.MemoryService.ingest_event", logs)
-        self.assertIn("function=src.storage.event_store.EventStore.insert_event", logs)
-        self.assertIn("function=src.core.router.DomainRouter.route_event", logs)
+        self.assertIn("action=start event_id=event-log", logs)
+        self.assertIn("action=inserted event_id=event-log", logs)
+        self.assertIn("primary_domain=project_decision", logs)
         self.assertIn(
-            "function=src.domains.project_decision.extractor.ProjectDecisionExtractor.extract",
+            "action=done event_id=event-log raw_candidate_count=",
             logs,
         )
         self.assertIn(
-            "function=src.domains.project_decision.models.ProjectDecision.to_memory_core",
+            "action=done decision_id=",
             logs,
         )
         self.assertIn(
-            "function=src.storage.memory_core_store.MemoryCoreStore.insert_memory_core",
+            "action=inserted memory_id=",
             logs,
         )
 
@@ -308,7 +308,7 @@ class TestService(unittest.TestCase):
         self.assertEqual(len(result.ranked_memories), 1)
         self.assertIn("function=src.core.service.MemoryService.retrieve_async", logs)
         self.assertIn(
-            "function=src.storage.memory_core_store.MemoryCoreStore.list_active_memories",
+            "action=start domain=project_decision scope=None",
             logs,
         )
         self.assertIn("function=src.retrieval.rerank.Reranker.rerank", logs)

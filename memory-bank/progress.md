@@ -117,6 +117,14 @@
   - `MemoryService.ingest_event()` 不再单独维护 `_should_extract_long_term_memory()`。
   - `AdmissionController` 在注入 LLM 时执行 `should_extract` 判断，失败时降级到规则准入。
   - `MemoryService` 会使用 `AdmissionDecision.admitted` 截断非长期记忆事件，保留事件写入但不进入 domain handler。
+- 已收敛 `project_decision` 领域模型为历史决策卡片：
+  - 移除复杂子对象 `DecisionAlternative`、`DecisionReason`，改为 `reasons`、`objections`、`alternatives` 字符串列表。
+  - 保留项目/团队/工作区/线程、主题、结论、阶段、时间点、来源、状态、置信度、重要性和覆盖关系等主链路字段。
+  - `ProjectDecision` 每个字段已补充注释，说明字段职责。
+  - 修复 payload-only 决策事件抽取回归，重新从 title/content/payload/raw_payload 汇总文本。
+- 已简化 ingest 链路日志 message：
+  - 删除日志文本中的 `function=...` 前缀，保留 `action=...` 和关键字段。
+  - 依赖 logger 名称展示文件/模块来源，降低日志正文噪音。
 - 已更新 `AGENTS.md`：以后读取项目文档必须显式指定 UTF-8 编码。
 
 ## 进行中
@@ -178,6 +186,9 @@
 - `python -m compileall src tests`：通过。
 - `python -m pytest tests\unit\llm -q -p no:cacheprovider`：11 passed。
 - `python -m pytest tests\unit\core\test_admission_control.py tests\unit\core\test_service.py -q -p no:cacheprovider`：24 passed。
+- `python -m pytest tests\unit\domains\project_decision tests\unit\storage\test_graph_store.py tests\unit\core\test_service.py tests\unit\core\test_router.py tests\unit\core\test_admission_control.py tests\unit\llm -q -p no:cacheprovider`：75 passed。
+- `python -m pytest tests\unit\core\test_service.py tests\unit\core\test_router.py tests\unit\domains\project_decision\test_extractor.py tests\unit\api\test_ingest_api.py tests\unit\storage\test_event_store.py tests\unit\storage\test_memory_core_store.py -q -p no:cacheprovider`：46 passed。
+- `python -m pytest tests\unit\domains\project_decision tests\unit\core\test_service.py tests\unit\api\test_ingest_api.py tests\unit\storage\test_event_store.py tests\unit\storage\test_memory_core_store.py -q -p no:cacheprovider`：56 passed。
 
 ## 2026-04-27 图数据库 Store 进展
 

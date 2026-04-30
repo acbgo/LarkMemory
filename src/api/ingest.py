@@ -32,10 +32,11 @@ def ingest_event(
     event_id = request.event_id or new_event_id()
     occurred_at = request.occurred_at or utc_now_iso()
     logger.info(
-        "function=src.api.ingest.ingest_event action=build_event event_id=%s event_type=%s source_type=%s",
+        "action=build_event event_id=%s event_type=%s source_type=%s content_text=%s",
         event_id,
         request.event_type,
         request.source_type,
+        request.content_text,
     )
     event = NormalizedEvent(
         event_id=event_id,
@@ -54,7 +55,7 @@ def ingest_event(
         result = memory_service.ingest_event(event)
     except sqlite3.IntegrityError as exc:
         logger.warning(
-            "function=src.api.ingest.ingest_event action=duplicate_event event_id=%s",
+            "action=duplicate_event event_id=%s",
             event_id,
         )
         raise HTTPException(
@@ -63,13 +64,13 @@ def ingest_event(
         ) from exc
     except Exception as exc:
         logger.exception(
-            "function=src.api.ingest.ingest_event action=failed event_id=%s",
+            "action=failed event_id=%s",
             event_id,
         )
         raise HTTPException(status_code=500, detail="failed to store event") from exc
 
     logger.info(
-        "function=src.api.ingest.ingest_event action=done event_id=%s stored=%s memory_candidates=%s memory_ids=%s",
+        "action=done event_id=%s stored=%s memory_candidates=%s memory_ids=%s",
         result.event_id,
         result.stored,
         result.candidate_count,
