@@ -44,31 +44,7 @@ class TeamRetentionDomainHandler:
     def ingest_event(self, event: NormalizedEvent, runtime: DomainRuntime) -> DomainIngestResult:
         if self.llm_client is not None:
             return self._ingest_event_with_llm(event, runtime)
-        candidates = self.extractor.extract(event)
-        memory_ids: list[str] = []
-        for candidate in candidates:
-            duplicate_id = self._find_duplicate(candidate.memory)
-            if duplicate_id is not None:
-                memory_ids.append(duplicate_id)
-                self.team_retention_store.reinforce_review(duplicate_id, observed_at=event.occurred_at)
-                continue
-            version_decision = self.version_manager.detect_update(candidate.memory)
-            if version_decision.should_supersede and version_decision.old_memory_id:
-                candidate.memory.overwrite_of = version_decision.old_memory_id
-            memory_id = runtime.add_memory(candidate.memory.to_memory_core())
-            memory_ids.append(memory_id)
-            if memory_id != candidate.memory.retention_id:
-                self.team_retention_store.reinforce_review(memory_id, observed_at=event.occurred_at)
-                continue
-            self.team_retention_store.insert_memory(candidate.memory)
-            self.team_retention_store.create_review_schedule(candidate.memory)
-            if version_decision.should_supersede and version_decision.old_memory_id:
-                self.version_manager.apply_supersede(version_decision.old_memory_id, memory_id)
-        return DomainIngestResult(
-            memory_ids=memory_ids,
-            candidate_count=len(candidates),
-            message="team_retention extractor enabled" if candidates else None,
-        )
+        return self._ingest_event_with_rules(event, runtime)
 
     def _ingest_event_with_llm(self, event: NormalizedEvent, runtime: DomainRuntime) -> DomainIngestResult:
         preprocess = self.preprocessor.preprocess(event)
@@ -100,7 +76,11 @@ class TeamRetentionDomainHandler:
         )
 
         embedding_indexer = TeamRetentionEmbeddingIndexer(runtime.embedding_store)
-        lifecycle = TeamRetentionLifecycleResolver(self.memory_store, self.team_retention_store, embedding_indexer).resolve(memory)
+        lifecycle = TeamRetentionLifecycleResolver(self.memory_store, self.team_retention_store, embedding_indexer).resolve(
+            memory,
+            evidence_text=extraction.evidence_text or extraction.reason,
+            source_text=preprocess.sanitized_text,
+        )
         final_status = lifecycle.status or admission.status
         if lifecycle.action == "conflict" and lifecycle.matched_memory_id:
             final_status = "candidate"
@@ -143,12 +123,25 @@ class TeamRetentionDomainHandler:
         candidates = self.extractor.extract(event)
         memory_ids: list[str] = []
         for candidate in candidates:
+            duplicate_id = self._find_duplicate(candidate.memory)
+            if duplicate_id is not None:
+                memory_ids.append(duplicate_id)
+                self._reinforce_existing(duplicate_id, observed_at=event.occurred_at)
+                continue
+            version_decision = self.version_manager.detect_update(candidate.memory)
+            if version_decision.should_supersede and version_decision.old_memory_id:
+                candidate.memory.overwrite_of = version_decision.old_memory_id
             memory_core = candidate.memory.to_memory_core()
             memory_id = runtime.add_memory(memory_core)
             memory_ids.append(memory_id)
+            if memory_id != candidate.memory.retention_id:
+                self._reinforce_existing(memory_id, observed_at=event.occurred_at)
+                continue
             if memory_id == candidate.memory.retention_id:
                 self.team_retention_store.insert_memory(candidate.memory)
                 self.team_retention_store.create_review_schedule(candidate.memory)
+                if version_decision.should_supersede and version_decision.old_memory_id:
+                    self.version_manager.apply_supersede(version_decision.old_memory_id, memory_id)
                 TeamRetentionEmbeddingIndexer(runtime.embedding_store).upsert(candidate.memory, status=memory_core.status)
         return DomainIngestResult(
             memory_ids=memory_ids,

@@ -263,3 +263,14 @@
 - 验证：`python -m pytest tests/unit/core tests/unit/domains tests/unit/storage tests/unit/retrieval tests/unit/llm tests/unit/sources/feishu/test_events.py tests/unit/sources/feishu/test_proactive.py tests/unit/sources/feishu/test_listener.py tests/unit/utils tests/unit/api tests/unit/app -q -p no:cacheprovider`，229 passed, 6 subtests passed。
 - 验证：`python -m pytest tests -q -p no:cacheprovider --ignore=tests/unit/sources/feishu/test_chat_list_demo.py --ignore=tests/unit/sources/feishu/test_cli_demo.py`，229 passed, 6 subtests passed。
 - 验证：`python -m compileall src tests`，通过。
+
+## 2026-04-30 TeamRetention 追加审查反馈修复
+
+- 修复 LLM 失败 fallback 仍绕过原有规则能力的问题：无 LLM 和 LLM JSON/异常失败现在共用同一套 `_ingest_event_with_rules()`，该路径保留 `_find_duplicate()`、`TeamRetentionVersionManager.detect_update()` 和 `apply_supersede()`。
+- 扩展明确覆盖信号判断输入：`TeamRetentionLifecycleResolver.resolve()` 现在会同时检查 `fact_value`、`evidence_text` 和脱敏后的原始事件文本，避免 LLM 将“旧值不再使用”等覆盖信号移出 `fact_value` 后误判为 conflict candidate。
+- 新增回归测试覆盖：LLM 失败后规则 fallback 仍可基于显式 `version_group` 执行 supersede；覆盖信号只出现在 `evidence_text` 时也会 supersede 旧 active 记忆。
+- 验证：`python -m pytest tests/unit/domains/team_retention/test_handler_llm_embedding.py::test_llm_failure_fallback_preserves_rule_version_supersede tests/unit/domains/team_retention/test_handler_llm_embedding.py::test_supersede_signal_from_evidence_text_updates_old_memory -q -p no:cacheprovider`，2 passed。
+- 验证：`python -m pytest tests/unit/domains/team_retention tests/unit/storage/test_team_retention_store.py tests/unit/core/test_service.py tests/unit/storage/test_embedding_store.py tests/unit/llm/test_client.py tests/unit/sources/feishu/test_listener.py -q -p no:cacheprovider`，53 passed。
+- 验证：`python -m pytest tests/unit/core tests/unit/domains tests/unit/storage tests/unit/retrieval tests/unit/llm tests/unit/sources/feishu/test_events.py tests/unit/sources/feishu/test_proactive.py tests/unit/sources/feishu/test_listener.py tests/unit/utils tests/unit/api tests/unit/app -q -p no:cacheprovider`，231 passed, 6 subtests passed。
+- 验证：`python -m pytest tests -q -p no:cacheprovider --ignore=tests/unit/sources/feishu/test_chat_list_demo.py --ignore=tests/unit/sources/feishu/test_cli_demo.py`，231 passed, 6 subtests passed。
+- 验证：`python -m compileall src tests`，通过。

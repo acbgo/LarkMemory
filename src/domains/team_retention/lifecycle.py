@@ -29,7 +29,13 @@ class TeamRetentionLifecycleResolver:
         self.team_store = team_store
         self.embedding_indexer = embedding_indexer
 
-    def resolve(self, memory: TeamRetentionMemory) -> TeamRetentionLifecycleDecision:
+    def resolve(
+        self,
+        memory: TeamRetentionMemory,
+        *,
+        evidence_text: str | None = None,
+        source_text: str | None = None,
+    ) -> TeamRetentionLifecycleDecision:
         """Return lifecycle action for a newly extracted memory."""
         candidates = self._candidate_ids_from_db(memory)
         candidates.extend(self._candidate_ids_from_vector(memory))
@@ -55,7 +61,7 @@ class TeamRetentionLifecycleResolver:
                     matched_memory_id=memory_id,
                     reason="same_fact_value",
                 )
-            if self._has_supersede_signal(memory.fact_value):
+            if self._has_supersede_signal(memory.fact_value, evidence_text=evidence_text, source_text=source_text):
                 return TeamRetentionLifecycleDecision(
                     action="supersede",
                     status="active" if row.get("status") == "active" else "candidate",
@@ -107,9 +113,17 @@ class TeamRetentionLifecycleResolver:
                     return False
         return bool(left.team_id or left.project_id or left.workspace_id or right.team_id or right.project_id or right.workspace_id)
 
-    def _has_supersede_signal(self, text: str) -> bool:
+    def _has_supersede_signal(
+        self,
+        text: str,
+        *,
+        evidence_text: str | None = None,
+        source_text: str | None = None,
+    ) -> bool:
+        combined = " ".join(part for part in (text, evidence_text, source_text) if part)
         return any(
             marker in text
+            or marker in combined
             for marker in (
                 "现在",
                 "改为",

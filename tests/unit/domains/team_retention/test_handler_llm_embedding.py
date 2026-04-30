@@ -40,6 +40,15 @@ class FakeLLMClient:
         return self.response
 
 
+class RaisingLLMClient:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def ajson(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        self.calls += 1
+        raise ValueError("bad json")
+
+
 class FakeEmbeddingStore:
     def __init__(self, query_hits: list[dict[str, Any]] | None = None) -> None:
         self.upserts: list[dict[str, Any]] = []
@@ -409,5 +418,92 @@ def test_embedding_metadata_filters_none_values() -> None:
         assert "project_id" not in metadata
         assert "workspace_id" not in metadata
         assert all(value is not None for value in metadata.values())
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+def test_llm_failure_fallback_preserves_rule_version_supersede() -> None:
+    memory_store, team_store, temp_dir = _stores()
+    try:
+        old_event = _event("请团队长期记住：客户 A 要求所有导出文件使用 xlsx。")
+        old_event.payload.update(
+            {
+                "memory_intent": "team_retention",
+                "fact_type": "customer_preference",
+                "fact_value": "客户 A 要求导出 xlsx",
+                "version_group": "team-1:customer-a-export-format",
+            }
+        )
+        fallback_llm = RaisingLLMClient()
+        handler = TeamRetentionDomainHandler(memory_store, team_store, llm_client=fallback_llm)
+        runtime = DomainRuntime(
+            memory_store=memory_store,
+            add_memory=memory_store.insert_memory_core,
+            embedding_store=FakeEmbeddingStore(),  # type: ignore[arg-type]
+        )
+
+        first = handler.ingest_event(old_event, runtime)
+        new_event = _event("请团队长期记住：客户 A 现在接受 csv，但必须 UTF-8 编码。")
+        new_event.payload.update(
+            {
+                "memory_intent": "team_retention",
+                "fact_type": "customer_preference",
+                "fact_value": "客户 A 现在接受 csv，但必须 UTF-8 编码",
+                "version_group": "team-1:customer-a-export-format",
+            }
+        )
+        second = handler.ingest_event(new_event, runtime)
+
+        assert fallback_llm.calls == 2
+        assert len(first.memory_ids) == 1
+        assert len(second.memory_ids) == 1
+        assert first.memory_ids[0] != second.memory_ids[0]
+        assert memory_store.get_memory(first.memory_ids[0])["status"] == "superseded"
+        assert memory_store.get_memory(second.memory_ids[0])["status"] == "active"
+        assert team_store.get_review_schedule(first.memory_ids[0]).active is False
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+def test_supersede_signal_from_evidence_text_updates_old_memory() -> None:
+    memory_store, team_store, temp_dir = _stores()
+    try:
+        old = TeamRetentionMemory(
+            retention_id="mem-old",
+            team_id="team-1",
+            project_id="project-1",
+            workspace_id="workspace-1",
+            fact_type="customer_preference",
+            fact_value="客户 A 要求导出 xlsx",
+            risk_level="medium",
+            version_group="team-1:customer_preference:customer-a:export-format",
+            confidence=0.9,
+            importance=0.8,
+        )
+        memory_store.insert_memory_core(old.to_memory_core())
+        team_store.insert_memory(old)
+        team_store.create_review_schedule(old)
+        response = _llm_response(
+            decision="active",
+            fact_value="客户 A 接受 csv",
+            confidence=0.9,
+            score=0.9,
+        )
+        response["evidence_text"] = "客户 A 现在接受 csv，旧 xlsx 不再使用。"
+        llm = FakeLLMClient(response)
+        embedding_store = FakeEmbeddingStore(
+            query_hits=[{"memory_id": "mem-old", "distance": 0.1, "metadata": {"status": "active"}}]
+        )
+        handler = TeamRetentionDomainHandler(memory_store, team_store, llm_client=llm)
+        runtime = DomainRuntime(
+            memory_store=memory_store,
+            add_memory=memory_store.insert_memory_core,
+            embedding_store=embedding_store,  # type: ignore[arg-type]
+        )
+
+        result = handler.ingest_event(_event("客户 A 现在接受 csv，旧 xlsx 不再使用。"), runtime)
+
+        assert memory_store.get_memory("mem-old")["status"] == "superseded"
+        assert memory_store.get_memory(result.memory_ids[0])["status"] == "active"
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
