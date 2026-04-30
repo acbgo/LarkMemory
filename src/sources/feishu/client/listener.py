@@ -17,7 +17,7 @@ from .sdk import build_ws_client, _import_lark
 logger = logging.getLogger(__name__)
 
 
-def build_event_handler(memory_service: Any | None = None) -> Any:
+def build_event_handler(memory_service: Any | None = None, settings: Any | None = None) -> Any:
     """Build lark-oapi event handler for Feishu messages and card actions."""
     lark = _import_lark()
     service = memory_service or get_memory_service()
@@ -41,7 +41,10 @@ def build_event_handler(memory_service: Any | None = None) -> Any:
         return P2CardActionTriggerResponse(response_payload)
 
     return (
-        lark.EventDispatcherHandler.builder("", "")
+        lark.EventDispatcherHandler.builder(
+            getattr(settings, "verification_token", "") if settings is not None else "",
+            getattr(settings, "encrypt_key", "") if settings is not None else "",
+        )
         .register_p2_im_message_receive_v1(on_message)
         .register_p2_card_action_trigger(on_card_action)
         .build()
@@ -53,7 +56,7 @@ def main() -> None:
     settings = load_feishu_settings()
     if not settings.enable_ws:
         raise RuntimeError("Feishu WebSocket listener is disabled; set LARKMEMORY_FEISHU_ENABLE_WS=true")
-    client = build_ws_client(settings, build_event_handler())
+    client = build_ws_client(settings, build_event_handler(settings=settings))
     client.start()
 
 

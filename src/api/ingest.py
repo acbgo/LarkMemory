@@ -32,7 +32,7 @@ def ingest_event(
     event_id = request.event_id or new_event_id()
     occurred_at = request.occurred_at or utc_now_iso()
     logger.info(
-        "action=ingest build_event event_id=%s event_type=%s source_type=%s content_text=%s",
+        "function=src.api.ingest.ingest_event action=build_event event_id=%s event_type=%s source_type=%s content_text=%s",
         event_id,
         request.event_type,
         request.source_type,

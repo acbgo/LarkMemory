@@ -85,3 +85,37 @@ def test_message_event_from_lark_extracts_required_fields() -> None:
     assert event.chat_id == "oc_1"
     assert event.sender_id == "ou_1"
     assert event.content_text == "hello"
+
+
+def test_main_passes_settings_to_event_handler(monkeypatch) -> None:
+    """main 启动 WebSocket 时应把 settings 传给 event handler，避免 token/key 为空。"""
+    monkeypatch.setattr("src.sources.feishu.client.listener._import_lark", lambda: _FakeLark())
+    settings = FeishuSettings(
+        app_id="app-id",
+        app_secret="app-secret",
+        verification_token="verify-token",
+        encrypt_key="encrypt-key",
+        enable_ws=True,
+    )
+    captured = {}
+
+    class _FakeWsClient:
+        def start(self):
+            captured["started"] = True
+
+    def fake_build_ws_client(input_settings, handler):
+        captured["settings"] = input_settings
+        captured["handler"] = handler
+        return _FakeWsClient()
+
+    monkeypatch.setattr("src.sources.feishu.client.listener.load_feishu_settings", lambda: settings)
+    monkeypatch.setattr("src.sources.feishu.client.listener.get_memory_service", lambda: _DummyService())
+    monkeypatch.setattr("src.sources.feishu.client.listener.build_ws_client", fake_build_ws_client)
+
+    from src.sources.feishu.client.listener import main
+
+    main()
+
+    assert captured["started"] is True
+    assert captured["handler"].token == "verify-token"
+    assert captured["handler"].encrypt_key == "encrypt-key"

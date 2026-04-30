@@ -192,6 +192,21 @@ class TeamRetentionStore(SQLiteStore):
             (overwrite_of, superseded_by, memory_id),
         )
 
+    def update_memory_metadata(
+        self,
+        memory_id: str,
+        metadata: dict[str, Any],
+    ) -> None:
+        """按 memory_id 更新团队留存记忆 metadata_json 和 updated_at。"""
+        self.execute(
+            """
+            UPDATE memory_team_retention
+            SET metadata_json = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE memory_id = ?
+            """,
+            (json.dumps(metadata, ensure_ascii=True), memory_id),
+        )
+
     def create_review_schedule(self, memory: TeamRetentionMemory) -> str | None:
         """为团队留存记忆创建复习排期，review_policy 为 none 时返回 None。"""
         if memory.review_policy == "none":

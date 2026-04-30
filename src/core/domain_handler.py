@@ -5,7 +5,7 @@ from typing import Any, Callable, Protocol
 
 from src.retrieval import RankedMemory, RetrievalQuery
 from src.schemas import MemoryCore, NormalizedEvent
-from src.storage import MemoryCoreStore
+from src.storage import EmbeddingStore, MemoryCoreStore
 
 
 @dataclass(slots=True)
@@ -27,6 +27,7 @@ class DomainUpdateResult:
 class DomainRuntime:
     memory_store: MemoryCoreStore
     add_memory: Callable[[MemoryCore], str]
+    embedding_store: EmbeddingStore | None = None
 
 
 class MemoryDomainHandler(Protocol):

@@ -230,3 +230,36 @@
 - 验证：`python -m pytest tests\unit\sources\feishu -q -p no:cacheprovider`，7 passed。
 - 验证：`python -m compileall src tests`，通过。
 - 验证：`python -m pytest tests -q -p no:cacheprovider`，197 passed, 6 subtests passed。
+
+## 2026-04-30 TeamRetention LLM 抽取与向量索引进展
+
+- 已将 D 方向团队留存记忆链路从 `TeamRetentionDomainHandler` 内部扩展为“规则预处理 + 单次 LLM 结构化抽取 + 后端准入复核 + 生命周期解析 + 向量索引”。
+- 新增 `src/domains/team_retention/preprocessor.py`，负责事件文本清洗、敏感信息脱敏、显式记忆/风险/未来依赖等规则特征提取；规则不再作为进入抽取前的硬过滤。
+- 新增 `src/domains/team_retention/llm_extractor.py`，复用现有 `LLMClient.ajson()` 完成一次 JSON schema 结构化调用，输出 `reject`、`candidate` 或 `active` 建议以及 `score_breakdown`。
+- 新增 `src/domains/team_retention/admission.py`，用固定权重在后端重新计算 `team_retention_score`，并将 LLM 的状态建议复核为最终 `reject`、`candidate` 或 `active`。
+- 新增 `src/domains/team_retention/embedding.py`，封装 `TeamRetentionEmbeddingIndexer`，将 `candidate` 和 `active` 团队记忆写入 `EmbeddingStore`，metadata 包含 domain、status、team/project/workspace、fact_type、risk_level 和 version_group。
+- 新增 `src/domains/team_retention/lifecycle.py`，在入库前结合关系库 `version_group` 精确候选和向量相似候选，识别强化或冲突；相似但事实变更且无明确覆盖信号时，新记忆降级为 `candidate` 并标记 `conflict_with`，不创建复习计划。
+- 已扩展 `DomainRuntime`，向 domain handler 传入可选 `embedding_store`；`MemoryService.ingest_event()` 已将自身的 `embedding_store` 注入运行时。
+- `TeamRetentionRetriever` 已支持默认召回 `active + candidate`，并在返回结果 extra 中标记 `status` 和 `needs_confirmation`；主动提醒仍只依赖 active 记忆的 review schedule。
+- `requirements.txt` 已增加 `chromadb`，用于启用真实 Chroma 向量存储。
+- 已补充 `tests/unit/domains/team_retention/test_handler_llm_embedding.py`，覆盖 LLM candidate/active/reject、向量写入、active 创建复习计划、candidate 不提醒、向量相似冲突降级 candidate。
+- 验证：`python -m pytest tests/unit/domains/team_retention tests/unit/storage/test_team_retention_store.py tests/unit/core/test_service.py tests/unit/storage/test_embedding_store.py tests/unit/llm/test_client.py -q -p no:cacheprovider`，44 passed。
+- 验证：`python -m pytest tests/unit/api tests/unit/app -q -p no:cacheprovider`，47 passed。
+- 验证：`python -m pytest tests/unit/core tests/unit/domains tests/unit/storage tests/unit/retrieval tests/unit/llm tests/unit/sources/feishu/test_events.py tests/unit/sources/feishu/test_proactive.py tests/unit/sources/feishu/test_listener.py tests/unit/utils -q -p no:cacheprovider`，177 passed, 6 subtests passed。
+- 验证：`python -m pytest tests -q -p no:cacheprovider --ignore=tests/unit/sources/feishu/test_chat_list_demo.py --ignore=tests/unit/sources/feishu/test_cli_demo.py`，224 passed, 6 subtests passed。
+- 验证：`python -m compileall src tests`，通过。
+- 注意：直接运行 `python -m pytest tests -q -p no:cacheprovider` 仍会因仓库缺失 `lark-oapi-demo/chat_list_demo.py` 和 `lark-oapi-demo/cli_demo.py` 在 collection 阶段失败；该问题与本次 D 方向链路改动无关。
+
+## 2026-04-30 TeamRetention 审查反馈修复
+
+- 修复 candidate 重复强化问题：candidate 不再调用依赖 review schedule 的 `reinforce_review()`；无 schedule 的候选记忆会更新 metadata 中的 `reinforce_count` 和 `last_reinforced_at`，保持“可召回但不提醒”的语义。
+- 修复 LLM 生命周期覆盖问题：`TeamRetentionLifecycleResolver` 已识别“现在、改为、更新为、替换、不再、旧、不用、以后按”等明确覆盖信号；命中时走 `supersede`，旧记忆标记为 `superseded`，旧 review schedule 停用，新 active 记忆创建新 schedule。
+- 修复 LLM prompt 敏感 payload 问题：LLM user prompt 中的 payload 会递归脱敏，不再原样发送 API key/token/secret/password 等敏感值。
+- 修复 Chroma metadata 真实环境隐患：`TeamRetentionEmbeddingIndexer.build_metadata()` 会过滤 `None` 值，避免真实 Chroma 拒绝 metadata。
+- 修复飞书 listener 启动路径：`main()` 调用 `build_event_handler(settings=settings)`，真实 WebSocket 启动时会使用配置中的 verification token 和 encrypt key。
+- 新增回归测试覆盖：重复 candidate 强化、明确 supersede、LLM prompt payload 脱敏、embedding metadata 过滤 None、listener main 传 settings。
+- 验证：`python -m pytest tests/unit/domains/team_retention/test_handler_llm_embedding.py tests/unit/sources/feishu/test_listener.py -q -p no:cacheprovider`，11 passed。
+- 验证：`python -m pytest tests/unit/domains/team_retention tests/unit/storage/test_team_retention_store.py tests/unit/core/test_service.py tests/unit/storage/test_embedding_store.py tests/unit/llm/test_client.py tests/unit/sources/feishu/test_listener.py -q -p no:cacheprovider`，51 passed。
+- 验证：`python -m pytest tests/unit/core tests/unit/domains tests/unit/storage tests/unit/retrieval tests/unit/llm tests/unit/sources/feishu/test_events.py tests/unit/sources/feishu/test_proactive.py tests/unit/sources/feishu/test_listener.py tests/unit/utils tests/unit/api tests/unit/app -q -p no:cacheprovider`，229 passed, 6 subtests passed。
+- 验证：`python -m pytest tests -q -p no:cacheprovider --ignore=tests/unit/sources/feishu/test_chat_list_demo.py --ignore=tests/unit/sources/feishu/test_cli_demo.py`，229 passed, 6 subtests passed。
+- 验证：`python -m compileall src tests`，通过。

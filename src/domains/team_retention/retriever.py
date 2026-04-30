@@ -95,6 +95,13 @@ class TeamRetentionRetriever:
         )
         for row in active_rows:
             row_map[row["memory_id"]] = row
+        candidate_rows = self.memory_store.search_memory_candidates(
+            domain="team_retention",
+            status="candidate",
+            limit=max(limit * 5, 50),
+        )
+        for row in candidate_rows:
+            row_map[row["memory_id"]] = row
         if query.include_superseded:
             superseded_rows = self.memory_store.search_memory_candidates(
                 domain="team_retention",
@@ -144,6 +151,8 @@ class TeamRetentionRetriever:
                     "fact_type": memory.fact_type,
                     "risk_level": memory.risk_level,
                     "next_review_at": memory.next_review_at,
+                    "status": row.get("status"),
+                    "needs_confirmation": memory.metadata.get("needs_confirmation", row.get("status") == "candidate"),
                 },
             )
             text = self._row_search_text(row, memory).lower()

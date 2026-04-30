@@ -124,7 +124,11 @@ class MemoryService:
                 message="event stored; no domain handler registered",
             )
 
-        runtime = DomainRuntime(memory_store=self.memory_store, add_memory=self.add_memory)
+        runtime = DomainRuntime(
+            memory_store=self.memory_store,
+            add_memory=self.add_memory,
+            embedding_store=self.embedding_store,
+        )
         domain_result = handler.ingest_event(event, runtime)
         return IngestResult(
             event_id=event_id,
@@ -169,7 +173,7 @@ class MemoryService:
             raise ValueError("top_k must be greater than 0")
         query_id = new_query_id()
         logger.info(
-            "action=retrieve_async start query_id=%s query_text=%s top_k=%s include_trace=%s",
+            "function=src.core.service.MemoryService.retrieve_async action=start query_id=%s query_text=%s top_k=%s include_trace=%s",
             query_id,
             query.query_text,
             top_k,

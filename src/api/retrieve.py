@@ -24,7 +24,7 @@ async def retrieve_memories(
         logger.warning("action=retrieve_memories blank_query")
         raise HTTPException(status_code=422, detail="query_text cannot be blank")
     logger.info(
-        "action=retrieve_memories build_query query_text=%s top_k=%s include_trace=%s user_id=%s project_id=%s",
+        "function=src.api.retrieve.retrieve_memories action=build_query query_text=%s top_k=%s include_trace=%s user_id=%s project_id=%s",
         request.query_text,
         request.top_k,
         request.include_trace,
@@ -63,7 +63,7 @@ async def retrieve_memories(
         for ranked in result.ranked_memories
     ]
     logger.info(
-        "action=retrieve_memories done query_id=%s result_count=%s",
+        "function=src.api.retrieve.retrieve_memories action=done query_id=%s result_count=%s",
         result.query_id,
         len(hits),
     )

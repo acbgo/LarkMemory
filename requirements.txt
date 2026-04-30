@@ -1,4 +1,5 @@
 fastapi
+chromadb
 neo4j
 lark-oapi
 openai
