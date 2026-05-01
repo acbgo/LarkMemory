@@ -39,8 +39,8 @@ class TeamRetentionAdmissionDecider:
     ) -> TeamRetentionAdmissionDecision:
         """Return final status using deterministic, explainable backend policy."""
         score, breakdown = self.score(extraction, event=event, preprocess=preprocess)
-        confidence = _clamp(extraction.confidence or score)
-        importance = _clamp(extraction.importance or score)
+        confidence = score
+        importance = score
         blockers = self._active_blockers(extraction, event=event, sensitive_unmasked=sensitive_unmasked)
         if not extraction.is_team_retention_memory or not extraction.fact_value:
             return TeamRetentionAdmissionDecision("reject", score, confidence, importance, "not_team_retention", breakdown, blockers)

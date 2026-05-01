@@ -70,7 +70,6 @@ class TeamRetentionDomainHandler:
         memory.importance = admission.importance
         memory.metadata.update(
             {
-                "llm_decision": extraction.decision,
                 "final_decision": admission.status,
                 "final_score": admission.score,
                 "score_breakdown": dict(admission.breakdown or {}),
@@ -186,8 +185,8 @@ class TeamRetentionDomainHandler:
             source_ref=event.context.thread_id or event.event_id,
             valid_from=extraction.valid_from or event.occurred_at,
             tags=[f"llm_status:{status}"],
-            confidence=extraction.confidence,
-            importance=extraction.importance,
+            confidence=0.0,
+            importance=0.0,
             created_at=event.occurred_at,
         )
 

@@ -4,7 +4,7 @@ import asyncio
 import json
 import re
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any
 
 from src.llm.base import LLMJSONDecodeError
 from src.schemas import NormalizedEvent
@@ -13,14 +13,10 @@ from src.utils.text import clean_text
 from .preprocessor import TeamRetentionPreprocessResult
 
 
-TeamRetentionLLMDecision = Literal["reject", "candidate", "active"]
-
-
 @dataclass(slots=True)
 class TeamRetentionLLMExtraction:
     """Structured semantic extraction result for one team_retention event."""
 
-    decision: TeamRetentionLLMDecision
     is_team_retention_memory: bool
     fact_type: str = "team_fact"
     fact_value: str = ""
@@ -32,9 +28,6 @@ class TeamRetentionLLMExtraction:
     valid_from: str | None = None
     valid_to: str | None = None
     review_policy: str = "ebbinghaus"
-    confidence: float = 0.0
-    importance: float = 0.0
-    score_breakdown: dict[str, float] = field(default_factory=dict)
     certainty: str = "explicit"
     stability: str = "stable"
     actionability: str = "actionable"
@@ -51,9 +44,6 @@ class TeamRetentionLLMExtraction:
         """Create a normalized extraction object from model JSON."""
         candidate_flag = data.get("is_team_retention_candidate")
         is_memory = bool(data.get("is_team_retention_memory") if candidate_flag is None else candidate_flag)
-        decision = str(data.get("decision") or ("candidate" if is_memory else "reject"))
-        if decision not in {"reject", "candidate", "active"}:
-            decision = "reject"
         validity = data.get("validity") if isinstance(data.get("validity"), dict) else {}
         owner = data.get("owner")
         if owner is None:
@@ -62,7 +52,6 @@ class TeamRetentionLLMExtraction:
         if risk_level is None:
             risk_level = data.get("risk_level_hint")
         return cls(
-            decision=decision,  # type: ignore[arg-type]
             is_team_retention_memory=is_memory,
             fact_type=clean_text(str(data.get("fact_type") or "team_fact")),
             fact_value=clean_text(str(data.get("fact_value") or "")),
@@ -74,9 +63,6 @@ class TeamRetentionLLMExtraction:
             valid_from=clean_text(data.get("valid_from") or validity.get("valid_from")) or None,
             valid_to=clean_text(data.get("valid_to") or validity.get("valid_to")) or None,
             review_policy=clean_text(str(data.get("review_policy") or "ebbinghaus")),
-            confidence=_clamp(data.get("confidence") or 0.0),
-            importance=_clamp(data.get("importance") or 0.0),
-            score_breakdown=_score_breakdown(data.get("score_breakdown")),
             certainty=clean_text(str(data.get("certainty") or "explicit")),
             stability=clean_text(str(data.get("stability") or "stable")),
             actionability=clean_text(str(data.get("actionability") or "actionable")),
@@ -236,21 +222,6 @@ def _json_schema() -> dict[str, Any]:
         },
         "required": ["is_team_retention_candidate", "fact_type", "fact_value", "certainty", "stability", "actionability", "needs_confirmation", "evidence_text"],
     }
-
-
-def _score_breakdown(value: Any) -> dict[str, float]:
-    if not isinstance(value, dict):
-        return {}
-    return {str(key): _clamp(raw) for key, raw in value.items() if isinstance(raw, (int, float))}
-
-
-def _clamp(value: Any) -> float:
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        return 0.0
-    return max(0.0, min(1.0, number))
-
 
 def _run_async(awaitable: Any) -> Any:
     try:

@@ -311,3 +311,6 @@
 - 新增回归测试覆盖：同客户不同事实槽位不能覆盖、旧 candidate 不能拖低新 active、schema 不暴露旧裁决字段、旧字段兼容但不影响 admission、prompt 明确 LLM 不做最终准入/打分/复习计划/覆盖裁决。
 - 验证：`python -m pytest tests/unit/domains/team_retention -q -p no:cacheprovider`，34 passed。
 - 验证：`python -m compileall src/domains/team_retention tests/unit/domains/team_retention`，通过。
+- 继续收紧 LLM 兼容边界：`TeamRetentionLLMExtraction` 不再保存 `decision`、`score_breakdown`、`importance`、`confidence` 旧裁决字段；旧字段只在 `from_dict()` 输入层被容忍，不再进入 handler metadata 或 admission 输出。
+- 已迁移 TeamRetention LLM 单测夹具，普通路径统一使用 semantic response，删除旧 `_llm_response` 测试 helper。
+- 验证：`python -m pytest tests/unit/domains/team_retention -q -p no:cacheprovider`，34 passed。
