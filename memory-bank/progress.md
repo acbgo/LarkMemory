@@ -274,3 +274,16 @@
 - 验证：`python -m pytest tests/unit/core tests/unit/domains tests/unit/storage tests/unit/retrieval tests/unit/llm tests/unit/sources/feishu/test_events.py tests/unit/sources/feishu/test_proactive.py tests/unit/sources/feishu/test_listener.py tests/unit/utils tests/unit/api tests/unit/app -q -p no:cacheprovider`，231 passed, 6 subtests passed。
 - 验证：`python -m pytest tests -q -p no:cacheprovider --ignore=tests/unit/sources/feishu/test_chat_list_demo.py --ignore=tests/unit/sources/feishu/test_cli_demo.py`，231 passed, 6 subtests passed。
 - 验证：`python -m compileall src tests`，通过。
+
+## 2026-05-01 TeamRetention 向量混合检索进展
+
+- 修复向量索引只用于生命周期、不参与用户检索召回的问题。
+- `TeamRetentionRetriever` 已新增可选 `embedding_store` 依赖，在关系库 active/candidate 候选之外调用 `EmbeddingStore.query_similar()`，按 team/project/workspace scope 过滤，形成 lexical + structured scope + vector hybrid recall。
+- 向量命中会通过 `memory_id` 回表加载 `MemoryCore` 和 `TeamRetentionMemory`，继续复用现有 `MemoryItem`、`RankedMemory` 和 `TeamRetentionRanker` 输出，不新增独立检索结果模型。
+- 检索结果会在 `matched_fields` 和 `MemoryItem.extra` 标记 `vector_similarity`，该分数参与领域内 ranker 的 relevance 分。
+- `TeamRetentionDomainHandler` 已接收可选 `embedding_store` 并传给 `TeamRetentionRetriever`；`src/app/dependencies.py` 已将 `get_embedding_store()` 注入 handler，确保应用装配路径也启用向量检索。
+- 新增测试覆盖：`TeamRetentionRetriever` 调用向量 store、按 scope 过滤、合并 vector hit；`get_memory_service()` 将 embedding store 接到 team_retention retriever。
+- 验证：`python -m pytest tests/unit/domains/team_retention tests/unit/app/test_dependencies.py tests/unit/core/test_service.py tests/unit/storage/test_embedding_store.py -q -p no:cacheprovider`，51 passed。
+- 验证：`python -m pytest tests/unit/core tests/unit/domains tests/unit/storage tests/unit/retrieval tests/unit/llm tests/unit/sources/feishu/test_events.py tests/unit/sources/feishu/test_proactive.py tests/unit/sources/feishu/test_listener.py tests/unit/utils tests/unit/api tests/unit/app -q -p no:cacheprovider`，233 passed, 6 subtests passed。
+- 验证：`python -m pytest tests -q -p no:cacheprovider --ignore=tests/unit/sources/feishu/test_chat_list_demo.py --ignore=tests/unit/sources/feishu/test_cli_demo.py`，233 passed, 6 subtests passed。
+- 验证：`python -m compileall src tests`，通过。

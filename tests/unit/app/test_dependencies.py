@@ -83,6 +83,17 @@ class TestDependencies(unittest.TestCase):
         self.assertIs(service.event_store, get_event_store())
         self.assertIs(service.memory_store, get_memory_core_store())
 
+    def test_get_memory_service_wires_embedding_store_to_team_retention_retriever(self) -> None:
+        db_path = str(self.temp_dir / "service-embedding.db")
+        fake_embedding = object()
+        with patch.dict(os.environ, {"LARKMEMORY_SQLITE_PATH": db_path}, clear=True):
+            reset_dependency_cache()
+            with patch("src.app.dependencies.get_embedding_store", return_value=fake_embedding):
+                service = get_memory_service()
+
+        team_handler = service.domain_handlers["team_retention"]
+        self.assertIs(team_handler.retriever.embedding_store, fake_embedding)
+
     def test_get_embedding_store_returns_none_when_disabled(self) -> None:
         with patch.dict(os.environ, {"LARKMEMORY_ENABLE_EMBEDDING": "false"}, clear=True):
             reset_dependency_cache()

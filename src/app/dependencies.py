@@ -85,6 +85,7 @@ def get_memory_service() -> MemoryService:
             TeamRetentionDomainHandler(
                 get_memory_core_store(),
                 get_team_retention_store(),
+                embedding_store=get_embedding_store(),
                 llm_client=get_llm_client(),
             ),
         ],

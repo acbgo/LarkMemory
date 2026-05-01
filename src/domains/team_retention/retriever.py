@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from src.retrieval import MemoryItem, RankedMemory, RetrievalQuery, memory_item_from_core
-from src.storage import MemoryCoreStore, TeamRetentionStore
+from src.storage import EmbeddingStore, MemoryCoreStore, TeamRetentionStore
 from src.utils.text import clean_text
 
 from .models import TeamRetentionMemory
@@ -64,10 +64,12 @@ class TeamRetentionRetriever:
         memory_store: MemoryCoreStore,
         team_retention_store: TeamRetentionStore,
         *,
+        embedding_store: EmbeddingStore | None = None,
         ranker: TeamRetentionRanker | None = None,
     ) -> None:
         self.memory_store = memory_store
         self.team_retention_store = team_retention_store
+        self.embedding_store = embedding_store
         self.ranker = ranker or TeamRetentionRanker()
 
     def retrieve(
@@ -82,12 +84,19 @@ class TeamRetentionRetriever:
         domain_query = self._coerce_query(query, limit=effective_limit)
         if not (domain_query.team_id or domain_query.project_id or domain_query.workspace_id):
             return []
-        rows = self._load_candidates(domain_query, limit=effective_limit)
+        vector_hits = self._vector_hits(domain_query, limit=effective_limit)
+        rows = self._load_candidates(domain_query, limit=effective_limit, vector_hits=vector_hits)
         filtered = self._filter_candidates(rows, domain_query)
-        scored = self._score_matches(filtered, domain_query)
+        scored = self._score_matches(filtered, domain_query, vector_hits=vector_hits)
         return self.ranker.rank(scored, domain_query, limit=effective_limit)
 
-    def _load_candidates(self, query: TeamRetentionQuery, *, limit: int) -> list[dict[str, Any]]:
+    def _load_candidates(
+        self,
+        query: TeamRetentionQuery,
+        *,
+        limit: int,
+        vector_hits: dict[str, float] | None = None,
+    ) -> list[dict[str, Any]]:
         row_map: dict[str, dict[str, Any]] = {}
         active_rows = self.memory_store.list_active_memories(
             domain="team_retention",
@@ -109,6 +118,10 @@ class TeamRetentionRetriever:
                 limit=max(limit * 5, 50),
             )
             for row in superseded_rows:
+                row_map[row["memory_id"]] = row
+        for memory_id in (vector_hits or {}):
+            row = self.memory_store.get_memory(memory_id)
+            if row is not None and row.get("domain") == "team_retention" and row.get("status") in {"active", "candidate"}:
                 row_map[row["memory_id"]] = row
         return list(row_map.values())
 
@@ -137,6 +150,8 @@ class TeamRetentionRetriever:
         self,
         rows: list[dict[str, Any]],
         query: TeamRetentionQuery,
+        *,
+        vector_hits: dict[str, float] | None = None,
     ) -> list[TeamRetentionSearchResult]:
         terms = self._extract_query_terms(query.query_text)
         results: list[TeamRetentionSearchResult] = []
@@ -175,6 +190,11 @@ class TeamRetentionRetriever:
             if memory.risk_level == "high":
                 score += 0.1
                 matched_fields.append("risk_level")
+            vector_similarity = (vector_hits or {}).get(memory.retention_id)
+            if vector_similarity is not None:
+                score += min(max(vector_similarity, 0.0), 1.0) * 0.35
+                matched_fields.append("vector_similarity")
+                item.extra["vector_similarity"] = vector_similarity
             results.append(
                 TeamRetentionSearchResult(
                     memory=memory,
@@ -185,6 +205,34 @@ class TeamRetentionRetriever:
                 )
             )
         return results
+
+    def _vector_hits(self, query: TeamRetentionQuery, *, limit: int) -> dict[str, float]:
+        if self.embedding_store is None:
+            return {}
+        filters: dict[str, Any] = {}
+        if query.team_id:
+            filters["team_id"] = query.team_id
+        if query.project_id:
+            filters["project_id"] = query.project_id
+        if query.workspace_id:
+            filters["workspace_id"] = query.workspace_id
+        hits = self.embedding_store.query_similar(
+            query.query_text,
+            domain="team_retention",
+            top_k=max(limit * 3, 10),
+            filters=filters or None,
+        )
+        result: dict[str, float] = {}
+        for hit in hits:
+            memory_id = hit.get("memory_id") or hit.get("id")
+            if not isinstance(memory_id, str):
+                continue
+            distance = hit.get("distance")
+            similarity = 0.0
+            if isinstance(distance, (int, float)):
+                similarity = max(0.0, min(1.0, 1.0 - float(distance)))
+            result[memory_id] = max(result.get(memory_id, 0.0), similarity)
+        return result
 
     def _coerce_query(self, query: TeamRetentionQuery | RetrievalQuery, *, limit: int = 10) -> TeamRetentionQuery:
         if isinstance(query, TeamRetentionQuery):

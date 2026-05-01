@@ -5,7 +5,7 @@ from typing import Any
 from src.core.domain_handler import DomainIngestResult, DomainRuntime, DomainUpdateResult
 from src.retrieval import RankedMemory, RetrievalQuery
 from src.schemas import NormalizedEvent
-from src.storage import MemoryCoreStore, TeamRetentionStore
+from src.storage import EmbeddingStore, MemoryCoreStore, TeamRetentionStore
 from src.utils.ids import new_id
 
 from .admission import TeamRetentionAdmissionDecider
@@ -27,6 +27,7 @@ class TeamRetentionDomainHandler:
         memory_store: MemoryCoreStore,
         team_retention_store: TeamRetentionStore,
         *,
+        embedding_store: EmbeddingStore | None = None,
         llm_client: Any | None = None,
         extractor: TeamRetentionExtractor | None = None,
         retriever: TeamRetentionRetriever | None = None,
@@ -35,7 +36,11 @@ class TeamRetentionDomainHandler:
         self.memory_store = memory_store
         self.team_retention_store = team_retention_store
         self.extractor = extractor or TeamRetentionExtractor(llm_client=llm_client)
-        self.retriever = retriever or TeamRetentionRetriever(memory_store, team_retention_store)
+        self.retriever = retriever or TeamRetentionRetriever(
+            memory_store,
+            team_retention_store,
+            embedding_store=embedding_store,
+        )
         self.version_manager = version_manager or TeamRetentionVersionManager(memory_store, team_retention_store)
         self.llm_client = llm_client
         self.preprocessor = TeamRetentionRulePreprocessor()
