@@ -314,3 +314,13 @@
 - 继续收紧 LLM 兼容边界：`TeamRetentionLLMExtraction` 不再保存 `decision`、`score_breakdown`、`importance`、`confidence` 旧裁决字段；旧字段只在 `from_dict()` 输入层被容忍，不再进入 handler metadata 或 admission 输出。
 - 已迁移 TeamRetention LLM 单测夹具，普通路径统一使用 semantic response，删除旧 `_llm_response` 测试 helper。
 - 验证：`python -m pytest tests/unit/domains/team_retention -q -p no:cacheprovider`，34 passed。
+
+## 2026-05-01 Benchmark 数据集整理
+
+- 已将外部 `Memory-Benchmark-main` 数据集整理为当前项目根目录下的 `benchmark/`。
+- 保留 4 个方向 JSONL 数据集、`schema.json`、指标说明、报告模板、Memory Engine 适配说明和格式校验脚本。
+- 移除生成期和非必要资产：生成脚本、mock runner、pycache、benchmark 生成计划文档。
+- 清洗 JSONL 中与 schema 不一致的冗余字段：移除 `decision`、`reason`、`rejected_option`，将 `latest_value` 统一为 `current_value`。
+- `schema.json` 已补充 `baseline_steps` 和 `actual_steps`，用于步骤节省类效能验证。
+- `validate_schema.py` 已改为标准库校验，显式 UTF-8 读取文件，并修正矛盾更新检查字段。
+- 验证：`python benchmark\scripts\validate_schema.py`，49/49 passed, 0 failed；保留 16 条 hard case 噪声数量建议 warning。
