@@ -69,6 +69,8 @@ def _insert(
     core.status = status  # type: ignore[assignment]
     memory_store.insert_memory_core(core)
     team_store.insert_memory(memory)
+    if status == "candidate":
+        team_store.update_memory_metadata(memory_id, {"needs_confirmation": True})
 
 
 def test_retrieve_filters_by_team_id_and_query_text() -> None:
@@ -113,6 +115,7 @@ def test_retrieve_includes_candidate_memories_with_status_marker() -> None:
         assert [result.memory.retention_id for result in results] == ["mem-candidate"]
         ranked = results[0].to_ranked_memory(rank=1)
         assert ranked.item.extra["status"] == "candidate"
+        assert ranked.item.extra["needs_confirmation"] is True
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
 

@@ -287,3 +287,27 @@
 - 验证：`python -m pytest tests/unit/core tests/unit/domains tests/unit/storage tests/unit/retrieval tests/unit/llm tests/unit/sources/feishu/test_events.py tests/unit/sources/feishu/test_proactive.py tests/unit/sources/feishu/test_listener.py tests/unit/utils tests/unit/api tests/unit/app -q -p no:cacheprovider`，233 passed, 6 subtests passed。
 - 验证：`python -m pytest tests -q -p no:cacheprovider --ignore=tests/unit/sources/feishu/test_chat_list_demo.py --ignore=tests/unit/sources/feishu/test_cli_demo.py`，233 passed, 6 subtests passed。
 - 验证：`python -m compileall src tests`，通过。
+
+## 2026-05-01 TeamRetention 准入与覆盖策略优化
+
+- 已将 D 方向 LLM 链路进一步收敛为“语义抽取器”角色：LLM prompt 改为中文业务抽取提示，不再要求模型输出重要性 score、最终 active/candidate/reject 裁决或复习计划判断。
+- `TeamRetentionLLMExtractor` 已支持新的语义抽取 JSON：`is_team_retention_candidate`、`certainty`、`stability`、`actionability`、`update_intent`、`update_signal_text`、`needs_confirmation`、`evidence_text` 等；旧字段仍保持兼容。
+- prompt 不再传真实内部 ID：`event_id`、`team_id`、`project_id`、`workspace_id`、`thread_id` 保留在后端治理链路，LLM 只看到 `has_team_scope`、`has_project_scope` 等业务 hint。
+- 敏感信息处理从 prompt 文案中移到后端 `TeamRetentionSensitivePolicy`，当前默认对 LLM 输入脱敏，后续可切换 `raw`、`mask_for_llm`、`mask_all` 策略。
+- `TeamRetentionAdmissionDecider` 不再依赖 LLM 自评分加权，而是用后端可解释规则综合 LLM 抽取、证据、scope、fact 类型、规则弱提示和不确定性 blocker 计算最终准入。
+- `rule_features` 已明确作为弱提示：为空不会直接否定团队记忆价值；关键词命中也不会直接提升为 active。
+- candidate/active 边界进一步收紧：candidate 可以入库和入向量库并被检索召回，但始终标记 `needs_confirmation`，不创建 review schedule；active 才创建 review schedule 并参与主动提醒。
+- `TeamRetentionLifecycleResolver` 覆盖策略更保守：只有新记忆最终为 active、非待确认、同 scope/同 fact_type/同实体或 version_group、存在明确覆盖信号时，才允许 supersede 旧 active；candidate 或不确定更新只会作为 conflict candidate 保留旧 active。
+- 检索测试补强 candidate 注入标记，确保召回结果带 `status=candidate` 和 `needs_confirmation=true`。
+- 新增回归测试覆盖：LLM 无 score/importance 仍可准入、rule_features 为空但原文有长期价值、规则关键词误命中普通聊天不能 active、speculative/needs_confirmation 不能 active、prompt 不暴露内部 ID、敏感策略不硬编码在 prompt、candidate 更新不能 supersede、active 明确更新才能 supersede。
+- 验证：`python -m pytest tests/unit/domains/team_retention/test_handler_llm_embedding.py tests/unit/domains/team_retention/test_retriever.py -q -p no:cacheprovider`，22 passed。
+- 验证：`python -m pytest tests/unit/domains/team_retention tests/unit/storage/test_team_retention_store.py tests/unit/core/test_service.py tests/unit/storage/test_embedding_store.py tests/unit/app/test_dependencies.py -q -p no:cacheprovider`，62 passed。
+
+## 2026-05-01 TeamRetention lifecycle 与 LLM schema 补充修复
+
+- 收紧 `TeamRetentionLifecycleResolver` 的自动覆盖判定：非精确 `version_group` 不再只靠共享客户/实体片段通过，必须能解析出同一实体和同一事实槽位；不同主题的向量相似命中只会进入 conflict/new 链路，不会误 supersede 旧 active。
+- 修复新 active 被旧 candidate 降级的问题：满足严格 supersede 条件时，新记忆最终状态使用后端 admission status，不再由旧记忆状态决定。
+- 清理 TeamRetention LLM JSON schema 主契约：`decision`、`score_breakdown`、`importance`、`confidence` 不再出现在结构化调用 schema 中；`from_dict()` 仍容忍旧字段输入，但 admission 不依赖这些旧字段。
+- 新增回归测试覆盖：同客户不同事实槽位不能覆盖、旧 candidate 不能拖低新 active、schema 不暴露旧裁决字段、旧字段兼容但不影响 admission、prompt 明确 LLM 不做最终准入/打分/复习计划/覆盖裁决。
+- 验证：`python -m pytest tests/unit/domains/team_retention -q -p no:cacheprovider`，34 passed。
+- 验证：`python -m compileall src/domains/team_retention tests/unit/domains/team_retention`，通过。

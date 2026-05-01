@@ -18,7 +18,7 @@ TeamRetentionLLMDecision = Literal["reject", "candidate", "active"]
 
 @dataclass(slots=True)
 class TeamRetentionLLMExtraction:
-    """Structured LLM result for one team_retention extraction decision."""
+    """Structured semantic extraction result for one team_retention event."""
 
     decision: TeamRetentionLLMDecision
     is_team_retention_memory: bool
@@ -35,6 +35,12 @@ class TeamRetentionLLMExtraction:
     confidence: float = 0.0
     importance: float = 0.0
     score_breakdown: dict[str, float] = field(default_factory=dict)
+    certainty: str = "explicit"
+    stability: str = "stable"
+    actionability: str = "actionable"
+    update_intent: str = "none"
+    update_signal_text: str | None = None
+    confirmation_reason: str | None = None
     needs_confirmation: bool = False
     reason: str | None = None
     evidence_text: str | None = None
@@ -43,25 +49,40 @@ class TeamRetentionLLMExtraction:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "TeamRetentionLLMExtraction":
         """Create a normalized extraction object from model JSON."""
-        decision = str(data.get("decision") or "reject")
+        candidate_flag = data.get("is_team_retention_candidate")
+        is_memory = bool(data.get("is_team_retention_memory") if candidate_flag is None else candidate_flag)
+        decision = str(data.get("decision") or ("candidate" if is_memory else "reject"))
         if decision not in {"reject", "candidate", "active"}:
             decision = "reject"
+        validity = data.get("validity") if isinstance(data.get("validity"), dict) else {}
+        owner = data.get("owner")
+        if owner is None:
+            owner = data.get("owner_hint")
+        risk_level = data.get("risk_level")
+        if risk_level is None:
+            risk_level = data.get("risk_level_hint")
         return cls(
             decision=decision,  # type: ignore[arg-type]
-            is_team_retention_memory=bool(data.get("is_team_retention_memory")),
+            is_team_retention_memory=is_memory,
             fact_type=clean_text(str(data.get("fact_type") or "team_fact")),
             fact_value=clean_text(str(data.get("fact_value") or "")),
             summary=clean_text(data.get("summary")) or None,
             primary_entity=data.get("primary_entity") if isinstance(data.get("primary_entity"), dict) else {},
             topic_key=clean_text(data.get("topic_key")) or None,
-            owner=clean_text(data.get("owner")) or None,
-            risk_level=clean_text(str(data.get("risk_level") or "medium")),
-            valid_from=clean_text(data.get("valid_from")) or None,
-            valid_to=clean_text(data.get("valid_to")) or None,
+            owner=clean_text(owner) or None,
+            risk_level=clean_text(str(risk_level or "medium")),
+            valid_from=clean_text(data.get("valid_from") or validity.get("valid_from")) or None,
+            valid_to=clean_text(data.get("valid_to") or validity.get("valid_to")) or None,
             review_policy=clean_text(str(data.get("review_policy") or "ebbinghaus")),
             confidence=_clamp(data.get("confidence") or 0.0),
             importance=_clamp(data.get("importance") or 0.0),
             score_breakdown=_score_breakdown(data.get("score_breakdown")),
+            certainty=clean_text(str(data.get("certainty") or "explicit")),
+            stability=clean_text(str(data.get("stability") or "stable")),
+            actionability=clean_text(str(data.get("actionability") or "actionable")),
+            update_intent=clean_text(str(data.get("update_intent") or "none")),
+            update_signal_text=clean_text(data.get("update_signal_text")) or None,
+            confirmation_reason=clean_text(data.get("confirmation_reason")) or None,
             needs_confirmation=bool(data.get("needs_confirmation")),
             reason=clean_text(data.get("reason")) or None,
             evidence_text=clean_text(data.get("evidence_text")) or None,
@@ -105,48 +126,59 @@ class TeamRetentionLLMExtractor:
 
 def _system_prompt() -> str:
     return (
-        "You extract enterprise team-retention memories from normalized events. "
-        "Return JSON only. Decide whether the event is reject, candidate, or active. "
-        "candidate means retrievable but not proactively reminded. active means retrievable and eligible for review reminders. "
-        "Do not preserve raw secrets; use redacted text when sensitive values appear."
+        "你是企业协作场景下的团队长期记忆抽取器。"
+        "你只负责语义抽取、事实总结、证据摘取、不确定性说明和更新意图提示，"
+        "不负责最终入库准入、active/candidate/reject 裁决、复习计划创建或覆盖旧记忆。"
+        "不要输出重要性分数或最终状态；不要编造事件中没有的信息。"
+        "如果信息是猜测、传闻、表达含糊或缺少来源，请标记 needs_confirmation。"
+        "如果输入包含 [REDACTED]，请保留该标记，不要尝试还原；是否脱敏由后端策略决定。"
+        "只返回 JSON，不要输出 Markdown、解释文字或额外字段。"
     )
 
 
 def _user_prompt(event: NormalizedEvent, preprocess: TeamRetentionPreprocessResult) -> str:
     payload = {
-        "event": {
-            "event_id": event.event_id,
+        "context_hints": {
             "event_type": event.event_type,
             "source_type": event.source_type,
-            "occurred_at": event.occurred_at,
-            "context": {
-                "team_id": event.context.team_id,
-                "project_id": event.context.project_id,
-                "workspace_id": event.context.workspace_id,
-                "thread_id": event.context.thread_id,
-            },
-            "content_text": preprocess.sanitized_text,
-            "tags": event.tags,
-            "payload": _sanitize_payload(event.payload),
+            "has_team_scope": bool(event.context.team_id),
+            "has_project_scope": bool(event.context.project_id),
+            "has_workspace_scope": bool(event.context.workspace_id),
+            "sender_role_hint": "ordinary_member",
         },
-        "rule_features": preprocess.features.to_dict(),
-        "rubric": {
-            "active": "Long-term team fact, clear scope, clear fact, enough confidence, no unmasked sensitive value.",
-            "candidate": "Possibly valuable team memory but uncertain, incomplete, sensitive-but-masked, or needs confirmation.",
-            "reject": "Ordinary chat/status/personal preference/short-lived task/no stable team fact.",
+        "text": preprocess.sanitized_text,
+        "rule_features": {
+            "description": "后端规则提取的弱提示，可能为空、不完整或有误。请优先根据 text 原文判断；如果 rule_features 与 text 冲突，以 text 为准。",
+            **preprocess.features.to_dict(),
         },
-        "score_fields": [
-            "explicit_intent",
-            "future_dependency",
-            "cross_member_dependency",
-            "risk_or_cost",
-            "source_authority",
-            "stability",
-            "actionability",
-            "uncertainty_penalty",
-            "sensitivity_penalty",
-            "triviality_penalty",
-        ],
+        "task": "请抽取可能的团队长期记忆。不要打分，不要决定最终状态。",
+        "allowed_values": {
+            "fact_type": ["api_key", "customer_preference", "competitor_update", "compliance", "deadline", "risk", "team_fact"],
+            "certainty": ["explicit", "inferred", "speculative"],
+            "stability": ["stable", "temporary", "unknown"],
+            "actionability": ["actionable", "informational", "unclear"],
+            "risk_level_hint": ["low", "medium", "high"],
+            "update_intent": ["none", "reinforce", "conflict", "supersede"],
+        },
+        "output_schema": {
+            "is_team_retention_candidate": "boolean",
+            "fact_type": "string",
+            "fact_value": "string",
+            "summary": "string",
+            "primary_entity": {"type": "string", "name": "string", "normalized_key": "string"},
+            "owner_hint": "string|null",
+            "risk_level_hint": "low|medium|high",
+            "validity": {"valid_from": "string|null", "valid_to": "string|null", "is_temporary": "boolean"},
+            "certainty": "explicit|inferred|speculative",
+            "stability": "stable|temporary|unknown",
+            "actionability": "actionable|informational|unclear",
+            "update_intent": "none|reinforce|conflict|supersede",
+            "update_signal_text": "string|null",
+            "needs_confirmation": "boolean",
+            "confirmation_reason": "string|null",
+            "evidence_text": "string",
+            "reason": "string",
+        },
     }
     return json.dumps(payload, ensure_ascii=False)
 
@@ -182,27 +214,27 @@ def _json_schema() -> dict[str, Any]:
     return {
         "type": "object",
         "properties": {
-            "decision": {"type": "string", "enum": ["reject", "candidate", "active"]},
-            "is_team_retention_memory": {"type": "boolean"},
+            "is_team_retention_candidate": {"type": "boolean"},
             "fact_type": {"type": "string"},
             "fact_value": {"type": "string"},
             "summary": {"type": ["string", "null"]},
             "primary_entity": {"type": "object"},
             "topic_key": {"type": ["string", "null"]},
-            "owner": {"type": ["string", "null"]},
-            "risk_level": {"type": "string", "enum": ["low", "medium", "high"]},
-            "valid_from": {"type": ["string", "null"]},
-            "valid_to": {"type": ["string", "null"]},
-            "review_policy": {"type": "string", "enum": ["ebbinghaus", "fixed", "none"]},
-            "confidence": {"type": "number"},
-            "importance": {"type": "number"},
-            "score_breakdown": {"type": "object"},
+            "owner_hint": {"type": ["string", "null"]},
+            "risk_level_hint": {"type": "string", "enum": ["low", "medium", "high"]},
+            "validity": {"type": "object"},
+            "certainty": {"type": "string", "enum": ["explicit", "inferred", "speculative"]},
+            "stability": {"type": "string", "enum": ["stable", "temporary", "unknown"]},
+            "actionability": {"type": "string", "enum": ["actionable", "informational", "unclear"]},
+            "update_intent": {"type": "string", "enum": ["none", "reinforce", "conflict", "supersede"]},
+            "update_signal_text": {"type": ["string", "null"]},
             "needs_confirmation": {"type": "boolean"},
+            "confirmation_reason": {"type": ["string", "null"]},
             "reason": {"type": ["string", "null"]},
             "evidence_text": {"type": ["string", "null"]},
             "version_group_hint": {"type": ["string", "null"]},
         },
-        "required": ["decision", "is_team_retention_memory", "score_breakdown"],
+        "required": ["is_team_retention_candidate", "fact_type", "fact_value", "certainty", "stability", "actionability", "needs_confirmation", "evidence_text"],
     }
 
 

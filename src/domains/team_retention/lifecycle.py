@@ -33,6 +33,10 @@ class TeamRetentionLifecycleResolver:
         self,
         memory: TeamRetentionMemory,
         *,
+        admission_status: str = "candidate",
+        update_intent: str = "none",
+        update_signal_text: str | None = None,
+        needs_confirmation: bool = False,
         evidence_text: str | None = None,
         source_text: str | None = None,
     ) -> TeamRetentionLifecycleDecision:
@@ -61,10 +65,25 @@ class TeamRetentionLifecycleResolver:
                     matched_memory_id=memory_id,
                     reason="same_fact_value",
                 )
-            if self._has_supersede_signal(memory.fact_value, evidence_text=evidence_text, source_text=source_text):
+            can_supersede = (
+                admission_status == "active"
+                and not needs_confirmation
+                and update_intent in {"none", "conflict", "supersede"}
+                and self._same_version_group(old, memory)
+                and (
+                    (update_intent == "supersede" and bool(update_signal_text))
+                    or self._has_supersede_signal(
+                        memory.fact_value,
+                        evidence_text=evidence_text,
+                        source_text=source_text,
+                        update_signal_text=update_signal_text,
+                    )
+                )
+            )
+            if can_supersede:
                 return TeamRetentionLifecycleDecision(
                     action="supersede",
-                    status="active" if row.get("status") == "active" else "candidate",
+                    status=admission_status,
                     matched_memory_id=memory_id,
                     reason="explicit_update_signal",
                 )
@@ -113,14 +132,45 @@ class TeamRetentionLifecycleResolver:
                     return False
         return bool(left.team_id or left.project_id or left.workspace_id or right.team_id or right.project_id or right.workspace_id)
 
+    def _same_version_group(self, left: TeamRetentionMemory, right: TeamRetentionMemory) -> bool:
+        """Require exact group or same entity plus same fact slot before supersede."""
+        if not left.version_group or not right.version_group:
+            return False
+        if left.version_group == right.version_group:
+            return True
+        left_entity, left_slot = self._entity_and_slot(left)
+        right_entity, right_slot = self._entity_and_slot(right)
+        return bool(
+            left_entity
+            and right_entity
+            and left_entity == right_entity
+            and left_slot
+            and right_slot
+            and left_slot == right_slot
+        )
+
+    def _entity_and_slot(self, memory: TeamRetentionMemory) -> tuple[str | None, str | None]:
+        """Parse handler-created version groups into entity and fact-slot parts."""
+        if not memory.version_group:
+            return None, None
+        parts = [part for part in memory.version_group.split(":") if part]
+        if len(parts) < 4:
+            return None, None
+        entity = parts[-2]
+        slot = parts[-1]
+        if entity == "unknown" or slot == "unknown":
+            return None, None
+        return entity, slot
+
     def _has_supersede_signal(
         self,
         text: str,
         *,
+        update_signal_text: str | None = None,
         evidence_text: str | None = None,
         source_text: str | None = None,
     ) -> bool:
-        combined = " ".join(part for part in (text, evidence_text, source_text) if part)
+        combined = " ".join(part for part in (text, update_signal_text, evidence_text, source_text) if part)
         return any(
             marker in text
             or marker in combined

@@ -58,6 +58,8 @@ class TeamRetentionDomainHandler:
             return self._ingest_event_with_rules(event, runtime)
         admission = self.admission_decider.decide(
             extraction,
+            event=event,
+            preprocess=preprocess,
             sensitive_unmasked=preprocess.features.sensitive_detected and not preprocess.features.sensitive_masked,
         )
         if admission.status == "reject":
@@ -71,7 +73,8 @@ class TeamRetentionDomainHandler:
                 "llm_decision": extraction.decision,
                 "final_decision": admission.status,
                 "final_score": admission.score,
-                "score_breakdown": dict(extraction.score_breakdown),
+                "score_breakdown": dict(admission.breakdown or {}),
+                "admission_blockers": list(admission.blockers or []),
                 "needs_confirmation": extraction.needs_confirmation or admission.status == "candidate",
                 "primary_entity": dict(extraction.primary_entity),
                 "topic_key": extraction.topic_key,
@@ -83,6 +86,10 @@ class TeamRetentionDomainHandler:
         embedding_indexer = TeamRetentionEmbeddingIndexer(runtime.embedding_store)
         lifecycle = TeamRetentionLifecycleResolver(self.memory_store, self.team_retention_store, embedding_indexer).resolve(
             memory,
+            admission_status=admission.status,
+            update_intent=extraction.update_intent,
+            update_signal_text=extraction.update_signal_text,
+            needs_confirmation=extraction.needs_confirmation or admission.status == "candidate",
             evidence_text=extraction.evidence_text or extraction.reason,
             source_text=preprocess.sanitized_text,
         )
