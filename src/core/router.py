@@ -33,17 +33,19 @@ class DomainRouter:
     def __init__(
         self,
         classifier: DomainClassifier | None = None,
-        default_domain: str = "team_retention",
         llm_client: Any | None = None,
     ) -> None:
         self.classifier = classifier or DomainClassifier(llm_client=llm_client)
-        self.default_domain = default_domain
 
     def route_event(self, event: NormalizedEvent) -> RouteDecision:
         text = self._event_text(event)
         result = self.classifier.classify_sync(
             text,
             event_type=event.event_type,
+        )
+        is_fallback = (
+            result.method == "keyword_rule"
+            and result.confidence <= 0.3
         )
         decision = RouteDecision(
             primary=[
@@ -54,6 +56,7 @@ class DomainRouter:
                 RouteTarget(domain=d, priority=0.5, reason="secondary affinity")
                 for d in result.secondary
             ],
+            fallback_used=is_fallback,
             reason=result.reason,
         )
         return self._log_decision(event, decision)

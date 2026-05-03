@@ -215,11 +215,11 @@ class DomainClassifier:
             primary.append("team_retention")
             secondary.append("project_decision")
 
-        if len(primary) == 1 and not secondary:
-            secondary = [
-                d for d in _SECONDARY_AFFINITY.get(primary[0], [])  # type: ignore[arg-type]
-                if d not in primary
-            ]
+        if not secondary:
+            for p in primary:
+                for d in _SECONDARY_AFFINITY.get(p, []):  # type: ignore[arg-type]
+                    if d not in primary and d not in secondary:
+                        secondary.append(d)
 
         matched = [kw for kws, _ in _KEYWORD_RULES for kw in kws if kw.lower() in lowered]
         max_score = ranked[0][1] if ranked[0][1] > 0 else 0
