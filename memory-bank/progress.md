@@ -395,3 +395,40 @@
 - 验证：`python -m pytest tests\unit\app\test_dependencies.py::TestDependencies::test_get_embedding_client_returns_none_when_provider_init_fails tests\unit\domains\team_retention\test_handler_llm_embedding.py::test_embedding_index_failure_does_not_break_memory_ingest tests\unit\domains\team_retention\test_retriever.py::test_retrieve_falls_back_when_vector_embedding_fails tests\unit\api\test_health_api.py -q -p no:cacheprovider`，5 passed。
 - 验证：`python -m pytest tests\unit\llm tests\unit\app tests\unit\api tests\unit\domains\team_retention tests\unit\core\test_service.py -q -p no:cacheprovider`，129 passed。
 - 验证：`python -m compileall src tests`，通过。
+
+## 2026-05-03 Rerank 服务接入进展
+
+- 已按“模型已在独立服务器部署，LarkMemory 只负责接入”的边界新增 rerank 服务客户端，不在本进程配置 GPU/device 或加载模型。
+- 新增 LLM 层 rerank 抽象：
+  - `src/llm/rerank_base.py` 定义 `RerankDocument`、`RerankScore`、`RerankResult`、`RerankResponse` 和 `RerankProvider`。
+  - `src/llm/rerank_client.py` 负责输入校验、调用 provider 打分并按分数排序。
+  - `src/llm/http_rerank_provider.py` 通过 HTTP `POST` 接入已部署 rerank 服务，支持 `results` 和 `scores` 两种常见响应格式。
+- 新增 HTTP API：
+  - `POST /api/v1/rerank`，输入 query、documents、top_k，输出按相关性排序的文档结果。
+  - `src/schemas/rerank.py` 定义请求和响应 schema。
+- 已扩展 app 配置和依赖注入：
+  - 新增 `LARKMEMORY_ENABLE_RERANK`、`LARKMEMORY_RERANK_PROVIDER`、`LARKMEMORY_RERANK_BASE_URL`、`LARKMEMORY_RERANK_ENDPOINT`、`LARKMEMORY_RERANK_API_KEY`、`LARKMEMORY_RERANK_MODEL`、`LARKMEMORY_RERANK_TIMEOUT`。
+  - `get_rerank_client()` 在配置完整时创建 `RerankClient`；未配置时返回 `None`。
+  - `/health` 已增加 `rerank.enabled`、`rerank.available`、`rerank.provider`、`rerank.model`。
+- 已检查 embedding 服务接入方式：
+  - `LARKMEMORY_EMBEDDING_PROVIDER=http` 已作为 `openai_compatible` 的别名接入，适合模型在独立服务器暴露 OpenAI-compatible `/v1/embeddings` 的场景。
+  - 服务器部署场景不需要配置 `LARKMEMORY_EMBEDDING_DEVICE`；该配置只属于可选的进程内模型加载路径。
+- 新增测试覆盖：
+  - `tests/unit/llm/test_rerank_client.py`
+  - `tests/unit/llm/test_http_rerank_provider.py`
+  - `tests/unit/api/test_rerank_api.py`
+  - `tests/unit/app/test_dependencies.py` 中新增 rerank client 装配和 embedding `http` provider alias 覆盖。
+  - `tests/unit/api/test_health_api.py` 中新增 rerank health 状态覆盖。
+- 验证：`python -m pytest tests\unit\llm\test_rerank_client.py tests\unit\llm\test_http_rerank_provider.py tests\unit\api\test_rerank_api.py -q -p no:cacheprovider`，8 passed。
+- 验证：`python -m pytest tests\unit\llm tests\unit\app tests\unit\api tests\unit\domains\team_retention tests\unit\core\test_service.py -q -p no:cacheprovider`，140 passed。
+- 验证：`python -m compileall src tests`，通过。
+
+## 2026-05-03 Rerank API 错误映射修复
+
+- 修复 `/api/v1/rerank` 对上游模型服务异常缺少错误映射的问题。
+- `rerank_client` 不可用时仍返回 `503 rerank client is not available`。
+- `rerank_client.rerank()` 调用过程中发生 HTTP 服务不可用、超时、响应解析异常或 provider/client 其他异常时，API 现在记录 warning 并返回 `502 rerank upstream failed`，避免冒泡为通用 500。
+- 新增 `tests/unit/api/test_rerank_api.py::TestRerankApi::test_rerank_api_maps_upstream_failure_to_502` 覆盖。
+- 验证：`python -m pytest tests\unit\api\test_rerank_api.py -q -p no:cacheprovider`，3 passed。
+- 验证：`python -m pytest tests\unit\llm tests\unit\app tests\unit\api tests\unit\domains\team_retention tests\unit\core\test_service.py -q -p no:cacheprovider`，141 passed。
+- 验证：`python -m compileall src tests`，通过。

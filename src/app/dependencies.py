@@ -9,9 +9,11 @@ from src.domains.project_decision import ProjectDecisionDomainHandler
 from src.domains.team_retention.handler import TeamRetentionDomainHandler
 from src.llm import (
     EmbeddingClient,
+    HttpRerankProvider,
     LLMClient,
     LocalSentenceTransformersEmbeddingProvider,
     OpenAICompatibleEmbeddingProvider,
+    RerankClient,
 )
 from src.storage import EmbeddingStore, EventStore, MemoryCoreStore, TeamRetentionStore
 
@@ -68,7 +70,7 @@ def get_embedding_client() -> EmbeddingClient | None:
     if not settings.enable_embedding:
         return None
     try:
-        if settings.embedding_provider == "openai_compatible":
+        if settings.embedding_provider in {"openai_compatible", "http"}:
             if not settings.embedding_api_key or not settings.embedding_model:
                 return None
             provider = OpenAICompatibleEmbeddingProvider(
@@ -101,6 +103,32 @@ def get_embedding_client() -> EmbeddingClient | None:
         )
         return None
     return EmbeddingClient(provider)
+
+
+@lru_cache(maxsize=1)
+def get_rerank_client() -> RerankClient | None:
+    """按配置返回 rerank client；服务未配置或不可用时返回 None。"""
+    settings = get_settings()
+    if not settings.enable_rerank:
+        return None
+    if settings.rerank_provider != "http" or not settings.rerank_base_url:
+        return None
+    try:
+        provider = HttpRerankProvider(
+            base_url=settings.rerank_base_url,
+            endpoint_path=settings.rerank_endpoint_path,
+            model=settings.rerank_model,
+            api_key=settings.rerank_api_key,
+            timeout=settings.rerank_timeout,
+        )
+    except Exception:
+        logger.warning(
+            "action=rerank_client_unavailable provider=%s",
+            settings.rerank_provider,
+            exc_info=True,
+        )
+        return None
+    return RerankClient(provider, model_name=settings.rerank_model or settings.rerank_base_url)
 
 
 @lru_cache(maxsize=1)
@@ -153,5 +181,6 @@ def reset_dependency_cache() -> None:
     get_team_retention_store.cache_clear()
     get_embedding_store.cache_clear()
     get_embedding_client.cache_clear()
+    get_rerank_client.cache_clear()
     get_llm_client.cache_clear()
     get_memory_service.cache_clear()

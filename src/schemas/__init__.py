@@ -22,6 +22,12 @@ from .benchmark import (
 from .ingest import EventContextPayload, IngestRequest, IngestResponse
 from .proactive import ProactiveResponse, ProactiveSuggestion
 from .retrieve import MemoryHit, RetrieveRequest, RetrieveResponse
+from .rerank import (
+    RerankDocumentPayload,
+    RerankRequest,
+    RerankResponsePayload,
+    RerankResultPayload,
+)
 from .update import MemoryUpdateRequest, MemoryUpdateResponse
 
 __all__ = [
@@ -52,6 +58,10 @@ __all__ = [
     "ProactiveSuggestion",
     "RetrieveRequest",
     "RetrieveResponse",
+    "RerankDocumentPayload",
+    "RerankRequest",
+    "RerankResponsePayload",
+    "RerankResultPayload",
     "ScopeType",
     "SourceType",
     "TokenUsage",

@@ -13,6 +13,7 @@ from src.app.dependencies import (
     get_event_store,
     get_llm_client,
     get_memory_service,
+    get_rerank_client,
     get_memory_core_store,
     get_settings,
     reset_dependency_cache,
@@ -128,6 +129,28 @@ class TestDependencies(unittest.TestCase):
         self.assertEqual(provider_cls.call_args.kwargs["model"], "Qwen/Qwen3-Embedding-4B")
         self.assertEqual(provider_cls.call_args.kwargs["dimensions"], 1024)
 
+    def test_get_embedding_client_accepts_http_provider_alias(self) -> None:
+        db_path = str(self.temp_dir / "embedding-http-client.db")
+        with patch.dict(
+            os.environ,
+            {
+                "LARKMEMORY_SQLITE_PATH": db_path,
+                "LARKMEMORY_ENABLE_EMBEDDING": "true",
+                "LARKMEMORY_EMBEDDING_PROVIDER": "http",
+                "LARKMEMORY_EMBEDDING_API_KEY": "test-key",
+                "LARKMEMORY_EMBEDDING_MODEL": "Qwen/Qwen3-Embedding-4B",
+                "LARKMEMORY_EMBEDDING_BASE_URL": "http://127.0.0.1:8001/v1",
+            },
+            clear=True,
+        ):
+            reset_dependency_cache()
+            with patch("src.app.dependencies.OpenAICompatibleEmbeddingProvider") as provider_cls:
+                client = get_embedding_client()
+
+        self.assertIsNotNone(client)
+        provider_cls.assert_called_once()
+        self.assertEqual(provider_cls.call_args.kwargs["base_url"], "http://127.0.0.1:8001/v1")
+
     def test_get_embedding_client_builds_local_sentence_transformers_client(self) -> None:
         db_path = str(self.temp_dir / "local-embedding-client.db")
         with patch.dict(
@@ -179,6 +202,40 @@ class TestDependencies(unittest.TestCase):
                 side_effect=ImportError("Missing dependency: sentence-transformers"),
             ):
                 self.assertIsNone(get_embedding_client())
+
+    def test_get_rerank_client_builds_http_client(self) -> None:
+        db_path = str(self.temp_dir / "rerank-client.db")
+        with patch.dict(
+            os.environ,
+            {
+                "LARKMEMORY_SQLITE_PATH": db_path,
+                "LARKMEMORY_ENABLE_RERANK": "true",
+                "LARKMEMORY_RERANK_PROVIDER": "http",
+                "LARKMEMORY_RERANK_BASE_URL": "http://127.0.0.1:9000",
+                "LARKMEMORY_RERANK_ENDPOINT": "/rerank",
+                "LARKMEMORY_RERANK_MODEL": "bge-reranker-v2-m3",
+                "LARKMEMORY_RERANK_API_KEY": "test-key",
+            },
+            clear=True,
+        ):
+            reset_dependency_cache()
+            with patch("src.app.dependencies.HttpRerankProvider") as provider_cls:
+                client = get_rerank_client()
+
+        self.assertIsNotNone(client)
+        provider_cls.assert_called_once()
+        self.assertEqual(provider_cls.call_args.kwargs["base_url"], "http://127.0.0.1:9000")
+        self.assertEqual(provider_cls.call_args.kwargs["endpoint_path"], "/rerank")
+        self.assertEqual(provider_cls.call_args.kwargs["model"], "bge-reranker-v2-m3")
+
+    def test_get_rerank_client_returns_none_when_disabled_or_unconfigured(self) -> None:
+        with patch.dict(os.environ, {"LARKMEMORY_ENABLE_RERANK": "false"}, clear=True):
+            reset_dependency_cache()
+            self.assertIsNone(get_rerank_client())
+
+        with patch.dict(os.environ, {"LARKMEMORY_ENABLE_RERANK": "true"}, clear=True):
+            reset_dependency_cache()
+            self.assertIsNone(get_rerank_client())
 
     def test_get_llm_client_returns_none_when_disabled(self) -> None:
         with patch.dict(os.environ, {"LARKMEMORY_ENABLE_LLM": "false"}, clear=True):

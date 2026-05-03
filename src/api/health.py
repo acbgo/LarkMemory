@@ -11,9 +11,10 @@ from src.app.dependencies import (
     get_event_store,
     get_llm_client,
     get_memory_core_store,
+    get_rerank_client,
     get_settings,
 )
-from src.llm import LLMClient
+from src.llm import LLMClient, RerankClient
 from src.llm import EmbeddingClient
 from src.storage import EmbeddingStore, EventStore, MemoryCoreStore
 
@@ -37,6 +38,7 @@ def health_check(
     memory_core_store: MemoryCoreStore = Depends(get_memory_core_store),
     embedding_store: EmbeddingStore | None = Depends(get_embedding_store),
     embedding_client: EmbeddingClient | None = Depends(get_embedding_client),
+    rerank_client: RerankClient | None = Depends(get_rerank_client),
     llm_client: LLMClient | None = Depends(get_llm_client),
 ) -> dict[str, Any]:
     """汇总配置、存储、嵌入和 LLM 可用性，返回 `/health` 接口响应字典。"""
@@ -65,5 +67,11 @@ def health_check(
         "llm": {
             "enabled": settings.enable_llm,
             "available": llm_client is not None,
+        },
+        "rerank": {
+            "enabled": settings.enable_rerank,
+            "available": rerank_client is not None,
+            "provider": settings.rerank_provider if settings.enable_rerank else None,
+            "model": settings.rerank_model if settings.enable_rerank else None,
         },
     }

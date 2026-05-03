@@ -36,12 +36,15 @@ class TestHealthApi(unittest.TestCase):
         self.assertIn("storage", body)
         self.assertIn("embedding", body)
         self.assertIn("llm", body)
+        self.assertIn("rerank", body)
         self.assertFalse(body["embedding"]["enabled"])
         self.assertFalse(body["embedding"]["available"])
         self.assertFalse(body["embedding"]["vector_store_available"])
         self.assertFalse(body["embedding"]["embedding_client_available"])
         self.assertFalse(body["llm"]["enabled"])
         self.assertFalse(body["llm"]["available"])
+        self.assertFalse(body["rerank"]["enabled"])
+        self.assertFalse(body["rerank"]["available"])
 
     def test_health_splits_embedding_store_and_client_status(self) -> None:
         db_path = str(self.temp_dir / "health-embedding.db")

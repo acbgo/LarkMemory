@@ -35,6 +35,13 @@ class AppSettings:
     embedding_trust_remote_code: bool = True
     embedding_timeout: float = 60.0
     embedding_max_retries: int = 2
+    enable_rerank: bool = False
+    rerank_provider: str = "http"
+    rerank_base_url: str | None = None
+    rerank_endpoint_path: str = "/rerank"
+    rerank_api_key: str | None = None
+    rerank_model: str | None = None
+    rerank_timeout: float = 60.0
     log_level: str = "INFO"
     log_dir: str = "logs"
     log_file: str = "larkmemory.log"
@@ -123,6 +130,13 @@ def load_settings() -> AppSettings:
         embedding_trust_remote_code=_env_bool("LARKMEMORY_EMBEDDING_TRUST_REMOTE_CODE", True),
         embedding_timeout=_env_float("LARKMEMORY_EMBEDDING_TIMEOUT", 60.0),
         embedding_max_retries=_env_int("LARKMEMORY_EMBEDDING_MAX_RETRIES", 2),
+        enable_rerank=_env_bool("LARKMEMORY_ENABLE_RERANK", False),
+        rerank_provider=_env_str("LARKMEMORY_RERANK_PROVIDER", "http") or "http",
+        rerank_base_url=_env_str("LARKMEMORY_RERANK_BASE_URL", None),
+        rerank_endpoint_path=_env_str("LARKMEMORY_RERANK_ENDPOINT", "/rerank") or "/rerank",
+        rerank_api_key=_env_str("LARKMEMORY_RERANK_API_KEY", None),
+        rerank_model=_env_str("LARKMEMORY_RERANK_MODEL", None),
+        rerank_timeout=_env_float("LARKMEMORY_RERANK_TIMEOUT", 60.0),
         log_level=_env_str("LARKMEMORY_LOG_LEVEL", "INFO") or "INFO",
         log_dir=_env_str("LARKMEMORY_LOG_DIR", "logs") or "logs",
         log_file=_env_str("LARKMEMORY_LOG_FILE", "larkmemory.log")

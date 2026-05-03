@@ -15,6 +15,7 @@ ROUTER_MODULES = [
     "src.api.ingest",
     "src.api.retrieve",
     "src.api.embeddings",
+    "src.api.rerank",
     "src.api.update",
     "src.api.proactive",
     "src.api.benchmark",
