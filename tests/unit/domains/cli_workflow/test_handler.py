@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import shutil
+import uuid
+from pathlib import Path
+
 import pytest
 from src.core.domain_handler import DomainRuntime
 from src.domains.cli_workflow.handler import CLIWorkflowDomainHandler
@@ -12,8 +16,18 @@ from src.utils.time import utc_now_iso
 
 
 @pytest.fixture
-def stores(tmp_path):
-    db_path = str(tmp_path / "test_cli.db")
+def temp_dir():
+    root = Path.cwd() / ".tmp-tests"
+    root.mkdir(exist_ok=True)
+    d = root / f"cli-workflow-handler-{uuid.uuid4().hex}"
+    d.mkdir()
+    yield d
+    shutil.rmtree(d, ignore_errors=True)
+
+
+@pytest.fixture
+def stores(temp_dir):
+    db_path = str(temp_dir / "test_cli.db")
     event_store = EventStore(db_path)
     event_store.create_table()
     memory_store = MemoryCoreStore(db_path)
@@ -111,12 +125,10 @@ class TestHandlerIngest:
         handler = CLIWorkflowDomainHandler(memory_store)
         add = _add_memory(memory_store)
 
-        # First: shell recording
         shell_event = make_shell_event("lark project deploy --env prod")
         runtime_shell = DomainRuntime(memory_store=memory_store, add_memory=add)
         result_shell = handler.ingest_event(shell_event, runtime_shell)
 
-        # Then: openclaw explicit teaching
         oc_event = NormalizedEvent(
             event_id=event_id(),
             event_type="memory_feedback",
@@ -129,7 +141,6 @@ class TestHandlerIngest:
         runtime_oc = DomainRuntime(memory_store=memory_store, add_memory=add)
         result_oc = handler.ingest_event(oc_event, runtime_oc)
 
-        # Old shell memory should be superseded
         old_core = memory_store.get_memory(result_shell.memory_ids[0])
         assert old_core["status"] == "superseded"
         assert old_core["superseded_by"] == result_oc.memory_ids[0]
@@ -170,7 +181,6 @@ class TestHandlerRetrieve:
             user_id="u_2",
         )
         results = handler.retrieve(query, top_k=5)
-        # u_2 shouldn't see u_1's memories (personal scope)
         assert len(results) == 0
 
     def test_retrieve_filters_by_project(self, stores):

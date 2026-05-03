@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import shutil
+import uuid
 from pathlib import Path
 
 import pytest
@@ -13,6 +15,16 @@ from src.sources.cli.hook import (
     is_installed,
     uninstall,
 )
+
+
+@pytest.fixture
+def temp_dir():
+    root = Path.cwd() / ".tmp-tests"
+    root.mkdir(exist_ok=True)
+    d = root / f"cli-hook-{uuid.uuid4().hex}"
+    d.mkdir()
+    yield d
+    shutil.rmtree(d, ignore_errors=True)
 
 
 class TestDetectShell:
@@ -78,10 +90,23 @@ class TestHookTemplates:
         template = get_hook_template("bash")
         assert "/dev/null" in template
 
+    def test_bash_template_has_completion_function(self):
+        template = get_hook_template("bash")
+        assert "_lark_memory_complete" in template
+        assert "complete -D" in template
+
+    def test_zsh_template_has_completion_function(self):
+        template = get_hook_template("zsh")
+        assert "_lark_memory_complete_zsh" in template
+        assert "compdef" in template
+
 
 class TestInstallUninstall:
-    def test_install_creates_config_with_markers(self, tmp_path, monkeypatch):
-        rc_file = tmp_path / ".bashrc"
+    def _rc_file(self, temp_dir: Path) -> Path:
+        return temp_dir / ".bashrc"
+
+    def test_install_creates_config_with_markers(self, temp_dir, monkeypatch):
+        rc_file = self._rc_file(temp_dir)
         monkeypatch.setattr(
             "src.sources.cli.hook.get_config_path",
             lambda shell=None: rc_file,
@@ -92,8 +117,8 @@ class TestInstallUninstall:
         assert HOOK_MARKER_START in content
         assert HOOK_MARKER_END in content
 
-    def test_uninstall_removes_marker_block(self, tmp_path, monkeypatch):
-        rc_file = tmp_path / ".bashrc"
+    def test_uninstall_removes_marker_block(self, temp_dir, monkeypatch):
+        rc_file = self._rc_file(temp_dir)
         rc_file.write_text(
             "export PATH=/usr/local/bin:$PATH\n\n"
             + get_hook_template("bash")
@@ -112,8 +137,8 @@ class TestInstallUninstall:
         assert "export PATH" in content
         assert "export EDITOR" in content
 
-    def test_install_is_idempotent(self, tmp_path, monkeypatch):
-        rc_file = tmp_path / ".bashrc"
+    def test_install_is_idempotent(self, temp_dir, monkeypatch):
+        rc_file = self._rc_file(temp_dir)
         monkeypatch.setattr(
             "src.sources.cli.hook.get_config_path",
             lambda shell=None: rc_file,
@@ -124,8 +149,8 @@ class TestInstallUninstall:
         assert content.count(HOOK_MARKER_START) == 1
         assert content.count(HOOK_MARKER_END) == 1
 
-    def test_uninstall_nonexistent_config(self, tmp_path, monkeypatch):
-        rc_file = tmp_path / ".nonexistent"
+    def test_uninstall_nonexistent_config(self, temp_dir, monkeypatch):
+        rc_file = temp_dir / ".nonexistent"
         monkeypatch.setattr(
             "src.sources.cli.hook.get_config_path",
             lambda shell=None: rc_file,
@@ -133,8 +158,8 @@ class TestInstallUninstall:
         ok, msg = uninstall("bash")
         assert ok
 
-    def test_uninstall_without_hook_block(self, tmp_path, monkeypatch):
-        rc_file = tmp_path / ".bashrc"
+    def test_uninstall_without_hook_block(self, temp_dir, monkeypatch):
+        rc_file = self._rc_file(temp_dir)
         rc_file.write_text("export PATH=/usr/bin:$PATH\n", encoding="utf-8")
         monkeypatch.setattr(
             "src.sources.cli.hook.get_config_path",
@@ -145,8 +170,8 @@ class TestInstallUninstall:
         content = rc_file.read_text(encoding="utf-8")
         assert "export PATH" in content
 
-    def test_is_installed_true(self, tmp_path, monkeypatch):
-        rc_file = tmp_path / ".bashrc"
+    def test_is_installed_true(self, temp_dir, monkeypatch):
+        rc_file = self._rc_file(temp_dir)
         rc_file.write_text(get_hook_template("bash"), encoding="utf-8")
         monkeypatch.setattr(
             "src.sources.cli.hook.get_config_path",
@@ -154,8 +179,8 @@ class TestInstallUninstall:
         )
         assert is_installed("bash") is True
 
-    def test_is_installed_false(self, tmp_path, monkeypatch):
-        rc_file = tmp_path / ".bashrc"
+    def test_is_installed_false(self, temp_dir, monkeypatch):
+        rc_file = self._rc_file(temp_dir)
         rc_file.write_text("export PATH=/usr/bin:$PATH\n", encoding="utf-8")
         monkeypatch.setattr(
             "src.sources.cli.hook.get_config_path",
@@ -163,8 +188,8 @@ class TestInstallUninstall:
         )
         assert is_installed("bash") is False
 
-    def test_install_preserves_existing_content(self, tmp_path, monkeypatch):
-        rc_file = tmp_path / ".bashrc"
+    def test_install_preserves_existing_content(self, temp_dir, monkeypatch):
+        rc_file = self._rc_file(temp_dir)
         rc_file.write_text("export PATH=/usr/bin:$PATH\n", encoding="utf-8")
         monkeypatch.setattr(
             "src.sources.cli.hook.get_config_path",
@@ -175,8 +200,8 @@ class TestInstallUninstall:
         assert "export PATH" in content
         assert HOOK_MARKER_START in content
 
-    def test_reinstall_replaces_old_block(self, tmp_path, monkeypatch):
-        rc_file = tmp_path / ".bashrc"
+    def test_reinstall_replaces_old_block(self, temp_dir, monkeypatch):
+        rc_file = self._rc_file(temp_dir)
         rc_file.write_text(
             "export PATH=/usr/bin:$PATH\n\n"
             "# >>> LarkMemory hook >>>\n"

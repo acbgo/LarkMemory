@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import shutil
+import uuid
+from pathlib import Path
+
 import pytest
 from src.domains.cli_workflow.models import CLIWorkflowMemory, ParameterBinding
 from src.domains.cli_workflow.retriever import CLIWorkflowRetriever, CLIWorkflowSearchResult
@@ -8,12 +12,21 @@ from src.storage.memory_core_store import MemoryCoreStore
 
 
 @pytest.fixture
-def memory_store_with_data(tmp_path):
-    db_path = str(tmp_path / "test_retriever.db")
+def temp_dir():
+    root = Path.cwd() / ".tmp-tests"
+    root.mkdir(exist_ok=True)
+    d = root / f"cli-workflow-retriever-{uuid.uuid4().hex}"
+    d.mkdir()
+    yield d
+    shutil.rmtree(d, ignore_errors=True)
+
+
+@pytest.fixture
+def memory_store_with_data(temp_dir):
+    db_path = str(temp_dir / "test_retriever.db")
     store = MemoryCoreStore(db_path)
     store.create_table()
 
-    # Insert test memories
     memories = [
         CLIWorkflowMemory(
             workflow_id="mem-shell-1",
@@ -98,7 +111,6 @@ class TestCLIWorkflowRetriever:
         retriever = CLIWorkflowRetriever(memory_store_with_data)
         query = RetrievalQuery(query_text="", user_id="u_1")
         results = retriever.retrieve(query, limit=10)
-        # Should still return memories for the user
         assert len(results) >= 1
 
     def test_search_result_to_ranked_memory(self, memory_store_with_data):
@@ -135,5 +147,4 @@ class TestCLIWorkflowRetriever:
         query = RetrievalQuery(query_text="lark project", user_id="u_1")
         results = retriever.retrieve(query, limit=10)
         assert len(results) >= 2
-        # deploy (42 executions) should rank higher than build (15 executions)
         assert results[0].score >= results[1].score

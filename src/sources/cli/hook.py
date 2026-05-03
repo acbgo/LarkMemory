@@ -32,6 +32,18 @@ _lark_precmd() {
     _LARK_LAST_CMD=""
 }
 
+_lark_memory_complete() {
+    local cur="${COMP_WORDS[COMP_CWORD]}"
+    local line="${COMP_LINE}"
+    local result
+    result=$(lark-memory complete -- "$line" "$cur" 2>/dev/null)
+    if [ -n "$result" ]; then
+        local IFS=$'\n'
+        COMPREPLY=($(compgen -W "$result" -- "$cur"))
+    fi
+    return 0
+}
+
 trap '_lark_preexec "$BASH_COMMAND"' DEBUG
 
 if [ -z "${PROMPT_COMMAND-}" ]; then
@@ -42,6 +54,8 @@ else
         *) PROMPT_COMMAND="_lark_precmd;${PROMPT_COMMAND}" ;;
     esac
 fi
+
+complete -D -F _lark_memory_complete -o default 2>/dev/null || true
 # <<< LarkMemory hook <<<
 """
 
@@ -70,11 +84,30 @@ _lark_precmd() {
     _LARK_LAST_CMD=""
 }
 
+_lark_memory_complete_zsh() {
+    local line="${BUFFER}"
+    local cur="${words[$CURRENT]}"
+    local result
+    result=$(lark-memory complete -- "$line" "$cur" 2>/dev/null)
+    if [ -n "$result" ]; then
+        local -a candidates
+        candidates=("${(@f)result}")
+        compadd -a -- candidates
+    fi
+    return 0
+}
+
+_lark_memory_complete_wrapper() {
+    _lark_memory_complete_zsh
+}
+
 autoload -Uz add-zsh-hook 2>/dev/null
 if command -v add-zsh-hook >/dev/null 2>&1; then
     add-zsh-hook preexec _lark_preexec
     add-zsh-hook precmd _lark_precmd
 fi
+
+compdef _lark_memory_complete_wrapper -first- 2>/dev/null || true
 # <<< LarkMemory hook <<<
 """
 

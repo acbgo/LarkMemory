@@ -21,6 +21,8 @@ class TestBuildEvent:
         assert event["context"]["user_id"] == "testuser"
         assert event["context"]["scope"] == "user"
         assert event["content_text"] == "lark project deploy --env prod"
+        assert event["payload"]["command"] == "lark"
+        assert event["payload"]["args"] == ["project", "deploy", "--env", "prod"]
         assert event["payload"]["exit_code"] == 0
         assert event["payload"]["cwd"] == "/home/testuser/projects/backend"
         assert event["payload"]["duration_ms"] == 1200
@@ -51,6 +53,12 @@ class TestBuildEvent:
         event = build_event("git push")
         assert event["event_id"].startswith("evt-")
         assert len(event["event_id"]) > 10
+
+    def test_payload_has_command_and_args(self, monkeypatch):
+        monkeypatch.setenv("USER", "testuser")
+        event = build_event("git push origin main")
+        assert event["payload"]["command"] == "git"
+        assert event["payload"]["args"] == ["push", "origin", "main"]
 
     def test_event_has_occurred_at(self, monkeypatch):
         monkeypatch.setenv("USER", "testuser")

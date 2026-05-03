@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 import urllib.request
 from typing import Any
 
@@ -24,13 +23,29 @@ def _post_retrieve(payload: dict[str, Any]) -> list[dict[str, Any]]:
     )
     resp = urllib.request.urlopen(req, timeout=5)
     body = json.loads(resp.read().decode("utf-8"))
-    return body.get("results") or body.get("ranked_memories") or []
+    return body.get("results") or []
 
 
-def _extract_workflow(memory: dict[str, Any]) -> dict[str, Any] | None:
-    item = memory.get("item") or memory
-    extra = item.get("extra", {}) if isinstance(item, dict) else {}
-    return extra.get("workflow")
+def _hit_to_workflow(hit: dict[str, Any]) -> dict[str, Any] | None:
+    """Convert a MemoryHit response dict to CLI workflow memory dict.
+
+    The retrieve API returns MemoryHit which has content_text, tags, entities
+    but no extra field. We use CLIWorkflowMemory.from_memory_core() to
+    reconstruct domain data from those available fields.
+    """
+    from src.domains.cli_workflow.models import CLIWorkflowMemory
+
+    if hit.get("domain") != "cli_workflow":
+        return None
+    try:
+        wf = CLIWorkflowMemory.from_memory_core(hit)
+        return wf.to_dict()
+    except Exception:
+        return None
+
+
+def _hit_score(hit: dict[str, Any]) -> float:
+    return float(hit.get("score", 0))
 
 
 def _format_suggest(results: list[dict[str, Any]]) -> str:
@@ -39,7 +54,7 @@ def _format_suggest(results: list[dict[str, Any]]) -> str:
 
     lines: list[str] = []
     for i, result in enumerate(results):
-        wf = _extract_workflow(result)
+        wf = _hit_to_workflow(result)
         if not wf:
             continue
         lines.append("")
@@ -93,7 +108,7 @@ def run_suggest(
             results = [
                 r for r in results
                 if command.lower() in str(
-                    (_extract_workflow(r) or {}).get("command_name", "")
+                    (_hit_to_workflow(r) or {}).get("command_name", "")
                 ).lower()
             ]
         return _format_suggest(results)
@@ -126,7 +141,7 @@ def run_complete(line: str, cur: str, *, cwd: str | None = None) -> str:
     seen: set[str] = set()
 
     for result in results:
-        wf = _extract_workflow(result)
+        wf = _hit_to_workflow(result)
         if not wf:
             continue
         for pb in sorted(
@@ -134,10 +149,8 @@ def run_complete(line: str, cur: str, *, cwd: str | None = None) -> str:
             key=lambda b: -b.get("frequency", 0),
         ):
             flag = f"--{pb['param_name']}"
-            if flag not in seen:
-                # Only suggest if the flag is not already on the command line
-                if flag not in line:
-                    seen.add(flag)
-                    candidates.append(f"{flag} {pb.get('param_value', '')}")
+            if flag not in seen and flag not in line:
+                seen.add(flag)
+                candidates.append(f"{flag} {pb.get('param_value', '')}")
 
     return "\n".join(candidates[:10])

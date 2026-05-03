@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import subprocess
 import urllib.request
 from pathlib import Path
@@ -9,6 +10,16 @@ from typing import Any
 
 from src.utils.ids import event_id as new_event_id
 from src.utils.time import utc_now_iso
+
+
+def _parse_command_tokens(command_text: str) -> tuple[str, list[str]]:
+    try:
+        tokens = shlex.split(command_text)
+    except ValueError:
+        tokens = command_text.split()
+    if not tokens:
+        return "", []
+    return tokens[0], tokens[1:]
 
 
 def _get_api_base() -> str:
@@ -66,6 +77,7 @@ def build_event(
     duration_ms: int = 0,
 ) -> dict[str, Any]:
     success = exit_code == 0
+    cmd_name, cmd_args = _parse_command_tokens(command)
     return {
         "event_id": new_event_id(),
         "event_type": "command_failed" if not success else "command_finished",
@@ -79,6 +91,8 @@ def build_event(
         },
         "content_text": command,
         "payload": {
+            "command": cmd_name,
+            "args": cmd_args,
             "exit_code": exit_code,
             "cwd": cwd,
             "duration_ms": duration_ms,
