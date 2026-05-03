@@ -13,7 +13,7 @@ LarkMemory 是飞书 AI 比赛 OpenClaw 赛道下的企业级长程协作 Memory
 5. `POST /api/v1/update` 支持 expire、forget、supersede、confidence、importance、feedback。
 6. `GET /health` 检查 SQLite event/memory store 可用性。
 
-当前仍是本地 Demo 阶段，暂不接真实飞书 API、真实 LLM、向量数据库、生产级认证权限和完整主动推送调度。
+当前已接入真实飞书 API（WebSocket 消息监听、消息发送、卡片交互）、真实 LLM（OpenAI-compatible 抽取/Embedding/Rerank）、向量数据库（ChromaDB）和主动推送调度（team_retention 复习提醒）。暂不涉及生产级认证权限。
 
 ## 环境准备
 
@@ -128,7 +128,7 @@ curl -X POST http://127.0.0.1:8765/api/v1/retrieve \
 - `POST /api/v1/memories/search`：检索别名。
 - `POST /api/v1/update`：更新记忆状态或分数。
 - `POST /api/v1/memories/update`：更新别名。
-- `GET /api/v1/proactive`：当前返回空建议，主动推送编排尚未接入。
+- `GET /api/v1/proactive`：返回主动推送建议，当前已接入 team_retention 复习提醒。
 - `POST /api/v1/benchmark/run`、`GET /api/v1/benchmark/{run_id}`：评测 API 骨架。
 
 ## 常用环境变量
@@ -143,6 +143,6 @@ curl -X POST http://127.0.0.1:8765/api/v1/retrieve \
 
 ## 当前注意事项
 
-- `project_decision` 当前使用规则抽取 fallback，不依赖真实 LLM。
+- `project_decision` 支持规则抽取和可选 LLM 抽取双路径。
 - `/api/v1/retrieve` 当前走 `MemoryCore` fallback 召回，领域专用 retriever 已实现但尚未并入统一检索编排。
-- `/api/v1/proactive` 当前未接入真实主动推送逻辑。
+- `/api/v1/proactive` 已接入 team_retention 复习提醒主动推送。

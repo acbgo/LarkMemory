@@ -190,7 +190,7 @@
 
 处理逻辑：
 1. 通过依赖获取 `MemoryCoreStore` 和可选 LLM Client。
-2. 当前实现暂不使用 LLM Client。
+2. 启用 LLM 时走 IntentAnalyzer → QueryRewriter → Reranker 检索管线。
 3. 如果 `query_text` 去空白后为空，抛出 HTTP 422。
 4. 调用 `_retrieve_fallback` 返回检索结果。
 

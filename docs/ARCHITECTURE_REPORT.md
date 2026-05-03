@@ -462,9 +462,8 @@ MemoryHit
 
 当前状态：
 
-- 默认关闭。
-- IntentAnalyzer、QueryRewriter、ProjectDecisionExtractor 都有 LLM 接入位置。
-- `ProjectDecisionExtractor._extract_with_llm()` 目前未实现实际抽取。
+- 已接入，通过 `LARKMEMORY_ENABLE_LLM` 控制是否启用。
+- IntentAnalyzer、QueryRewriter、ProjectDecisionExtractor 均已实现 LLM 接入。
 
 ### 3.10 `src/utils/`：通用工具
 
@@ -640,9 +639,9 @@ POST /api/v1/update
 | 请求/响应 | Pydantic | API schema 已存在 |
 | 内部模型 | dataclass | Event、MemoryCore、retrieval/domain 模型 |
 | 存储 | SQLite | EventStore、MemoryCoreStore 已落地 |
-| 向量索引 | Chroma 相关封装 | 可选，默认关闭 |
-| LLM | OpenAI-compatible client | 可选，默认关闭，部分业务未实现 LLM 逻辑 |
-| 检索 | 规则意图、query rewrite、rerank | 部分接入，domain retrieval/fusion 尚未接入主链路 |
+| 向量索引 | Chroma 相关封装 | 已接入，默认关闭 |
+| LLM | OpenAI-compatible client | 已接入，支持抽取/Embedding/Rerank |
+| 检索 | 规则意图、query rewrite、rerank | 已接入主链路，含向量混合检索 |
 | 测试 | pytest | 单测覆盖 app/api/core/domain/retrieval/storage/utils |
 | 日志 | Python logging + request middleware | 已有结构化日志倾向 |
 
