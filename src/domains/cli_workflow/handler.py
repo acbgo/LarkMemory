@@ -29,7 +29,7 @@ class CLIWorkflowDomainHandler:
         version_manager: CLIWorkflowVersionManager | None = None,
     ) -> None:
         self.memory_store = memory_store
-        self.extractor = extractor or CLIWorkflowExtractor(llm_client=llm_client)
+        self.extractor = extractor or CLIWorkflowExtractor(llm_client=llm_client, memory_store=memory_store)
         self.retriever = retriever or CLIWorkflowRetriever(memory_store)
         self.version_manager = version_manager or CLIWorkflowVersionManager(memory_store)
 

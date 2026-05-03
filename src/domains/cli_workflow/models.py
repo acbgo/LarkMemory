@@ -76,6 +76,7 @@ class ParameterBinding:
     param_name: str
     param_value: str
     frequency: int = 1
+    semantics: str | None = None
 
 
 @dataclass(slots=True)
@@ -221,7 +222,12 @@ class CLIWorkflowMemory:
             "project_id": self.project_id,
             "repo_id": self.repo_id,
             "parameter_bindings": [
-                {"param_name": pb.param_name, "param_value": pb.param_value, "frequency": pb.frequency}
+                {
+                    "param_name": pb.param_name,
+                    "param_value": pb.param_value,
+                    "frequency": pb.frequency,
+                    "semantics": pb.semantics,
+                }
                 for pb in self.parameter_bindings
             ],
             "execution_count": self.execution_count,

@@ -194,3 +194,95 @@ class TestOpenClawExtraction:
             assert candidates[0].memory.source_type == "openclaw"
             if "inferred_command" in candidates[0].signals:
                 assert candidates[0].needs_review is True
+
+
+class FakeOpenClawLLM:
+    def __init__(self, payload: dict[str, object]) -> None:
+        self.payload = payload
+
+    async def ajson(self, *_args: object, **_kwargs: object) -> dict[str, object]:
+        return self.payload
+
+
+class TestLLMSemanticsEnrichment:
+    def test_rule_hit_enriches_with_semantics(self):
+        """规则命中 + LLM → 参数获得 semantics"""
+        llm = FakeOpenClawLLM({
+            "parameters": [
+                {"param_name": "env", "param_value": "staging",
+                 "semantics": "部署目标环境，staging 为预发布环境"},
+                {"param_name": "canary", "param_value": "50",
+                 "semantics": "金丝雀发布流量百分比"},
+            ]
+        })
+        extractor = CLIWorkflowExtractor(llm_client=llm)
+        event = make_openclaw_event(
+            '记住：部署用 "lark project deploy --env staging --canary 50"'
+        )
+        candidates = extractor.extract(event)
+        assert len(candidates) == 1
+        assert "llm_semantics" in candidates[0].signals
+        for pb in candidates[0].memory.parameter_bindings:
+            assert pb.semantics is not None
+
+    def test_rule_hit_llm_failure_returns_rule_result(self):
+        """LLM 失败 → 回退到规则结果"""
+        extractor = CLIWorkflowExtractor(llm_client=FakeOpenClawLLM({}))
+        event = make_openclaw_event(
+            '记住：部署用 "lark project deploy --env prod"'
+        )
+        candidates = extractor.extract(event)
+        assert len(candidates) == 1
+
+
+class TestLLMFullExtraction:
+    def test_full_extraction_with_complete_command(self):
+        """LLM 返回完整命令 → 参数化 + semantics"""
+        llm = FakeOpenClawLLM({
+            "full_command": "lark project deploy --region cn-shanghai",
+            "scenario_keywords": ["部署", "区域配置"],
+            "is_teaching": True,
+            "parameters": [
+                {"param_name": "region", "param_value": "cn-shanghai",
+                 "semantics": "部署目标区域，cn-shanghai 为中国上海"},
+            ],
+        })
+        extractor = CLIWorkflowExtractor(llm_client=llm)
+        event = make_openclaw_event("部署时提醒我用 --region cn-shanghai")
+        candidates = extractor.extract(event)
+        assert len(candidates) == 1
+        c = candidates[0]
+        assert c.memory.source_type == "openclaw"
+        assert "llm_full_extraction" in c.signals
+        assert "region" in c.memory.command_template
+
+    def test_full_extraction_scenario_only_creates_partial(self):
+        """LLM 只有场景词+参数 → 无完整命令 → partial candidate"""
+        llm = FakeOpenClawLLM({
+            "full_command": None,
+            "scenario_keywords": ["部署"],
+            "is_teaching": True,
+            "parameters": [
+                {"param_name": "region", "param_value": "cn-shanghai",
+                 "semantics": "部署目标区域"},
+            ],
+        })
+        extractor = CLIWorkflowExtractor(llm_client=llm)
+        event = make_openclaw_event("以后部署提醒我用 --region cn-shanghai")
+        candidates = extractor.extract(event)
+        if candidates:
+            assert candidates[0].needs_review is True
+            assert "partial_template" in candidates[0].signals
+
+    def test_non_teaching_message_returns_empty(self):
+        """非教学消息 → LLM is_teaching=false → 返回空"""
+        llm = FakeOpenClawLLM({
+            "full_command": None,
+            "scenario_keywords": [],
+            "is_teaching": False,
+            "parameters": [],
+        })
+        extractor = CLIWorkflowExtractor(llm_client=llm)
+        event = make_openclaw_event("早上好")
+        candidates = extractor.extract(event)
+        assert len(candidates) == 0
