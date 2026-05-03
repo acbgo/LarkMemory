@@ -67,6 +67,8 @@ class CLIWorkflowRetriever:
     ) -> list[CLIWorkflowSearchResult]:
         if limit < 1:
             raise ValueError("limit must be greater than 0")
+        if not query.user_id:
+            return []
 
         rows = self._load_candidates(limit=limit)
         filtered = self._filter_candidates(rows, query)
@@ -95,8 +97,8 @@ class CLIWorkflowRetriever:
             row_user = self._entity_value(entities, "user_id")
             row_project = self._entity_value(entities, "project_id")
 
-            # 必须匹配 user_id（个人记忆）
-            if query.user_id and row_user and query.user_id != row_user:
+            # 必须匹配 user_id（个人记忆隔离）
+            if not row_user or row_user != query.user_id:
                 continue
 
             # 如果 query 指定了 project_id，优先匹配

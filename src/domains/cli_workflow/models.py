@@ -120,6 +120,7 @@ class CLIWorkflowMemory:
                 *( [f"project_id:{self.project_id}"] if self.project_id else [] ),
                 *( [f"repo_id:{self.repo_id}"] if self.repo_id else [] ),
                 f"command_name:{self.command_name}",
+                f"command_template:{self.command_template}",
             ]
         )
         tags = _unique(

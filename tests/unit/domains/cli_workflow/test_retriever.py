@@ -113,6 +113,12 @@ class TestCLIWorkflowRetriever:
         results = retriever.retrieve(query, limit=10)
         assert len(results) >= 1
 
+    def test_retrieve_without_user_id_returns_empty(self, memory_store_with_data):
+        retriever = CLIWorkflowRetriever(memory_store_with_data)
+        query = RetrievalQuery(query_text="deploy")
+        results = retriever.retrieve(query, limit=10)
+        assert len(results) == 0
+
     def test_search_result_to_ranked_memory(self, memory_store_with_data):
         retriever = CLIWorkflowRetriever(memory_store_with_data)
         query = RetrievalQuery(query_text="deploy", user_id="u_1")

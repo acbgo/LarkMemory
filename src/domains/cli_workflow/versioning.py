@@ -114,7 +114,10 @@ class CLIWorkflowVersionManager:
         )
 
     def _find_existing(self, incoming: CLIWorkflowMemory) -> dict[str, Any] | None:
-        filters: dict[str, str] = {"command_name": incoming.command_name}
+        filters: dict[str, str] = {
+            "command_name": incoming.command_name,
+            "command_template": incoming.command_template,
+        }
         if incoming.user_id:
             filters["user_id"] = incoming.user_id
         if incoming.project_id:

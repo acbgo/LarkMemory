@@ -168,17 +168,20 @@ def _install_autosuggest_strategy(shell: str) -> str | None:
     return str(strategy_file)
 
 
-def _optimize_inputrc() -> str | None:
+def _optimize_inputrc(inputrc_path: str | None = None) -> str | None:
     """Append readline optimizations to ~/.inputrc. Returns path if written."""
-    inputrc = Path.home() / ".inputrc"
-    existing = inputrc.read_text(encoding="utf-8") if inputrc.exists() else ""
+    inputrc = Path(inputrc_path) if inputrc_path else Path.home() / ".inputrc"
+    try:
+        existing = inputrc.read_text(encoding="utf-8") if inputrc.exists() else ""
 
-    if _AUTOSUGGEST_MARKER in existing:
-        return None  # Already installed, skip
+        if _AUTOSUGGEST_MARKER in existing:
+            return None  # Already installed, skip
 
-    new_content = existing.rstrip("\n") + "\n\n" + _INPUTRC_SETTINGS
-    inputrc.write_text(new_content.lstrip("\n") + "\n", encoding="utf-8")
-    return str(inputrc)
+        new_content = existing.rstrip("\n") + "\n\n" + _INPUTRC_SETTINGS
+        inputrc.write_text(new_content.lstrip("\n") + "\n", encoding="utf-8")
+        return str(inputrc)
+    except Exception:
+        return None  # .inputrc write failure should not block hook install
 
 
 def install(shell: str | None = None) -> tuple[bool, str]:
@@ -207,11 +210,14 @@ def install(shell: str | None = None) -> tuple[bool, str]:
         if strategy_path:
             extras.append(f"autosuggest strategy → {strategy_path}")
 
-    # bash: optimize ~/.inputrc for Tab completion
+    # bash: optimize ~/.inputrc for Tab completion (best-effort)
     if shell == "bash":
-        inputrc_path = _optimize_inputrc()
-        if inputrc_path:
-            extras.append(f"inputrc optimized → {inputrc_path}")
+        try:
+            inputrc_path = _optimize_inputrc()
+            if inputrc_path:
+                extras.append(f"inputrc optimized → {inputrc_path}")
+        except Exception:
+            pass  # .inputrc failure does not block hook install
 
     msg = f"hook installed for {shell} → {config_path}"
     if extras:
