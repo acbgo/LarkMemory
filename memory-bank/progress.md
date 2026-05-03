@@ -441,3 +441,53 @@
 - 配置优先级为真实环境变量高于配置文件，便于临时覆盖端口、路径或模型服务地址。
 - 配置文件已覆盖 app、SQLite、Chroma、日志、LLM、embedding 服务和 rerank 服务相关变量。
 - README 已补充推荐启动方式：先改 `larkmemory.env`，再按原方式执行 `uvicorn`；不依赖 PowerShell/cmd 脚本。
+
+## 2026-05-03 方向 A CLI 工作流记忆 — 完整交付
+
+### 阶段 1：后端 domain 记忆引擎
+
+- 已实现 `src/domains/cli_workflow/` 完整领域（5 个文件）：
+  - `models.py`：`CLIWorkflowMemory` 模型 + `ParameterBinding` + `MemoryCore` 双向转换（`to_memory_core` / `from_memory_core`）。user_id/project_id/command_name 编码进 entities，参数绑定编码进 tags（`param:env=prod`），零侵入通用表结构。
+  - `extractor.py`：从 shell 事件（`command_finished`）和 OpenClaw 事件（`memory_feedback`）中提取命令模板和参数绑定。支持 `--key=value`、`--key value`、`-k value`、布尔 flag 和位置参数五种形态。过滤策略：跳过 trivial 命令（cd/ls/echo 等）、跳过非已知工具链且无 flag 的命令、跳过单字裸敲命令。
+  - `versioning.py`：Shell 同命令重复执行走 reinforce（execution_count++、合并参数频率）；OpenClaw 显式教学可覆盖 shell 统计（supersede）；Shell 不覆盖已有的 OpenClaw 记忆（reinforce 而非覆盖）。
+  - `handler.py`：实现 `MemoryDomainHandler` 协议，编排 extract → admission（`is_admissible`）→ version → store 完整链路。
+  - `retriever.py`：按 user_id 隔离 + project_id 过滤 + 命令名/关键词匹配，综合执行频率/新鲜度/成功率/项目匹配多维度打分。输出 `CLIWorkflowSearchResult` 可转为 `RankedMemory`、suggestion 或 completion 候选。
+- 已在 `src/app/dependencies.py` 注册 `CLIWorkflowDomainHandler`，与 project_decision / team_retention 完全平行。
+- 架构文档中标注的 `ranker.py` 和 `workflow_miner.py` 暂未实现：领域内排序逻辑内聚在 retriever 中，工作流序列挖掘按 PRD 列为"不做的事"。
+
+### 阶段 2：CLI 终端客户端工具
+
+- 已实现 `src/sources/cli/` 完整 CLI 工具（6 个文件）：
+  - `main.py`：CLI 入口，5 个子命令路由（hook / suggest / complete / completion / ingest）。
+  - `hook.py`：安装/卸载 shell 钩子，标记块管理（`# >>>` / `# <<<`）、可逆幂等、bash/zsh 自适应。
+  - `ingest.py`：shell hook 捕获命令后构造 `NormalizedEvent` → POST `/api/v1/ingest`，HTTP 失败静默不影响终端。
+  - `retrieve.py`：suggest 查询记忆 / complete 补全候选 → POST `/api/v1/retrieve` → 解析 MemoryHit 响应 → 格式化输出。
+  - `completion.py`：动态生成 bash/zsh completion script，错误静默不污染终端，注册为默认回退完成器。
+  - `_client.py`：公共 HTTP 客户端模块，集中 `get_api_base()`、`post_ingest()`、`post_retrieve()`。
+- Shell hook 机制：
+  - Bash：`trap '_lark_preexec' DEBUG` + `PROMPT_COMMAND`
+  - Zsh：`add-zsh-hook preexec` + `add-zsh-hook precmd`
+  - 异步上报（后台进程 `>/dev/null 2>&1`），不阻塞终端
+  - 过滤自身命令（`lark-memory*`）、空命令
+
+### 测试覆盖
+
+- `tests/unit/domains/cli_workflow/`：62 tests — 模型双向转换、提取过滤（trivial/known_prefix/flags/shell/openclaw/参数化）、版本覆盖（reinforce/supersede/cross-source）、检索打分（user 隔离/project 过滤/空查询/频率排序）。
+- `tests/unit/sources/cli/`：56 tests — hook 安装/卸载/幂等/保留已有内容/替换旧块、事件构造（成功/失败/用户检测/project 推断）、MemoryHit 解析、suggest 格式化、complete 候选生成、completion 脚本（bash/zsh）。
+
+### 审查与修复
+
+- 已完成代码审查，发现 6 个问题并全部修复：
+  1. `is_admissible()` 死代码 → handler 中增加准入判断。
+  2. 单字裸敲命令未过滤 → extractor 增加 `len(tokens) == 1` 检查。
+  3. 参数绑定频率衰减逻辑 → key 改为 `(param_name, param_value)` 元组，不再衰减。
+  4. `_get_api_base()` 重复定义 → 提取到公共 `_client.py` 模块。
+  5. `_find_existing` 全表扫描 → 改用 `entity_filters` 下推过滤到 SQL。
+  6. zsh `compdef -first-` 无效语法 → 改为 `compdef '*'` 标准语法。
+- 全量验证：396 passed, 6 subtests passed，零回退。
+
+## 2026-05-03 下一步 — Core 层动态路由
+
+- 当前 `DomainRouter` 硬编码了具体领域的关键词匹配和 event_type 判断，新增领域需修改 router.py。
+- Router 不感知已注册的 `domain_handlers`，`route_query()` 在检索链路中未被调用（`retrieve_async` 直接用 IntentAnalyzer）。
+- 改进方向：Router 只做编排，领域判断逻辑留在各自 handler 内；构造时传入 domain_handlers，路由时遍历 handlers 收集匹配结果。

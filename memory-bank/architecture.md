@@ -32,19 +32,26 @@ LarkMemory/
 │   └── openclaw.plugin.json        # OpenClaw 插件元信息
 │
 ├── sources/                        # 外部消息源接入层
-│   └── feishu/                     # 飞书消息源、卡片推送和回调适配
-│       ├── client/                 # 飞书 SDK 连接与监听
-│       │   ├── config.py           # 飞书企业自建应用凭证和运行配置
-│       │   ├── sdk.py              # lark-oapi OpenAPI/WebSocket client 工厂
-│       │   └── listener.py         # 飞书 WebSocket 事件监听入口
-│       ├── events/                 # 飞书事件模型、标准化和分发
-│       │   ├── models.py           # 飞书消息、卡片动作和原始事件模型
-│       │   ├── normalizer.py       # 飞书消息转 NormalizedEvent
-│       │   └── dispatcher.py       # 标准化事件分发到 MemoryService
-│       └── proactive/              # 飞书主动服务输出与反馈
-│           ├── cards.py            # 主动提醒 suggestion 转飞书互动卡片
-│           ├── notifier.py         # 调用飞书 API 发送文本和互动卡片
-│           └── callbacks.py        # 卡片按钮动作转 MemoryService 更新
+│   ├── feishu/                     # 飞书消息源、卡片推送和回调适配
+│   │   ├── client/                 # 飞书 SDK 连接与监听
+│   │   │   ├── config.py           # 飞书企业自建应用凭证和运行配置
+│   │   │   ├── sdk.py              # lark-oapi OpenAPI/WebSocket client 工厂
+│   │   │   └── listener.py         # 飞书 WebSocket 事件监听入口
+│   │   ├── events/                 # 飞书事件模型、标准化和分发
+│   │   │   ├── models.py           # 飞书消息、卡片动作和原始事件模型
+│   │   │   ├── normalizer.py       # 飞书消息转 NormalizedEvent
+│   │   │   └── dispatcher.py       # 标准化事件分发到 MemoryService
+│   │   └── proactive/              # 飞书主动服务输出与反馈
+│   │       ├── cards.py            # 主动提醒 suggestion 转飞书互动卡片
+│   │       ├── notifier.py         # 调用飞书 API 发送文本和互动卡片
+│   │       └── callbacks.py        # 卡片按钮动作转 MemoryService 更新
+│   └── cli/                        # CLI 终端客户端工具（lark-memory 命令）
+│       ├── main.py                 # CLI 入口，5 个子命令路由
+│       ├── hook.py                 # Shell hook 安装/卸载/检测（标记块、可逆幂等）
+│       ├── ingest.py               # 命令捕获 → 事件构造 → POST /api/v1/ingest
+│       ├── retrieve.py             # suggest 查询 / complete 补全 → POST /api/v1/retrieve
+│       ├── completion.py           # 动态生成 bash/zsh completion script
+│       └── _client.py              # 公共 HTTP 客户端（get_api_base / post_ingest / post_retrieve）
 │
 ├── app/                            # Python Memory Engine 服务入口
 │   ├── main.py                     # FastAPI 应用启动与 router 注册
@@ -74,12 +81,11 @@ LarkMemory/
 │
 ├── domains/                        # 领域记忆能力
 │   ├── cli_workflow/               # CLI 命令、排障、部署和工作流
-│   │   ├── models.py
-│   │   ├── extractor.py
-│   │   ├── handler.py
-│   │   ├── retriever.py
-│   │   ├── ranker.py
-│   │   └── workflow_miner.py
+│   │   ├── models.py               # CLIWorkflowMemory + ParameterBinding + MemoryCore 双向转换
+│   │   ├── extractor.py            # Shell/OpenClaw 事件 → 命令模板 + 参数绑定提取
+│   │   ├── handler.py              # MemoryDomainHandler 协议实现，编排完整写入链路
+│   │   ├── retriever.py            # 按 user/project/command 过滤 + 多维度打分检索
+│   │   └── versioning.py           # Shell 强化 / OpenClaw 覆盖 / 跨源优先级
 │   ├── project_decision/           # 项目决策、理由、备选方案和取舍
 │   │   ├── models.py
 │   │   ├── extractor.py
@@ -319,15 +325,33 @@ domains/
 
 ### `cli_workflow`
 
-管理 CLI 工作流记忆。
+管理 CLI 工作流记忆。采用双通道设计：CLI shell 被动监听（隐式记忆）+ OpenClaw 显式教学（显式记忆）。
 
 关注内容：
 
-- 高频命令。
+- 高频命令和参数偏好。
 - 构建、部署、排障流程。
-- 参数偏好。
 - shell、git、docker、kubectl、npm、pip 等操作经验。
-- 多步命令序列形成的稳定 workflow。
+- 跨项目的命令行参数差异（"项目 A 用 --env prod，项目 B 用 --env staging"）。
+
+记忆模型：
+
+- `CLIWorkflowMemory`：命令模板 + 参数绑定 + 执行次数 / 成功率 / 新鲜度。
+- user_id / project_id / command_name 编码进 MemoryCore entities，参数绑定编码进 tags（`param:env=prod`），零侵入通用表结构。
+
+更新策略：
+
+- Shell 同命令重复执行 → reinforce（execution_count++、合并参数频率）。
+- OpenClaw 显式教学 → 覆盖 shell 统计（supersede），用户明确意图优先于机器统计。
+- Shell 不覆盖已有的 OpenClaw 记忆。
+
+输出通道：
+
+- CLI Tab 补全（`lark-memory complete`）→ 参数名 + 值候选，按频率排序。
+- CLI 主动查询（`lark-memory suggest`）→ 命令模板 + 参数绑定 + 执行统计。
+- OpenClaw 主动推荐（`before_prompt_build`）→ 注入 Agent 上下文。
+
+当前不做：工作流序列挖掘（前序/后续命令关联），后续迭代。
 
 ### `project_decision`
 
@@ -343,7 +367,7 @@ domains/
 
 ### `personal_preference`
 
-管理个人偏好记忆。
+管理个人偏好记忆（🔜 待实现）。
 
 关注内容：
 

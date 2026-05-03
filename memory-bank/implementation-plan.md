@@ -1,6 +1,6 @@
 # 实施计划
 
-## 阶段 1：梳理现有基础
+## 阶段 1：梳理现有基础 ✅ 已完成
 
 目标：确认当前 schema、storage、retrieval、plugin mock 链路的完成度。
 
@@ -16,11 +16,9 @@
 - 列出已有能力、缺口和下一步代码任务。
 - 不修改未授权模块。
 
-## 阶段 2：实现最小记忆闭环
+## 阶段 2：实现最小记忆闭环 ✅ 已完成
 
 目标：跑通事件写入、记忆生成、存储、检索的最小闭环。
-
-任务：
 
 - 标准化 ingest 输入。
 - 将事件转换为 `MemoryCore`。
@@ -28,70 +26,83 @@
 - 支持基础条件检索。
 - 增加对应单元测试。
 
-验收：
+## 阶段 3：实现项目决策记忆 demo ✅ 已完成
 
-- 一个测试能证明事件被写入并形成可检索记忆。
-- store 行为有读、写、查、更新的基本测试。
+目标：围绕方向 B 项目决策与上下文记忆，形成可演示 demo。
 
-## 阶段 3：实现项目决策记忆 demo
-
-目标：围绕比赛方向中的项目决策与上下文记忆，形成可演示 demo。
-
-任务：
-
-- 定义 project decision payload。
-- 实现决策记忆写入和查询。
+- `src/domains/project_decision/`：models / extractor / handler / retriever / ranker / versioning。
 - 支持 topic、project、stage、time 等维度检索。
 - 支持历史决策卡片格式输出。
-- 增加单元测试。
 
-验收：
-
-- 能从模拟飞书讨论事件中写入项目决策记忆。
-- 后续相关 query 能召回正确决策。
-
-## 阶段 4：实现矛盾更新与生命周期
+## 阶段 4：实现矛盾更新与生命周期 ✅ 已完成
 
 目标：支持冲突决策的时序覆盖。
 
-任务：
+- supersede / update 规则已实现（`core/supersede.py`、各 domain versioning）。
+- 旧记忆标记为 superseded，检索默认返回 active 版本。
+- 覆盖要求项目/团队/工作区维度一致。
 
-- 设计 supersede/update 规则。
-- 同一 topic 出现新决策时，将旧决策标记为 superseded。
-- 检索时默认返回 active 版本。
-- 必要时保留历史版本链。
+## 阶段 5：团队知识断层与遗忘预警（方向 D）✅ 已完成
 
-验收：
+目标：实现团队关键事实、风险、提醒和复习机制。
 
-- 矛盾更新测试通过：先输入“周报发给 A”，再输入“周报发给 B”，系统返回 B，旧记忆不再作为当前有效结果。
+- `src/domains/team_retention/`：models / extractor / handler / retriever / ranker / review_planner / versioning / preprocessor / llm_extractor / admission / embedding / lifecycle。
+- `src/storage/team_retention_store.py`：SQLite 持久化团队保留记忆和复习计划。
+- 支持向量混合召回（Chroma + embedding provider + scope 过滤）。
+- 支持复习提醒（review schedule + Ebbinghaus 遗忘曲线）。
+- LLM 抽取 + 后端准入复核，prompt 不暴露内部 ID。
+- 敏感信息脱敏策略。
 
-## 阶段 5：设计 Benchmark
+## 阶段 6：CLI 工作流记忆（方向 A）✅ 已完成
+
+目标：让记忆引擎帮开发者记住"哪个项目、什么场景、用哪些命令参数"。
+
+详见 progress.md 2026-05-03 条目。分为两个阶段：
+- 阶段 1：后端 domain 记忆引擎（`src/domains/cli_workflow/`）。
+- 阶段 2：CLI 终端客户端工具（`src/sources/cli/`）。
+
+## 阶段 7：飞书 Source Adapter ✅ 已完成
+
+- `src/sources/feishu/`：client（config/sdk/listener）、events（models/normalizer/dispatcher）、proactive（cards/notifier/callbacks）。
+- 真实飞书 WebSocket 消息监听和卡片交互。
+
+## 阶段 8：Embedding 与 Rerank 服务接入 ✅ 已完成
+
+- Embedding：OpenAI-compatible API provider + 本地 SentenceTransformers provider。
+- Rerank：HTTP rerank 服务接入。
+- API 端点：`/api/v1/embeddings`、`/api/v1/embeddings/batch`、`/api/v1/rerank`。
+
+## 阶段 9：服务启动配置 ✅ 已完成
+
+- `larkmemory.env` + `larkmemory.env.example`。
+- 配置文件自动加载，支持环境变量覆盖。
+
+## 阶段 10：Core 层动态路由 🔨 进行中
+
+目标：消除 `DomainRouter` 中对具体领域的硬编码，让路由动态适配已注册的 domain handlers。
+
+当前问题：
+- `route_event()` 硬编码了 `command_finished → cli_workflow` 和具体中文关键词。
+- Router 不感知 `domain_handlers`，新增领域必须改 router.py。
+- `route_query()` 在检索链路中未被调用（`retrieve_async` 直接用 IntentAnalyzer）。
+
+改进方向：
+- Router 构造时接收 `domain_handlers`。
+- 每个 handler 声明自己的路由兴趣（event_type / source_type / 关键字）。
+- Router 遍历 handlers 收集匹配结果，按 priority 排序输出 primary/secondary。
+- Router 只做编排，不做领域判断。
+
+## 阶段 11：Benchmark 评测 🔜 待开始
 
 目标：支撑自证评测报告。
 
 任务：
-
 - 抗干扰测试：关键记忆 + 大量无关事件 + 精准召回。
 - 矛盾更新测试：冲突输入 + 时序覆盖。
 - 效能指标验证：记录使用前后字符数、步骤数或查找时间。
 
-验收：
+## 阶段 12：个人偏好记忆（方向 C）🔜 待开始
 
-- Benchmark 可以重复运行。
-- 输出能用于评测报告。
+目标：实现用户习惯、偏好和默认配置的隐式学习。
 
-## 阶段 6：插件与 Demo 联动
-
-目标：将 Memory Engine 与 OpenClaw 插件 mock 链路连接。
-
-任务：
-
-- 设计本地 API 边界。
-- 插件调用 retrieve/ingest。
-- 在 mock 或本地演示中展示记忆卡片注入。
-- 为后续真实飞书 API 接入保留边界。
-
-验收：
-
-- Demo 能展示事件写入、记忆召回、主动提示或上下文注入。
-
+- `src/domains/personal_preference/`：models 已定义，extractor / handler / retriever 待实现。
