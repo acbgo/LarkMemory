@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from src.core.domain_handler import DomainIngestResult, DomainRuntime, DomainUpdateResult
+from src.llm import EmbeddingClient
 from src.retrieval import RankedMemory, RetrievalQuery
 from src.schemas import NormalizedEvent
 from src.storage import EmbeddingStore, MemoryCoreStore, TeamRetentionStore
@@ -28,6 +29,7 @@ class TeamRetentionDomainHandler:
         team_retention_store: TeamRetentionStore,
         *,
         embedding_store: EmbeddingStore | None = None,
+        embedding_client: EmbeddingClient | None = None,
         llm_client: Any | None = None,
         extractor: TeamRetentionExtractor | None = None,
         retriever: TeamRetentionRetriever | None = None,
@@ -40,6 +42,7 @@ class TeamRetentionDomainHandler:
             memory_store,
             team_retention_store,
             embedding_store=embedding_store,
+            embedding_client=embedding_client,
         )
         self.version_manager = version_manager or TeamRetentionVersionManager(memory_store, team_retention_store)
         self.llm_client = llm_client
@@ -82,7 +85,7 @@ class TeamRetentionDomainHandler:
             }
         )
 
-        embedding_indexer = TeamRetentionEmbeddingIndexer(runtime.embedding_store)
+        embedding_indexer = TeamRetentionEmbeddingIndexer(runtime.embedding_store, runtime.embedding_client)
         lifecycle = TeamRetentionLifecycleResolver(self.memory_store, self.team_retention_store, embedding_indexer).resolve(
             memory,
             admission_status=admission.status,
@@ -153,7 +156,10 @@ class TeamRetentionDomainHandler:
                 self.team_retention_store.create_review_schedule(candidate.memory)
                 if version_decision.should_supersede and version_decision.old_memory_id:
                     self.version_manager.apply_supersede(version_decision.old_memory_id, memory_id)
-                TeamRetentionEmbeddingIndexer(runtime.embedding_store).upsert(candidate.memory, status=memory_core.status)
+                TeamRetentionEmbeddingIndexer(runtime.embedding_store, runtime.embedding_client).upsert(
+                    candidate.memory,
+                    status=memory_core.status,
+                )
         return DomainIngestResult(
             memory_ids=memory_ids,
             candidate_count=len(candidates),

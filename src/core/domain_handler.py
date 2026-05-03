@@ -6,6 +6,7 @@ from typing import Any, Callable, Protocol
 from src.retrieval import RankedMemory, RetrievalQuery
 from src.schemas import MemoryCore, NormalizedEvent
 from src.storage import EmbeddingStore, MemoryCoreStore
+from src.llm import EmbeddingClient
 
 
 @dataclass(slots=True)
@@ -28,6 +29,7 @@ class DomainRuntime:
     memory_store: MemoryCoreStore
     add_memory: Callable[[MemoryCore], str]
     embedding_store: EmbeddingStore | None = None
+    embedding_client: EmbeddingClient | None = None
 
 
 class MemoryDomainHandler(Protocol):

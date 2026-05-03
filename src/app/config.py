@@ -22,6 +22,19 @@ class AppSettings:
     llm_max_retries: int = 2
     enable_llm: bool = False
     enable_embedding: bool = False
+    embedding_provider: str = "openai_compatible"
+    embedding_api_key: str | None = None
+    embedding_model: str | None = None
+    embedding_base_url: str | None = None
+    embedding_dimensions: int | None = None
+    embedding_encoding_format: str = "float"
+    embedding_model_path: str | None = None
+    embedding_device: str = "cpu"
+    embedding_normalize: bool = True
+    embedding_batch_size: int = 4
+    embedding_trust_remote_code: bool = True
+    embedding_timeout: float = 60.0
+    embedding_max_retries: int = 2
     log_level: str = "INFO"
     log_dir: str = "logs"
     log_file: str = "larkmemory.log"
@@ -95,6 +108,21 @@ def load_settings() -> AppSettings:
         llm_max_retries=_env_int("LARKMEMORY_LLM_MAX_RETRIES", 2),
         enable_llm=_env_bool("LARKMEMORY_ENABLE_LLM", False),
         enable_embedding=_env_bool("LARKMEMORY_ENABLE_EMBEDDING", False),
+        embedding_provider=_env_str("LARKMEMORY_EMBEDDING_PROVIDER", "openai_compatible")
+        or "openai_compatible",
+        embedding_api_key=_env_str("LARKMEMORY_EMBEDDING_API_KEY", None),
+        embedding_model=_env_str("LARKMEMORY_EMBEDDING_MODEL", None),
+        embedding_base_url=_env_str("LARKMEMORY_EMBEDDING_BASE_URL", None),
+        embedding_dimensions=_env_int("LARKMEMORY_EMBEDDING_DIMENSIONS", 0) or None,
+        embedding_encoding_format=_env_str("LARKMEMORY_EMBEDDING_ENCODING_FORMAT", "float")
+        or "float",
+        embedding_model_path=_env_str("LARKMEMORY_EMBEDDING_MODEL_PATH", None),
+        embedding_device=_env_str("LARKMEMORY_EMBEDDING_DEVICE", "cpu") or "cpu",
+        embedding_normalize=_env_bool("LARKMEMORY_EMBEDDING_NORMALIZE", True),
+        embedding_batch_size=_env_int("LARKMEMORY_EMBEDDING_BATCH_SIZE", 4),
+        embedding_trust_remote_code=_env_bool("LARKMEMORY_EMBEDDING_TRUST_REMOTE_CODE", True),
+        embedding_timeout=_env_float("LARKMEMORY_EMBEDDING_TIMEOUT", 60.0),
+        embedding_max_retries=_env_int("LARKMEMORY_EMBEDDING_MAX_RETRIES", 2),
         log_level=_env_str("LARKMEMORY_LOG_LEVEL", "INFO") or "INFO",
         log_dir=_env_str("LARKMEMORY_LOG_DIR", "logs") or "logs",
         log_file=_env_str("LARKMEMORY_LOG_FILE", "larkmemory.log")

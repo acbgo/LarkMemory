@@ -38,6 +38,29 @@ class TestHealthApi(unittest.TestCase):
         self.assertIn("llm", body)
         self.assertFalse(body["embedding"]["enabled"])
         self.assertFalse(body["embedding"]["available"])
+        self.assertFalse(body["embedding"]["vector_store_available"])
+        self.assertFalse(body["embedding"]["embedding_client_available"])
         self.assertFalse(body["llm"]["enabled"])
         self.assertFalse(body["llm"]["available"])
+
+    def test_health_splits_embedding_store_and_client_status(self) -> None:
+        db_path = str(self.temp_dir / "health-embedding.db")
+        with patch.dict(
+            os.environ,
+            {
+                "LARKMEMORY_SQLITE_PATH": db_path,
+                "LARKMEMORY_ENABLE_EMBEDDING": "true",
+            },
+            clear=True,
+        ):
+            reset_dependency_cache()
+            client = TestClient(create_app())
+            response = client.get("/health")
+
+        body = response.json()
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(body["embedding"]["enabled"])
+        self.assertTrue(body["embedding"]["vector_store_available"])
+        self.assertFalse(body["embedding"]["embedding_client_available"])
+        self.assertFalse(body["embedding"]["available"])
 

@@ -32,6 +32,37 @@ class FakeEmbeddingStore:
         )
         return list(self.hits)
 
+    def query_by_embedding(
+        self,
+        vector: list[float],
+        domain: str | None = None,
+        top_k: int = 10,
+        filters: dict[str, object] | None = None,
+    ) -> list[dict[str, object]]:
+        self.queries.append(
+            {
+                "vector": vector,
+                "domain": domain,
+                "top_k": top_k,
+                "filters": filters,
+            }
+        )
+        return list(self.hits)
+
+
+class FakeEmbeddingClient:
+    def __init__(self) -> None:
+        self.texts: list[str] = []
+
+    def embed_text(self, text: str) -> list[float]:
+        self.texts.append(text)
+        return [0.9, 0.1]
+
+
+class RaisingEmbeddingClient:
+    def embed_text(self, text: str) -> list[float]:
+        raise RuntimeError("embedding model down")
+
 
 def _stores() -> tuple[MemoryCoreStore, TeamRetentionStore, Path]:
     root = Path.cwd() / ".tmp-tests"
@@ -153,5 +184,68 @@ def test_retrieve_uses_vector_hits_for_hybrid_recall() -> None:
         assert [result.memory.retention_id for result in results] == ["mem-vector"]
         assert "vector_similarity" in results[0].matched_fields
         assert results[0].memory_item.extra["vector_similarity"] == 0.88
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+def test_retrieve_uses_embedding_client_query_vector_when_available() -> None:
+    memory_store, team_store, temp_dir = _stores()
+    try:
+        _insert(
+            memory_store,
+            team_store,
+            "mem-vector",
+            fact_value="客户 A 要求导出 xlsx",
+        )
+        embedding_store = FakeEmbeddingStore(
+            [
+                {
+                    "memory_id": "mem-vector",
+                    "distance": 0.2,
+                    "metadata": {"status": "active", "team_id": "team-1"},
+                }
+            ]
+        )
+        embedding_client = FakeEmbeddingClient()
+
+        results = TeamRetentionRetriever(
+            memory_store,
+            team_store,
+            embedding_store=embedding_store,  # type: ignore[arg-type]
+            embedding_client=embedding_client,  # type: ignore[arg-type]
+        ).retrieve(
+            TeamRetentionQuery(query_text="A 客户的文件格式规则", team_id="team-1")
+        )
+
+        assert embedding_client.texts == ["A 客户的文件格式规则"]
+        assert embedding_store.queries[0]["vector"] == [0.9, 0.1]
+        assert [result.memory.retention_id for result in results] == ["mem-vector"]
+        assert results[0].memory_item.extra["vector_similarity"] == 0.8
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+def test_retrieve_falls_back_when_vector_embedding_fails() -> None:
+    memory_store, team_store, temp_dir = _stores()
+    try:
+        _insert(
+            memory_store,
+            team_store,
+            "mem-lexical",
+            fact_value="客户 A 要求导出 xlsx",
+        )
+        embedding_store = FakeEmbeddingStore([])
+
+        results = TeamRetentionRetriever(
+            memory_store,
+            team_store,
+            embedding_store=embedding_store,  # type: ignore[arg-type]
+            embedding_client=RaisingEmbeddingClient(),  # type: ignore[arg-type]
+        ).retrieve(
+            TeamRetentionQuery(query_text="客户 A xlsx", team_id="team-1")
+        )
+
+        assert [result.memory.retention_id for result in results] == ["mem-lexical"]
+        assert "query_text" in results[0].matched_fields
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)

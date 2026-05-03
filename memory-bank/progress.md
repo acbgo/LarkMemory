@@ -324,3 +324,74 @@
 - `schema.json` 已补充 `baseline_steps` 和 `actual_steps`，用于步骤节省类效能验证。
 - `validate_schema.py` 已改为标准库校验，显式 UTF-8 读取文件，并修正矛盾更新检查字段。
 - 验证：`python benchmark\scripts\validate_schema.py`，49/49 passed, 0 failed；保留 16 条 hard case 噪声数量建议 warning。
+
+## 2026-05-03 Embedding API Provider 进展
+
+- 已新增 LLM 层 embedding 抽象：
+  - `src/llm/embedding_base.py` 定义 `EmbeddingProvider` 协议和 `EmbeddingResponse`。
+  - `src/llm/embedding_client.py` 作为业务统一入口，负责输入清洗和单条/批量 embedding 调用。
+  - `src/llm/openai_compatible_embedding_provider.py` 调用 OpenAI-compatible `/embeddings` API，支持 `model`、`base_url`、`dimensions` 和 `encoding_format`。
+- 已新增 embedding HTTP API：
+  - `POST /api/v1/embeddings`：单文本向量化。
+  - `POST /api/v1/embeddings/batch`：批量文本向量化。
+  - `src/schemas/embeddings.py` 定义请求和响应 schema。
+- 已扩展 app 配置和依赖注入：
+  - 新增 `LARKMEMORY_EMBEDDING_PROVIDER`、`LARKMEMORY_EMBEDDING_API_KEY`、`LARKMEMORY_EMBEDDING_MODEL`、`LARKMEMORY_EMBEDDING_BASE_URL`、`LARKMEMORY_EMBEDDING_DIMENSIONS`、`LARKMEMORY_EMBEDDING_ENCODING_FORMAT` 等配置。
+  - `get_embedding_client()` 在 `LARKMEMORY_ENABLE_EMBEDDING=true` 且配置完整时创建 `EmbeddingClient`。
+  - `MemoryService` 和 `DomainRuntime` 已接收可选 `embedding_client`。
+- 已改造 TeamRetention 向量链路：
+  - 写入索引时优先通过 `EmbeddingClient.embed_text()` 生成显式向量，再写入 Chroma。
+  - 检索时优先通过 query embedding 调用 `EmbeddingStore.query_by_embedding()`；未配置 client 时保留原 `query_texts` fallback。
+  - 生命周期相似记忆判断也可复用显式 query vector。
+- 已补充测试：
+  - `tests/unit/llm/test_embedding_client.py`
+  - `tests/unit/llm/test_openai_compatible_embedding_provider.py`
+  - `tests/unit/api/test_embeddings_api.py`
+  - `tests/unit/domains/team_retention/test_retriever.py` 中新增 query vector 检索覆盖。
+  - `tests/unit/app/test_dependencies.py` 中新增 embedding client 装配覆盖。
+- 验证：`python -m pytest tests\unit\llm\test_embedding_client.py tests\unit\llm\test_openai_compatible_embedding_provider.py tests\unit\api\test_embeddings_api.py tests\unit\domains\team_retention\test_retriever.py -q -p no:cacheprovider`，12 passed。
+- 验证：`python -m pytest tests\unit\app\test_dependencies.py tests\unit\app\test_config.py tests\unit\api\test_embeddings_api.py tests\unit\llm\test_embedding_client.py tests\unit\llm\test_openai_compatible_embedding_provider.py tests\unit\domains\team_retention\test_retriever.py -q -p no:cacheprovider`，28 passed。
+- 验证：`python -m pytest tests\unit\app tests\unit\api tests\unit\llm tests\unit\domains\team_retention tests\unit\core\test_service.py -q -p no:cacheprovider`，121 passed。
+- 验证：`python -m compileall src tests`，通过。
+
+## 2026-05-03 本地 Embedding Provider 进展
+
+- 已新增 `src/llm/local_sentence_transformers_embedding_provider.py`，支持从本地模型目录加载 SentenceTransformers-compatible embedding 模型。
+- 本地 provider 支持配置：
+  - `LARKMEMORY_EMBEDDING_PROVIDER=local_sentence_transformers` 或 `local`
+  - `LARKMEMORY_EMBEDDING_MODEL_PATH`
+  - `LARKMEMORY_EMBEDDING_DEVICE`
+  - `LARKMEMORY_EMBEDDING_NORMALIZE`
+  - `LARKMEMORY_EMBEDDING_BATCH_SIZE`
+  - `LARKMEMORY_EMBEDDING_DIMENSIONS`
+  - `LARKMEMORY_EMBEDDING_TRUST_REMOTE_CODE`
+- `src/app/dependencies.py` 已在 `get_embedding_client()` 中支持按配置选择 OpenAI-compatible API provider 或本地 SentenceTransformers provider。
+- `requirements.txt` 已增加 `sentence-transformers`，作为本地模型 provider 依赖。
+- 本地 provider 与 API provider 共用 `EmbeddingClient`，因此 `/api/v1/embeddings`、`/api/v1/embeddings/batch`、TeamRetention 写入索引和 query vector 检索无需区分来源。
+- 新增 `tests/unit/llm/test_local_sentence_transformers_embedding_provider.py`，覆盖本地模型加载参数、encode 参数、维度截断和缺依赖报错。
+- `tests/unit/app/test_dependencies.py` 已补充本地 provider 依赖装配测试。
+- 验证：`python -m pytest tests\unit\llm\test_local_sentence_transformers_embedding_provider.py tests\unit\app\test_dependencies.py -q -p no:cacheprovider`，15 passed。
+- 验证：`python -m pytest tests\unit\llm tests\unit\app tests\unit\api tests\unit\domains\team_retention tests\unit\core\test_service.py -q -p no:cacheprovider`，125 passed。
+- 验证：`python -m compileall src tests`，通过。
+
+## 2026-05-03 Embedding 容错修复
+
+- 修复写入链路 embedding 缺少降级的问题：
+  - `TeamRetentionEmbeddingIndexer.upsert()` 中显式 embedding 生成失败时只记录 warning，并继续尝试以 Chroma 文本 `documents` 方式写入索引。
+  - Chroma 索引写入失败时只记录 warning，不影响 `MemoryCore`、`TeamRetentionMemory` 和 review schedule 主写入结果。
+  - 生命周期相似记忆向量查询失败时返回空候选，不阻断 ingest。
+- 修复检索链路缺少降级的问题：
+  - `TeamRetentionRetriever._vector_hits()` 捕获 embedding client 或 Chroma 查询异常，记录 warning 后返回 `{}`。
+  - 向量召回失败后继续执行已有结构化 scope 过滤和关键词/字段打分检索。
+- 修复健康检查 embedding 状态不准确的问题：
+  - `/health` 的 `embedding` 字段新增 `vector_store_available`、`embedding_client_available`、`provider` 和 `model`。
+  - `available` 现在表示 vector store 和 embedding client 都可用。
+  - `get_embedding_client()` 在 provider 初始化失败时记录 warning 并返回 `None`，避免 health 或应用装配因本地依赖缺失、模型目录不可用而直接崩溃。
+- 新增回归测试覆盖：
+  - embedding 索引失败不影响 team_retention 主写入。
+  - 检索 query embedding 失败时回退到关键词/结构化检索。
+  - health 区分 vector store 和 embedding client 状态。
+  - provider 初始化失败时 embedding client 返回 unavailable。
+- 验证：`python -m pytest tests\unit\app\test_dependencies.py::TestDependencies::test_get_embedding_client_returns_none_when_provider_init_fails tests\unit\domains\team_retention\test_handler_llm_embedding.py::test_embedding_index_failure_does_not_break_memory_ingest tests\unit\domains\team_retention\test_retriever.py::test_retrieve_falls_back_when_vector_embedding_fails tests\unit\api\test_health_api.py -q -p no:cacheprovider`，5 passed。
+- 验证：`python -m pytest tests\unit\llm tests\unit\app tests\unit\api tests\unit\domains\team_retention tests\unit\core\test_service.py -q -p no:cacheprovider`，129 passed。
+- 验证：`python -m compileall src tests`，通过。

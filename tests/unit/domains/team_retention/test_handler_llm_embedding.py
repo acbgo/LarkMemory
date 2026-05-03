@@ -91,6 +91,19 @@ class FakeEmbeddingStore:
         return list(self.query_hits)
 
 
+class RaisingEmbeddingStore(FakeEmbeddingStore):
+    def upsert_embedding(self, *args: Any, **kwargs: Any) -> None:
+        raise RuntimeError("chroma down")
+
+    def query_similar(self, *args: Any, **kwargs: Any) -> list[dict[str, Any]]:
+        raise RuntimeError("chroma query down")
+
+
+class RaisingEmbeddingClient:
+    def embed_text(self, text: str) -> list[float]:
+        raise RuntimeError("embedding model down")
+
+
 def _stores() -> tuple[MemoryCoreStore, TeamRetentionStore, Path]:
     root = Path.cwd() / ".tmp-tests"
     root.mkdir(exist_ok=True)
@@ -831,6 +844,28 @@ def test_embedding_metadata_filters_none_values() -> None:
         assert "project_id" not in metadata
         assert "workspace_id" not in metadata
         assert all(value is not None for value in metadata.values())
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+def test_embedding_index_failure_does_not_break_memory_ingest() -> None:
+    memory_store, team_store, temp_dir = _stores()
+    try:
+        llm = FakeLLMClient(_semantic_response())
+        handler = TeamRetentionDomainHandler(memory_store, team_store, llm_client=llm)
+        runtime = DomainRuntime(
+            memory_store=memory_store,
+            add_memory=memory_store.insert_memory_core,
+            embedding_store=RaisingEmbeddingStore(),  # type: ignore[arg-type]
+            embedding_client=RaisingEmbeddingClient(),  # type: ignore[arg-type]
+        )
+
+        result = handler.ingest_event(_event(), runtime)
+
+        assert len(result.memory_ids) == 1
+        assert memory_store.get_memory(result.memory_ids[0])["status"] == "active"
+        assert team_store.get_memory(result.memory_ids[0]) is not None
+        assert team_store.get_review_schedule(result.memory_ids[0]) is not None
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
 

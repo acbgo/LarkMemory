@@ -1,4 +1,10 @@
 from .event import EventContext, EventType, NormalizedEvent, ScopeType, SourceType
+from .embeddings import (
+    EmbeddingBatchRequest,
+    EmbeddingBatchResponsePayload,
+    EmbeddingRequest,
+    EmbeddingResponsePayload,
+)
 from .llm import (
     FunctionCall,
     LLMResponse,
@@ -21,6 +27,10 @@ from .update import MemoryUpdateRequest, MemoryUpdateResponse
 __all__ = [
     "EventContext",
     "EventContextPayload",
+    "EmbeddingBatchRequest",
+    "EmbeddingBatchResponsePayload",
+    "EmbeddingRequest",
+    "EmbeddingResponsePayload",
     "EventType",
     "FunctionCall",
     "BenchmarkRunRequest",

@@ -3,5 +3,6 @@ chromadb
 neo4j
 lark-oapi
 openai
+sentence-transformers
 uvicorn
 pytest

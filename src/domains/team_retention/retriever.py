@@ -1,15 +1,20 @@
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass, field
 from typing import Any
 
 from src.retrieval import MemoryItem, RankedMemory, RetrievalQuery, memory_item_from_core
+from src.llm import EmbeddingClient
 from src.storage import EmbeddingStore, MemoryCoreStore, TeamRetentionStore
 from src.utils.text import clean_text
 
 from .models import TeamRetentionMemory
 from .ranker import TeamRetentionRanker
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -65,11 +70,13 @@ class TeamRetentionRetriever:
         team_retention_store: TeamRetentionStore,
         *,
         embedding_store: EmbeddingStore | None = None,
+        embedding_client: EmbeddingClient | None = None,
         ranker: TeamRetentionRanker | None = None,
     ) -> None:
         self.memory_store = memory_store
         self.team_retention_store = team_retention_store
         self.embedding_store = embedding_store
+        self.embedding_client = embedding_client
         self.ranker = ranker or TeamRetentionRanker()
 
     def retrieve(
@@ -216,12 +223,28 @@ class TeamRetentionRetriever:
             filters["project_id"] = query.project_id
         if query.workspace_id:
             filters["workspace_id"] = query.workspace_id
-        hits = self.embedding_store.query_similar(
-            query.query_text,
-            domain="team_retention",
-            top_k=max(limit * 3, 10),
-            filters=filters or None,
-        )
+        try:
+            if self.embedding_client is not None:
+                hits = self.embedding_store.query_by_embedding(
+                    self.embedding_client.embed_text(query.query_text),
+                    domain="team_retention",
+                    top_k=max(limit * 3, 10),
+                    filters=filters or None,
+                )
+            else:
+                hits = self.embedding_store.query_similar(
+                    query.query_text,
+                    domain="team_retention",
+                    top_k=max(limit * 3, 10),
+                    filters=filters or None,
+                )
+        except Exception:
+            logger.warning(
+                "action=vector_recall_failed domain=team_retention query_text=%s",
+                query.query_text,
+                exc_info=True,
+            )
+            return {}
         result: dict[str, float] = {}
         for hit in hits:
             memory_id = hit.get("memory_id") or hit.get("id")

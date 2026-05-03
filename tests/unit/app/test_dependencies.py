@@ -8,6 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from src.app.dependencies import (
+    get_embedding_client,
     get_embedding_store,
     get_event_store,
     get_llm_client,
@@ -98,6 +99,86 @@ class TestDependencies(unittest.TestCase):
         with patch.dict(os.environ, {"LARKMEMORY_ENABLE_EMBEDDING": "false"}, clear=True):
             reset_dependency_cache()
             self.assertIsNone(get_embedding_store())
+
+    def test_get_embedding_client_returns_none_when_disabled(self) -> None:
+        with patch.dict(os.environ, {"LARKMEMORY_ENABLE_EMBEDDING": "false"}, clear=True):
+            reset_dependency_cache()
+            self.assertIsNone(get_embedding_client())
+
+    def test_get_embedding_client_builds_openai_compatible_client(self) -> None:
+        db_path = str(self.temp_dir / "embedding-client.db")
+        with patch.dict(
+            os.environ,
+            {
+                "LARKMEMORY_SQLITE_PATH": db_path,
+                "LARKMEMORY_ENABLE_EMBEDDING": "true",
+                "LARKMEMORY_EMBEDDING_API_KEY": "test-key",
+                "LARKMEMORY_EMBEDDING_MODEL": "Qwen/Qwen3-Embedding-4B",
+                "LARKMEMORY_EMBEDDING_BASE_URL": "https://api.siliconflow.cn/v1",
+                "LARKMEMORY_EMBEDDING_DIMENSIONS": "1024",
+            },
+            clear=True,
+        ):
+            reset_dependency_cache()
+            with patch("src.app.dependencies.OpenAICompatibleEmbeddingProvider") as provider_cls:
+                client = get_embedding_client()
+
+        self.assertIsNotNone(client)
+        provider_cls.assert_called_once()
+        self.assertEqual(provider_cls.call_args.kwargs["model"], "Qwen/Qwen3-Embedding-4B")
+        self.assertEqual(provider_cls.call_args.kwargs["dimensions"], 1024)
+
+    def test_get_embedding_client_builds_local_sentence_transformers_client(self) -> None:
+        db_path = str(self.temp_dir / "local-embedding-client.db")
+        with patch.dict(
+            os.environ,
+            {
+                "LARKMEMORY_SQLITE_PATH": db_path,
+                "LARKMEMORY_ENABLE_EMBEDDING": "true",
+                "LARKMEMORY_EMBEDDING_PROVIDER": "local_sentence_transformers",
+                "LARKMEMORY_EMBEDDING_MODEL_PATH": ".larkmemory/models/Qwen/Qwen3-Embedding-4B",
+                "LARKMEMORY_EMBEDDING_DEVICE": "cpu",
+                "LARKMEMORY_EMBEDDING_NORMALIZE": "true",
+                "LARKMEMORY_EMBEDDING_BATCH_SIZE": "4",
+                "LARKMEMORY_EMBEDDING_DIMENSIONS": "1024",
+                "LARKMEMORY_EMBEDDING_TRUST_REMOTE_CODE": "true",
+            },
+            clear=True,
+        ):
+            reset_dependency_cache()
+            with patch("src.app.dependencies.LocalSentenceTransformersEmbeddingProvider") as provider_cls:
+                client = get_embedding_client()
+
+        self.assertIsNotNone(client)
+        provider_cls.assert_called_once()
+        self.assertEqual(
+            provider_cls.call_args.kwargs["model_path"],
+            ".larkmemory/models/Qwen/Qwen3-Embedding-4B",
+        )
+        self.assertEqual(provider_cls.call_args.kwargs["device"], "cpu")
+        self.assertTrue(provider_cls.call_args.kwargs["normalize_embeddings"])
+        self.assertEqual(provider_cls.call_args.kwargs["batch_size"], 4)
+        self.assertEqual(provider_cls.call_args.kwargs["dimensions"], 1024)
+        self.assertTrue(provider_cls.call_args.kwargs["trust_remote_code"])
+
+    def test_get_embedding_client_returns_none_when_provider_init_fails(self) -> None:
+        db_path = str(self.temp_dir / "embedding-client-failed.db")
+        with patch.dict(
+            os.environ,
+            {
+                "LARKMEMORY_SQLITE_PATH": db_path,
+                "LARKMEMORY_ENABLE_EMBEDDING": "true",
+                "LARKMEMORY_EMBEDDING_PROVIDER": "local_sentence_transformers",
+                "LARKMEMORY_EMBEDDING_MODEL_PATH": ".larkmemory/models/missing",
+            },
+            clear=True,
+        ):
+            reset_dependency_cache()
+            with patch(
+                "src.app.dependencies.LocalSentenceTransformersEmbeddingProvider",
+                side_effect=ImportError("Missing dependency: sentence-transformers"),
+            ):
+                self.assertIsNone(get_embedding_client())
 
     def test_get_llm_client_returns_none_when_disabled(self) -> None:
         with patch.dict(os.environ, {"LARKMEMORY_ENABLE_LLM": "false"}, clear=True):
