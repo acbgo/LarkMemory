@@ -43,7 +43,7 @@ _lark_memory_complete_zsh "$@"
 ZSH_COMPLETER_WRAPPER = r"""_lark_memory_complete_wrapper() {
     _lark_memory_complete_zsh
 }
-compdef _lark_memory_complete_wrapper -first- 2>/dev/null || true
+compdef _lark_memory_complete_wrapper '*' 2>/dev/null || true
 """
 
 

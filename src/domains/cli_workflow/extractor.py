@@ -90,6 +90,9 @@ class CLIWorkflowExtractor:
         if not has_flags and not has_known_prefix:
             return []
 
+        if has_known_prefix and len(tokens) == 1:
+            return []
+
         command_template, param_bindings = self._parameterize(tokens, command_name)
         if not command_template:
             return []

@@ -252,9 +252,10 @@ class MemoryCoreStore(SQLiteStore):
         domain: str | None = None,
         status: str = "active",
         source_ref: str | None = None,
+        entity_filters: dict[str, str] | None = None,
         limit: int = 100,
     ) -> list[dict[str, Any]]:
-        """按 domain、status 和 source_ref 搜索候选记忆。"""
+        """按 domain、status、source_ref 和 entity 字段搜索候选记忆。"""
         clauses = ["status = ?"]
         parameters: list[Any] = [status]
         if domain is not None:
@@ -263,6 +264,10 @@ class MemoryCoreStore(SQLiteStore):
         if source_ref is not None:
             clauses.append("source_ref = ?")
             parameters.append(source_ref)
+        if entity_filters:
+            for key, value in entity_filters.items():
+                clauses.append("entities_json LIKE ?")
+                parameters.append(f"%{key}:{value}%")
         sql = """
             SELECT * FROM memory_core
             WHERE {where_clause}

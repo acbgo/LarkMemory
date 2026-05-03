@@ -114,31 +114,18 @@ class CLIWorkflowVersionManager:
         )
 
     def _find_existing(self, incoming: CLIWorkflowMemory) -> dict[str, Any] | None:
+        filters: dict[str, str] = {"command_name": incoming.command_name}
+        if incoming.user_id:
+            filters["user_id"] = incoming.user_id
+        if incoming.project_id:
+            filters["project_id"] = incoming.project_id
         rows = self.memory_store.search_memory_candidates(
             domain="cli_workflow",
             status="active",
-            limit=200,
+            entity_filters=filters,
+            limit=5,
         )
-        for row in rows:
-            entities = row.get("entities") or []
-            row_user = self._entity_value(entities, "user_id")
-            row_project = self._entity_value(entities, "project_id")
-            row_cmd = self._entity_value(entities, "command_name")
-            if (
-                row_user == incoming.user_id
-                and row_project == (incoming.project_id or None)
-                and row_cmd == incoming.command_name
-            ):
-                return row
-        return None
-
-    @staticmethod
-    def _entity_value(entities: list[str], prefix: str) -> str | None:
-        marker = f"{prefix}:"
-        for entity in entities:
-            if entity.startswith(marker):
-                return entity[len(marker):]
-        return None
+        return rows[0] if rows else None
 
     @staticmethod
     def _params_differ(a: CLIWorkflowMemory, b: CLIWorkflowMemory) -> bool:
@@ -148,20 +135,15 @@ class CLIWorkflowVersionManager:
 
     @staticmethod
     def _merge_bindings(existing: CLIWorkflowMemory, incoming_bindings: list[Any]) -> None:
-        binding_map: dict[str, Any] = {
-            pb.param_name: pb for pb in existing.parameter_bindings
+        binding_map: dict[tuple[str, str], Any] = {
+            (pb.param_name, pb.param_value): pb for pb in existing.parameter_bindings
         }
         for pb in incoming_bindings:
-            if pb.param_name in binding_map:
-                if binding_map[pb.param_name].param_value == pb.param_value:
-                    binding_map[pb.param_name].frequency += pb.frequency
-                else:
-                    binding_map[pb.param_name].frequency = max(
-                        1, binding_map[pb.param_name].frequency - 1
-                    )
-                    pb.frequency = max(1, pb.frequency)
+            key = (pb.param_name, pb.param_value)
+            if key in binding_map:
+                binding_map[key].frequency += pb.frequency
             else:
-                binding_map[pb.param_name] = pb
+                binding_map[key] = pb
         existing.parameter_bindings = list(binding_map.values())
 
     def _update_memory_core(self, memory_id: str, memory: CLIWorkflowMemory) -> None:

@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-import json
 import os
 import shlex
 import subprocess
-import urllib.request
 from pathlib import Path
 from typing import Any
 
+from src.sources.cli._client import post_ingest
 from src.utils.ids import event_id as new_event_id
 from src.utils.time import utc_now_iso
 
@@ -20,10 +19,6 @@ def _parse_command_tokens(command_text: str) -> tuple[str, list[str]]:
     if not tokens:
         return "", []
     return tokens[0], tokens[1:]
-
-
-def _get_api_base() -> str:
-    return os.environ.get("LARKMEMORY_API_BASE", "http://127.0.0.1:8765")
 
 
 def _detect_user_id() -> str:
@@ -100,22 +95,6 @@ def build_event(
     }
 
 
-def send_event(event: dict[str, Any]) -> bool:
-    try:
-        url = f"{_get_api_base().rstrip('/')}/api/v1/ingest"
-        data = json.dumps(event, ensure_ascii=False).encode("utf-8")
-        req = urllib.request.Request(
-            url,
-            data=data,
-            headers={"Content-Type": "application/json; charset=utf-8"},
-            method="POST",
-        )
-        urllib.request.urlopen(req, timeout=2)
-        return True
-    except Exception:
-        return False
-
-
 def run_from_args(args: dict[str, Any]) -> bool:
     command = str(args.get("command") or "")
     if not command.strip():
@@ -126,4 +105,8 @@ def run_from_args(args: dict[str, Any]) -> bool:
         cwd=str(args.get("cwd", "")),
         duration_ms=int(args.get("duration", 0)),
     )
-    return send_event(event)
+    try:
+        post_ingest(event)
+        return True
+    except Exception:
+        return False

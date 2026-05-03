@@ -52,6 +52,13 @@ class CLIWorkflowDomainHandler:
 
         memory_ids: list[str] = []
         for candidate in candidates:
+            if not candidate.is_admissible():
+                logger.info(
+                    "action=candidate_filtered event_id=%s command=%s",
+                    event.event_id,
+                    candidate.memory.command_name,
+                )
+                continue
             version_decision = self.version_manager.detect_update(candidate.memory)
 
             if version_decision.should_reinforce and version_decision.old_memory_id:

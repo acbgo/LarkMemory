@@ -72,6 +72,18 @@ class TestHandlerIngest:
         assert core["domain"] == "cli_workflow"
         assert core["scope"] == "user"
 
+    def test_is_admissible_filters_candidate(self, stores):
+        """No params + execution_count=1 → is_admissible() returns False, memory not stored."""
+        _, memory_store = stores
+        handler = CLIWorkflowDomainHandler(memory_store)
+        event = make_shell_event("git pull", project_id="backend")
+        runtime = DomainRuntime(
+            memory_store=memory_store,
+            add_memory=_add_memory(memory_store),
+        )
+        result = handler.ingest_event(event, runtime)
+        assert len(result.memory_ids) == 0
+
     def test_ingest_trivial_command_returns_no_candidates(self, stores):
         _, memory_store = stores
         handler = CLIWorkflowDomainHandler(memory_store)
@@ -182,6 +194,30 @@ class TestHandlerRetrieve:
         )
         results = handler.retrieve(query, top_k=5)
         assert len(results) == 0
+
+    def test_reinforce_keeps_old_param_values(self, stores):
+        """When param value changes, old value frequency should not be decayed."""
+        _, memory_store = stores
+        handler = CLIWorkflowDomainHandler(memory_store)
+        add = _add_memory(memory_store)
+
+        e1 = make_shell_event("lark project deploy --env prod")
+        r1 = handler.ingest_event(e1, DomainRuntime(memory_store=memory_store, add_memory=add))
+
+        e2 = make_shell_event("lark project deploy --env staging")
+        r2 = handler.ingest_event(e2, DomainRuntime(memory_store=memory_store, add_memory=add))
+
+        # Same memory should be reinforced (same user+project+command)
+        assert r1.memory_ids[0] == r2.memory_ids[0]
+
+        core = memory_store.get_memory(r1.memory_ids[0])
+        restored = CLIWorkflowMemory.from_memory_core(core)
+        bindings = {(pb.param_name, pb.param_value): pb.frequency for pb in restored.parameter_bindings}
+        # Both prod and staging should be present
+        assert ("env", "prod") in bindings
+        assert ("env", "staging") in bindings
+        # Old value frequency should not have been decremented
+        assert bindings[("env", "prod")] == 1
 
     def test_retrieve_filters_by_project(self, stores):
         _, memory_store = stores

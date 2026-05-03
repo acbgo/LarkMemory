@@ -1,29 +1,10 @@
 from __future__ import annotations
 
-import json
 import os
-import urllib.request
 from typing import Any
 
+from src.sources.cli._client import post_retrieve
 from src.sources.cli.ingest import _detect_project_id, _detect_user_id
-
-
-def _get_api_base() -> str:
-    return os.environ.get("LARKMEMORY_API_BASE", "http://127.0.0.1:8765")
-
-
-def _post_retrieve(payload: dict[str, Any]) -> list[dict[str, Any]]:
-    url = f"{_get_api_base().rstrip('/')}/api/v1/retrieve"
-    data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-    req = urllib.request.Request(
-        url,
-        data=data,
-        headers={"Content-Type": "application/json; charset=utf-8"},
-        method="POST",
-    )
-    resp = urllib.request.urlopen(req, timeout=5)
-    body = json.loads(resp.read().decode("utf-8"))
-    return body.get("results") or []
 
 
 def _hit_to_workflow(hit: dict[str, Any]) -> dict[str, Any] | None:
@@ -103,7 +84,7 @@ def run_suggest(
         payload["project_id"] = actual_project
 
     try:
-        results = _post_retrieve(payload)
+        results = post_retrieve(payload)
         if command:
             results = [
                 r for r in results
@@ -133,7 +114,7 @@ def run_complete(line: str, cur: str, *, cwd: str | None = None) -> str:
         payload["project_id"] = actual_project
 
     try:
-        results = _post_retrieve(payload)
+        results = post_retrieve(payload)
     except Exception:
         return ""
 

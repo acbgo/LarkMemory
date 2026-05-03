@@ -107,7 +107,7 @@ if command -v add-zsh-hook >/dev/null 2>&1; then
     add-zsh-hook precmd _lark_precmd
 fi
 
-compdef _lark_memory_complete_wrapper -first- 2>/dev/null || true
+compdef _lark_memory_complete_wrapper '*' 2>/dev/null || true
 # <<< LarkMemory hook <<<
 """
 

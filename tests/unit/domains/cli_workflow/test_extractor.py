@@ -146,6 +146,20 @@ class TestShellExtraction:
         assert len(candidates) == 1
         assert "known_toolchain" in candidates[0].signals
 
+    def test_single_token_known_toolchain_filtered(self):
+        """Bare 'npm' with no args is known toolchain but single token → filtered."""
+        extractor = CLIWorkflowExtractor()
+        event = make_shell_event("npm")
+        candidates = extractor.extract(event)
+        assert len(candidates) == 0
+
+    def test_single_token_docker_filtered(self):
+        """Bare 'docker' with no args → filtered."""
+        extractor = CLIWorkflowExtractor()
+        event = make_shell_event("docker")
+        candidates = extractor.extract(event)
+        assert len(candidates) == 0
+
     def test_empty_command(self):
         extractor = CLIWorkflowExtractor()
         event = make_shell_event("")
