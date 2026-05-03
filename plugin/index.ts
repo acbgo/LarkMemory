@@ -1,9 +1,15 @@
 /**
  * LarkMemory OpenClaw Plugin
  *
- * Core flow:
- *   1. before_prompt_build  -> retrieve memories, inject prompt context.
- *   2. agent_end            -> ingest final agent reply for later extraction.
+ * Thin pipe — no domain-specific logic.
+ * All messages treated uniformly; backend handles routing, admission, extraction.
+ *
+ * before_prompt_build:
+ *   1. ingest user message  (fire-and-forget)
+ *   2. retrieve memories    (inject into prompt context)
+ *
+ * agent_end:
+ *   1. ingest agent reply + user_query  (full conversation context)
  */
 
 import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
@@ -152,7 +158,9 @@ function collectContext(event: unknown, ctx: unknown, config: PluginConfig): Jso
     team_id: stringOrUndefined(evt.teamId ?? evt.team_id),
     workspace_id: stringOrUndefined(evt.workspaceId ?? evt.workspace_id),
     thread_id: stringOrUndefined(evt.threadId ?? evt.thread_id ?? evt.chatId ?? evt.chat_id),
-    scope: "project",
+    scope: stringOrUndefined(
+      evt.scope ?? evt.scope_type ?? asRecord(ctx).scope,
+    ) ?? "project",
   };
   return Object.fromEntries(
     Object.entries(context).filter(([, value]) => value !== undefined && value !== ""),
@@ -236,23 +244,26 @@ async function ingestEvent(
   config: PluginConfig,
   hook: string,
   tags: string[],
+  extraPayload?: JsonObject,
 ) {
   if (!contentText.trim()) {
     log("INGEST", "Skip empty content");
     return null;
   }
   const evt = asRecord(event);
+  const payload: JsonObject = {
+    hook,
+    event_keys: Object.keys(evt),
+    ...(extraPayload ?? {}),
+  };
   const body = {
     event_type: "chat_message",
-    source_type: "feishu_chat",
+    source_type: "openclaw",
     occurred_at: new Date().toISOString(),
     context: collectContext(event, ctx, config),
     title: stringOrUndefined(evt.title),
     content_text: contentText,
-    payload: {
-      hook,
-      event_keys: Object.keys(evt),
-    },
+    payload,
     raw_payload: jsonSafe(evt) as JsonObject,
     tags,
   };
@@ -296,17 +307,35 @@ function buildMemoryContext(memories: BackendMemoryHit[]): string {
   if (memories.length === 0) {
     return "";
   }
-  const lines = memories.map((memory, index) => {
-    const title = memory.summary_text || memory.content_text || "(empty memory)";
+  const lines: string[] = [];
+  for (let i = 0; i < memories.length; i++) {
+    const m = memories[i];
     const score =
-      typeof memory.score === "number" ? ` score=${memory.score.toFixed(3)}` : "";
-    return `${index + 1}. [${memory.domain ?? "unknown"}]${score} ${title}`;
-  });
+      typeof m.score === "number" ? ` score=${m.score.toFixed(3)}` : "";
+    // Prefer summary_text (200-char truncated), fall back to content_text first 300 chars
+    const body = (
+      truncate(m.summary_text, 200) ||
+      truncate(m.content_text, 300) ||
+      "(empty memory)"
+    );
+    lines.push(`${i + 1}. [${m.domain ?? "unknown"}]${score}`);
+    lines.push(body);
+  }
+  if (lines.length === 0) {
+    return "";
+  }
   return [
     "LarkMemory retrieved relevant long-term memories:",
     ...lines,
     "Use these memories only when they are relevant to the current user request.",
   ].join("\n");
+}
+
+function truncate(text: string | null | undefined, maxLen: number): string {
+  if (!text) return "";
+  const trimmed = text.trim();
+  if (trimmed.length <= maxLen) return trimmed;
+  return trimmed.slice(0, maxLen) + "...";
 }
 
 const STATIC_PROTOCOL = [
@@ -322,17 +351,29 @@ export default definePluginEntry({
   description: "飞书企业级长程协作 Memory 系统",
 
   register(api) {
+    let lastUserMessage = "";
+
     api.on("before_prompt_build", async (event, ctx) => {
       const config = readConfig(ctx);
-      sep("HOOK: before_prompt_build → memory retrieve");
       const userMessage = extractText(event);
+      lastUserMessage = userMessage;
       const context = collectContext(event, ctx, config);
-      log("INPUT", `Prompt message: "${userMessage}"`);
-      log("CONTEXT", "Prompt context", context);
 
+      sep("HOOK: before_prompt_build");
+      log("INPUT", `User message: "${userMessage}"`);
+
+      // Always ingest user message for memory extraction
+      ingestEvent(
+        userMessage, event, ctx, config,
+        "before_prompt_build",
+        ["openclaw"],
+      );
+
+      // Always retrieve for context injection
       const memories = await retrieveMemories(userMessage, event, ctx, config);
       const memoryContext = buildMemoryContext(memories);
 
+      log("CONTEXT", `Injected ${memories.length} memories`);
       sep("before_prompt_build complete");
       console.log();
       return {
@@ -343,16 +384,23 @@ export default definePluginEntry({
 
     api.on("agent_end", async (event, ctx) => {
       const config = readConfig(ctx);
-      sep("HOOK: agent_end → reply ingest");
+      sep("HOOK: agent_end");
       const reply = extractReply(event);
       log("OUTPUT", `Agent reply: ${reply.substring(0, 300)}`);
+
+      if (!lastUserMessage) {
+        log("WARN", "agent_end triggered without prior user message — user_query will be empty");
+      }
+
+      const extraPayload: JsonObject = { agent_reply: reply };
+      if (lastUserMessage) {
+        extraPayload.user_query = lastUserMessage;
+      }
       const result = await ingestEvent(
-        reply,
-        event,
-        ctx,
-        config,
+        reply, event, ctx, config,
         "agent_end",
-        ["openclaw", "agent_end", "agent_reply"],
+        ["openclaw"],
+        extraPayload,
       );
       log("INGEST", "Reply ingest result", result);
       sep("agent_end complete");

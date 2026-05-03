@@ -47,6 +47,27 @@ compdef _lark_memory_complete_wrapper '*' 2>/dev/null || true
 """
 
 
+ZSH_AUTOSUGGEST_STRATEGY = r"""# LarkMemory zsh-autosuggestions strategy
+# Provides inline grey-text preview of command parameters based on memory.
+# Requires: zsh-autosuggestions plugin
+
+_lark_memory_suggestion() {
+    local cmd="${1:-$BUFFER}"
+    [ -z "$cmd" ] && return
+    local suggestion
+    suggestion=$(lark-memory complete -- "$cmd" "" 2>/dev/null | head -1)
+    [ -n "$suggestion" ] && echo "$suggestion"
+}
+
+# Register as the primary suggestion strategy
+ZSH_AUTOSUGGEST_STRATEGY=(_lark_memory_suggestion $ZSH_AUTOSUGGEST_STRATEGY)
+"""
+
+
+def get_autosuggestion_strategy() -> str:
+    return ZSH_AUTOSUGGEST_STRATEGY
+
+
 def get_completion_script(shell: str) -> str:
     if shell == "zsh":
         return ZSH_COMPLETION + "\n" + ZSH_COMPLETER_WRAPPER

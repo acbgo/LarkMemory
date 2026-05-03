@@ -41,3 +41,11 @@ class TestGetCompletionScript:
     def test_zsh_script_uses_compadd(self):
         script = get_completion_script("zsh")
         assert "compadd" in script
+
+    def test_autosuggest_strategy_calls_complete(self):
+        from src.sources.cli.completion import get_autosuggestion_strategy
+        strategy = get_autosuggestion_strategy()
+        assert "lark-memory complete" in strategy
+        assert "_lark_memory_suggestion" in strategy
+        assert "ZSH_AUTOSUGGEST_STRATEGY" in strategy
+        assert "2>/dev/null" in strategy

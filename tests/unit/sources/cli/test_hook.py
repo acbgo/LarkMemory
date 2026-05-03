@@ -200,6 +200,57 @@ class TestInstallUninstall:
         assert "export PATH" in content
         assert HOOK_MARKER_START in content
 
+    def test_install_bash_optimizes_inputrc(self, temp_dir, monkeypatch):
+        rc_file = self._rc_file(temp_dir)
+        inputrc = temp_dir / ".inputrc"
+        monkeypatch.setattr(
+            "src.sources.cli.hook.get_config_path",
+            lambda shell=None: rc_file,
+        )
+        monkeypatch.setattr(
+            "src.sources.cli.hook.Path.home",
+            lambda: temp_dir,
+        )
+        install("bash")
+        assert inputrc.exists()
+        content = inputrc.read_text(encoding="utf-8")
+        assert "show-all-if-ambiguous" in content
+
+    def test_install_zsh_creates_autosuggest_strategy(self, temp_dir, monkeypatch):
+        rc_file = temp_dir / ".zshrc"
+        lark_dir = temp_dir / ".larkmemory"
+        monkeypatch.setattr(
+            "src.sources.cli.hook.get_config_path",
+            lambda shell=None: rc_file,
+        )
+        monkeypatch.setattr(
+            "src.sources.cli.hook.Path.home",
+            lambda: temp_dir,
+        )
+        install("zsh")
+        strategy_file = lark_dir / "zsh-autosuggest-strategy.zsh"
+        assert strategy_file.exists()
+        content = strategy_file.read_text(encoding="utf-8")
+        assert "ZSH_AUTOSUGGEST_STRATEGY" in content
+
+    def test_uninstall_cleans_strategy_file(self, temp_dir, monkeypatch):
+        rc_file = temp_dir / ".zshrc"
+        rc_file.write_text(get_hook_template("zsh"), encoding="utf-8")
+        lark_dir = temp_dir / ".larkmemory"
+        lark_dir.mkdir()
+        strategy_file = lark_dir / "zsh-autosuggest-strategy.zsh"
+        strategy_file.write_text("strategy", encoding="utf-8")
+        monkeypatch.setattr(
+            "src.sources.cli.hook.get_config_path",
+            lambda shell=None: rc_file,
+        )
+        monkeypatch.setattr(
+            "src.sources.cli.hook.Path.home",
+            lambda: temp_dir,
+        )
+        uninstall("zsh")
+        assert not strategy_file.exists()
+
     def test_reinstall_replaces_old_block(self, temp_dir, monkeypatch):
         rc_file = self._rc_file(temp_dir)
         rc_file.write_text(

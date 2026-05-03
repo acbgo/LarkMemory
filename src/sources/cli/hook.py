@@ -145,6 +145,42 @@ def get_hook_template(shell: str | None = None) -> str:
     return _BASH_HOOK_TEMPLATE
 
 
+_AUTOSUGGEST_MARKER = "# >>> LarkMemory autosuggest >>>"
+
+_INPUTRC_SETTINGS = """# >>> LarkMemory inputrc >>>
+# LarkMemory - enhanced Tab completion for bash
+set show-all-if-ambiguous on
+set colored-stats on
+set completion-query-items 0
+# <<< LarkMemory inputrc <<<
+"""
+
+
+def _install_autosuggest_strategy(shell: str) -> str | None:
+    """Install zsh-autosuggestions strategy file. Returns path if installed."""
+    home = Path.home()
+    strategy_dir = home / ".larkmemory"
+    strategy_dir.mkdir(parents=True, exist_ok=True)
+    strategy_file = strategy_dir / "zsh-autosuggest-strategy.zsh"
+
+    from src.sources.cli.completion import get_autosuggestion_strategy
+    strategy_file.write_text(get_autosuggestion_strategy(), encoding="utf-8")
+    return str(strategy_file)
+
+
+def _optimize_inputrc() -> str | None:
+    """Append readline optimizations to ~/.inputrc. Returns path if written."""
+    inputrc = Path.home() / ".inputrc"
+    existing = inputrc.read_text(encoding="utf-8") if inputrc.exists() else ""
+
+    if _AUTOSUGGEST_MARKER in existing:
+        return None  # Already installed, skip
+
+    new_content = existing.rstrip("\n") + "\n\n" + _INPUTRC_SETTINGS
+    inputrc.write_text(new_content.lstrip("\n") + "\n", encoding="utf-8")
+    return str(inputrc)
+
+
 def install(shell: str | None = None) -> tuple[bool, str]:
     if shell is None:
         shell = detect_shell()
@@ -162,7 +198,25 @@ def install(shell: str | None = None) -> tuple[bool, str]:
 
     new_content = (existing.rstrip("\n") + "\n\n" + hook_content).lstrip("\n")
     config_path.write_text(new_content + "\n", encoding="utf-8")
-    return True, f"hook installed for {shell} → {config_path}"
+
+    extras: list[str] = []
+
+    # zsh: install autosuggestion strategy
+    if shell == "zsh":
+        strategy_path = _install_autosuggest_strategy(shell)
+        if strategy_path:
+            extras.append(f"autosuggest strategy → {strategy_path}")
+
+    # bash: optimize ~/.inputrc for Tab completion
+    if shell == "bash":
+        inputrc_path = _optimize_inputrc()
+        if inputrc_path:
+            extras.append(f"inputrc optimized → {inputrc_path}")
+
+    msg = f"hook installed for {shell} → {config_path}"
+    if extras:
+        msg += "\n" + "\n".join(extras)
+    return True, msg
 
 
 def uninstall(shell: str | None = None) -> tuple[bool, str]:
@@ -181,6 +235,36 @@ def uninstall(shell: str | None = None) -> tuple[bool, str]:
     cleaned = _MARKER_PATTERN.sub("", existing)
     cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).rstrip("\n")
     config_path.write_text(cleaned + "\n", encoding="utf-8")
+
+    # Clean up autosuggest strategy file
+    strategy_dir = Path.home() / ".larkmemory"
+    strategy_file = strategy_dir / "zsh-autosuggest-strategy.zsh"
+    if strategy_file.exists():
+        strategy_file.unlink()
+        try:
+            remaining = list(strategy_dir.iterdir())
+            if not remaining:
+                strategy_dir.rmdir()
+        except OSError:
+            pass
+
+    # Clean up inputrc
+    inputrc = Path.home() / ".inputrc"
+    if inputrc.exists():
+        content = inputrc.read_text(encoding="utf-8")
+        if _AUTOSUGGEST_MARKER in content:
+            cleaned_rc = re.sub(
+                rf"{re.escape(_AUTOSUGGEST_MARKER)}\n.*?{re.escape(HOOK_MARKER_END)}",
+                "",
+                content,
+                flags=re.DOTALL,
+            )
+            cleaned_rc = re.sub(r"\n{3,}", "\n\n", cleaned_rc).rstrip("\n")
+            if cleaned_rc.strip():
+                inputrc.write_text(cleaned_rc + "\n", encoding="utf-8")
+            else:
+                inputrc.unlink(missing_ok=True)
+
     return True, f"hook uninstalled from {config_path}"
 
 

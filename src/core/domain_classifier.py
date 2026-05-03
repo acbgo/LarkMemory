@@ -164,8 +164,6 @@ class DomainClassifier:
                 method="event_type_rule",
                 reason="command event",
             )
-        if event_type == "memory_feedback":
-            return None  # Let LLM or keywords decide
         return None
 
     async def _llm_classify(self, text: str) -> ClassifyResult:

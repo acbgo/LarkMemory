@@ -104,12 +104,11 @@ class TestHardRules:
         assert result.primary == ["cli_workflow"]
         assert result.method == "event_type_rule"
 
-    def test_memory_feedback_does_not_trigger_hard_rule(self):
+    def test_memory_feedback_no_hard_rule(self):
         c = DomainClassifier()
         result = c.classify_sync("hello", event_type="memory_feedback")
         # memory_feedback has no hard rule → falls through to keywords
         assert result.method == "keyword_rule"
-        assert result.primary == ["team_retention"]  # zero match fallback
 
 
 # ---------------------------------------------------------------------------

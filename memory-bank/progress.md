@@ -536,8 +536,23 @@
   6. zsh `compdef -first-` 无效语法 → 改为 `compdef '*'` 标准语法。
 - 全量验证：396 passed, 6 subtests passed，零回退。
 
-## 2026-05-03 下一步 — Core 层动态路由
+## 2026-05-03 Core 层统一动态路由（DomainClassifier 重构）
 
-- 当前 `DomainRouter` 硬编码了具体领域的关键词匹配和 event_type 判断，新增领域需修改 router.py。
-- Router 不感知已注册的 `domain_handlers`，`route_query()` 在检索链路中未被调用（`retrieve_async` 直接用 IntentAnalyzer）。
-- 改进方向：Router 只做编排，领域判断逻辑留在各自 handler 内；构造时传入 domain_handlers，路由时遍历 handlers 收集匹配结果。
+- 新增 `src/core/domain_classifier.py`：统一四域分类器，LLM `atext()` 四标签纯文本（temperature=0）+ 硬规则（`command_finished`→CLI）+ 统一关键词降级。
+- 重构 `Router`（-130行）和 `IntentAnalyzer`（-150行）：各自委托 `DomainClassifier`，移除自有 LLM/关键词逻辑。`MemoryService` 创建单一实例同时注入二者。
+- 修复双 primary 路径漏了 secondary affinity。
+- 新增 28 个 `DomainClassifier` 独立单测。
+
+## 2026-05-03 方向 A — 同事审查第二轮修复
+
+- 移除 Router 中未使用的 `default_domain` 参数（fallback 由 DomainClassifier 统一管理）。
+- 根据 classifier 返回值动态设置 `RouteDecision.fallback_used`（method="keyword_rule" 且 confidence≤0.3 时）。
+- 新增 `tests/unit/core/test_domain_classifier.py`：28 tests 覆盖四域关键词命中、双 primary、零命中 fallback、memory_feedback 不触发硬规则、LLM 异常降级、_parse_label 非法输入抛异常。
+
+## 2026-05-03 方向 A — 阶段 3：OpenClaw 插件接入
+
+- 插件改为纯管道，不做方向特定逻辑。所有消息统一处理：`source_type` 改为 `"openclaw"`。
+- `before_prompt_build`：增加 `ingestEvent(userMessage)` 始终发送用户消息到后端（fire-and-forget），后端 `DomainClassifier` 负责路由到对应 domain。
+- `agent_end`：payload 增加 `user_query`，将完整对话上下文（用户问题 + Agent 回复）发给后端。
+- `buildMemoryContext`：统一使用 `content_text`（所有 domain），替换仅用 `summary_text` 的旧逻辑。
+- 验证：428 passed, 6 subtests passed。
