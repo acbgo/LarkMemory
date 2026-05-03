@@ -150,6 +150,7 @@ celerybeat.pid
 # Environments
 .env
 .envrc
+larkmemory.env
 .venv
 env/
 venv/

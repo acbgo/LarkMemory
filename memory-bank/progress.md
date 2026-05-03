@@ -432,3 +432,12 @@
 - 验证：`python -m pytest tests\unit\api\test_rerank_api.py -q -p no:cacheprovider`，3 passed。
 - 验证：`python -m pytest tests\unit\llm tests\unit\app tests\unit\api tests\unit\domains\team_retention tests\unit\core\test_service.py -q -p no:cacheprovider`，141 passed。
 - 验证：`python -m compileall src tests`，通过。
+
+## 2026-05-03 服务启动配置文件
+
+- 已在项目根目录新增本地 `larkmemory.env`，集中维护启动前需要的 `LARKMEMORY_*` 环境变量。
+- 已新增 `larkmemory.env.example` 作为可提交模板，并将 `larkmemory.env` 加入 `.gitignore`，避免真实 API key 进入版本库。
+- `src/app/config.py` 已支持启动时自动读取 `larkmemory.env`，也支持通过 `LARKMEMORY_CONFIG_FILE` 指定其他配置文件。
+- 配置优先级为真实环境变量高于配置文件，便于临时覆盖端口、路径或模型服务地址。
+- 配置文件已覆盖 app、SQLite、Chroma、日志、LLM、embedding 服务和 rerank 服务相关变量。
+- README 已补充推荐启动方式：先改 `larkmemory.env`，再按原方式执行 `uvicorn`；不依赖 PowerShell/cmd 脚本。

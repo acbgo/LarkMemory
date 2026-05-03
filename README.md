@@ -40,6 +40,26 @@ uv run python -m compileall src tests
 
 默认端口为 `8765`，默认 SQLite 路径为 `.larkmemory/larkmemory.db`。
 
+推荐先修改根目录的 `larkmemory.env`，再正常启动服务。项目启动时会自动读取该配置文件；仓库提供 `larkmemory.env.example` 作为模板，真实 `larkmemory.env` 默认不提交。
+
+```powershell
+uv run uvicorn src.app.main:app --host 127.0.0.1 --port 8765
+```
+
+如果要使用其他配置文件，先设置 `LARKMEMORY_CONFIG_FILE` 指向它；真实环境变量优先级高于配置文件。
+
+```powershell
+$env:LARKMEMORY_CONFIG_FILE=".\larkmemory.env"
+uv run uvicorn src.app.main:app --host 127.0.0.1 --port 8765
+```
+
+Linux/macOS 示例：
+
+```bash
+export LARKMEMORY_CONFIG_FILE=./larkmemory.env
+uv run uvicorn src.app.main:app --host 127.0.0.1 --port 8765
+```
+
 ```bash
 uv run uvicorn src.app.main:app --host 127.0.0.1 --port 8765
 ```

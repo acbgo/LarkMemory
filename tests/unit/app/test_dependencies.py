@@ -233,7 +233,14 @@ class TestDependencies(unittest.TestCase):
             reset_dependency_cache()
             self.assertIsNone(get_rerank_client())
 
-        with patch.dict(os.environ, {"LARKMEMORY_ENABLE_RERANK": "true"}, clear=True):
+        with patch.dict(
+            os.environ,
+            {
+                "LARKMEMORY_ENABLE_RERANK": "true",
+                "LARKMEMORY_CONFIG_FILE": str(self.temp_dir / "missing.env"),
+            },
+            clear=True,
+        ):
             reset_dependency_cache()
             self.assertIsNone(get_rerank_client())
 

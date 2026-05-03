@@ -1,13 +1,24 @@
 from __future__ import annotations
 
 import os
+import shutil
 import unittest
+import uuid
+from pathlib import Path
 from unittest.mock import patch
 
 from src.app.config import _env_bool, _env_float, _env_int, load_settings
 
 
 class TestConfig(unittest.TestCase):
+    def _temp_dir(self) -> Path:
+        root = Path.cwd() / ".tmp-tests"
+        root.mkdir(exist_ok=True)
+        temp_dir = root / f"app-config-{uuid.uuid4().hex}"
+        temp_dir.mkdir()
+        self.addCleanup(shutil.rmtree, temp_dir, True)
+        return temp_dir
+
     def test_load_settings_defaults(self) -> None:
         with patch.dict(os.environ, {}, clear=True):
             settings = load_settings()
@@ -42,6 +53,51 @@ class TestConfig(unittest.TestCase):
         self.assertEqual(settings.sqlite_path, ".tmp-tests/app.db")
         self.assertEqual(settings.log_dir, ".tmp-tests/logs")
         self.assertEqual(settings.log_file, "service.log")
+
+    def test_load_settings_reads_env_file_from_config_path(self) -> None:
+        config_path = self._temp_dir() / "larkmemory.env"
+        config_path.write_text(
+            "\n".join(
+                [
+                    "# local runtime config",
+                    "LARKMEMORY_PORT=9010",
+                    "LARKMEMORY_ENABLE_EMBEDDING=true",
+                    "LARKMEMORY_EMBEDDING_PROVIDER=http",
+                    "LARKMEMORY_EMBEDDING_BASE_URL=http://127.0.0.1:8001/v1",
+                    "LARKMEMORY_EMBEDDING_MODEL=Qwen/Qwen3-Embedding-4B",
+                    "LARKMEMORY_ENABLE_RERANK=true",
+                    "LARKMEMORY_RERANK_BASE_URL=http://127.0.0.1:8002",
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        with patch.dict(os.environ, {"LARKMEMORY_CONFIG_FILE": str(config_path)}, clear=True):
+            settings = load_settings()
+
+        self.assertEqual(settings.port, 9010)
+        self.assertTrue(settings.enable_embedding)
+        self.assertEqual(settings.embedding_provider, "http")
+        self.assertEqual(settings.embedding_base_url, "http://127.0.0.1:8001/v1")
+        self.assertEqual(settings.embedding_model, "Qwen/Qwen3-Embedding-4B")
+        self.assertTrue(settings.enable_rerank)
+        self.assertEqual(settings.rerank_base_url, "http://127.0.0.1:8002")
+
+    def test_environment_overrides_env_file_values(self) -> None:
+        config_path = self._temp_dir() / "larkmemory.env"
+        config_path.write_text("LARKMEMORY_PORT=9010\n", encoding="utf-8")
+
+        with patch.dict(
+            os.environ,
+            {
+                "LARKMEMORY_CONFIG_FILE": str(config_path),
+                "LARKMEMORY_PORT": "9020",
+            },
+            clear=True,
+        ):
+            settings = load_settings()
+
+        self.assertEqual(settings.port, 9020)
 
     def test_env_bool_supports_common_values(self) -> None:
         for value in ("1", "true", "yes", "on", "TRUE"):
