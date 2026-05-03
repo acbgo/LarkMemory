@@ -7,6 +7,7 @@ from src.app.config import AppSettings, load_settings
 from src.core import MemoryService
 from src.domains.project_decision import ProjectDecisionDomainHandler
 from src.domains.team_retention.handler import TeamRetentionDomainHandler
+from src.domains.cli_workflow import CLIWorkflowDomainHandler
 from src.llm import (
     EmbeddingClient,
     HttpRerankProvider,
@@ -167,6 +168,10 @@ def get_memory_service() -> MemoryService:
                 get_team_retention_store(),
                 embedding_store=get_embedding_store(),
                 embedding_client=get_embedding_client(),
+                llm_client=get_llm_client(),
+            ),
+            CLIWorkflowDomainHandler(
+                get_memory_core_store(),
                 llm_client=get_llm_client(),
             ),
         ],
