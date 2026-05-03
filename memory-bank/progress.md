@@ -442,6 +442,56 @@
 - 配置文件已覆盖 app、SQLite、Chroma、日志、LLM、embedding 服务和 rerank 服务相关变量。
 - README 已补充推荐启动方式：先改 `larkmemory.env`，再按原方式执行 `uvicorn`；不依赖 PowerShell/cmd 脚本。
 
+## 2026-05-03 方向 A：CLI 工作流记忆 — 阶段 1（Domain 最小闭环）
+
+- 已实现比赛方向 A `cli_workflow` 领域记忆的完整后端闭环：事件写入 → 模板抽取 → MemoryCore 存储 → 按用户/项目检索召回。
+- 新增 `src/domains/cli_workflow/`：
+  - `models.py` — `CLIWorkflowMemory`、`ParameterBinding`、`CLIWorkflowCandidate`，实现 `to_memory_core()` / `from_memory_core()` 双向转换。不新增 MemoryCore 表列，domain 数据编码进 `entities`/`tags`/`content_text`。
+  - `extractor.py` — 规则抽取器：`shlex.split` token 化 → 提取基础命令名（前 3 token） → `--key value`/`--key=value`/`-x value` 参数化 → 过滤 `cd`/`ls` 等无意义命令。支持 shell 和 openclaw 两种事件源。
+  - `handler.py` — `CLIWorkflowDomainHandler` 实现 `MemoryDomainHandler` 协议，编排 extract → is_admissible → version detect → store 链路。
+  - `retriever.py` — 按 `user_id` 严格隔离（个人记忆），综合命令名匹配、关键词、执行频率（importance）、新鲜度（freshness_score）、成功率（confidence）多维度打分。
+  - `versioning.py` — 以 `(user_id, project_id, command_name)` 为匹配键，Shell 重复执行走强化更新（累计次数+参数频率），OpenClaw 显式教学覆盖 Shell 统计。`entity_filters` 下推 SQL 过滤。
+- 已在 `src/app/dependencies.py` 注册 `CLIWorkflowDomainHandler`。
+- 已新增 `tests/unit/domains/cli_workflow/`，62 tests 覆盖模型互转、抽取过滤、版本覆盖、检索打分。
+- 验证：`python -m pytest tests/unit/domains/cli_workflow -q`，62 passed。
+
+## 2026-05-03 方向 A：CLI 工作流记忆 — 阶段 2（CLI 客户端工具）
+
+- 已实现 `lark-memory` 命令行工具，提供 shell 被动监听 + Tab 补全。
+- 新增 `src/sources/cli/`：
+  - `main.py` — CLI 入口（argparse），5 个子命令：`hook install/uninstall/status`、`suggest`、`complete`、`completion`、`ingest`。
+  - `hook.py` — shell 钩子安装/卸载，标记块（`# >>> LarkMemory hook >>>`/`# <<<`）管理，可逆幂等。bash（`trap DEBUG`+`PROMPT_COMMAND`）和 zsh（`add-zsh-hook`）双支持。hook 函数过滤自身命令（`lark-memory*`）、空命令。补全函数嵌入模板，`complete -D`（bash）/ `compdef '*'`（zsh）注册为通用回退。
+  - `ingest.py` — shell hook 捕获命令后构造 `NormalizedEvent`（补齐 `payload.command`+`payload.args`），异步 POST `/api/v1/ingest`，HTTP 失败静默降级。
+  - `retrieve.py` — `suggest` 和 `complete` 子命令实现，调 `POST /api/v1/retrieve`，用 `CLIWorkflowMemory.from_memory_core()` 解析 `MemoryHit` 响应（适配 API 实际返回格式，不依赖不存在的 `extra` 字段）。
+  - `completion.py` — 动态生成 bash/zsh completion script。
+  - `_client.py` — 公共 HTTP 客户端（`post_ingest`/`post_retrieve`），消除 `_get_api_base()` 重复定义。
+- 已新增 `tests/unit/sources/cli/`，52 tests 覆盖 hook 安装/卸载/幂等、事件构造 payload 完整性、MemoryHit 解析、补全候选生成。
+- 验证：`python -m pytest tests/unit/sources/cli -q`，49 passed。
+
+## 2026-05-03 方向 A：同事审查修复（6 项问题）
+
+- 修复 `is_admissible()` 死代码：在 `handler.py` 的 `ingest_event()` 循环中增加 `if not candidate.is_admissible(): continue`。
+- 修复单字已知工具链命令（如裸敲 `npm`）绕过过滤：`extractor.py` 中 `_has_known_prefix` 后增加 `len(tokens) == 1` 判断。
+- 修复 `_merge_bindings` 旧参数值频率被错误衰减：改用 `(param_name, param_value)` 做 key，历史频率只增不减，让 `freshness_score` 推高最近值。
+- 提取 `_get_api_base()` 到公共模块 `_client.py`，消除 `ingest.py` 和 `retrieve.py` 中的重复定义。
+- `_find_existing` 全表 O(n) 扫描下推 SQL：`MemoryCoreStore.search_memory_candidates` 新增 `entity_filters` 参数，生成 `entities_json LIKE` 条件。
+- 修复 zsh `compdef -first-` 无效语法：改为 `compdef _lark_memory_complete_wrapper '*'`。
+
+## 2026-05-03 Core 层重构：统一动态路由
+
+- 两套路由逻辑（`Router.route_event()` 和 `IntentAnalyzer.analyze()`）各自维护关键词列表，Ingest 侧缺少 CLI 关键词导致非 `command_finished` 事件（如 OpenClaw 教学消息）路由错误。
+- 新增 `src/core/domain_classifier.py` — 统一四域分类器：
+  - LLM：`atext()` 四标签纯文本分类（temperature=0, max_tokens=16），输出 `cli_workflow`/`project_decision`/`personal_preference`/`team_retention`。
+  - 硬规则：`command_finished`/`command_failed` → `cli_workflow`（0ms 直接返回）。
+  - 关键词降级：统一的 4 域 × ~20 词列表（合并自 Router + IntentAnalyzer），含 CLI 关键词（`--` flag 模式、部署/build/命令等）。
+  - `classify()` async 入口（供 IntentAnalyzer），`classify_sync()` sync 入口（供 Router）。
+- 重构 `src/core/router.py`（-130 行）：移除自有 LLM/关键词逻辑和 `_matches_*` 辅助函数，持有 `DomainClassifier`，`route_event()` 委托 `classify_sync()`。
+- 重构 `src/retrieval/intent_analyzer.py`（-150 行）：移除 `_KEYWORD_RULES`/`_analyze_with_llm()`/`_keyword_fallback()`，持有 `DomainClassifier`，`analyze()` 委托 `classify()`。
+- 移除 `Router.route_query()` 死代码（无调用方）。
+- `MemoryService` 创建 `DomainClassifier` 实例并传入 Router 和 IntentAnalyzer，确保同一实例复用。
+- 适配测试：`test_router.py` 新增 CLI 关键词路由测试、FakeLLM 改用 `atext()`；`test_service.py` FakeLLM 同时支持 `atext()`（路由）和 `ajson()`（准入/抽取）。
+- 验证：`python -m pytest tests -q`，400 passed, 6 subtests passed；`python -m compileall src tests` 通过。
+
 ## 2026-05-03 方向 A CLI 工作流记忆 — 完整交付
 
 ### 阶段 1：后端 domain 记忆引擎

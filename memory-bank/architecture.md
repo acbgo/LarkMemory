@@ -70,7 +70,8 @@ LarkMemory/
 ├── core/                           # 业务编排与记忆生命周期治理
 │   ├── service.py                  # 统一业务入口
 │   ├── domain_handler.py           # domain handler 协议与运行时接口
-│   ├── router.py                   # 事件和查询的领域路由
+│   ├── domain_classifier.py        # 统一四域分类器（LLM atext()+硬规则+关键词降级）
+│   ├── router.py                   # 事件路由（委托 DomainClassifier）
 │   ├── memory_core.py              # 统一记忆对象与状态流转
 │   ├── admission_control.py        # 长期记忆准入判断
 │   ├── dedup_merge.py              # 重复识别与合并
@@ -111,7 +112,7 @@ LarkMemory/
 │
 ├── retrieval/                      # 跨领域检索管线
 │   ├── _types.py                   # 检索链路共享数据模型
-│   ├── intent_analyzer.py          # 查询意图和目标领域分析
+│   ├── intent_analyzer.py          # 查询意图分析（委托 DomainClassifier）
 │   ├── query_rewrite.py            # topic、时间、scope、boost 信号补全
 │   ├── fusion.py                   # 多领域召回融合
 │   ├── rerank.py                   # 统一重排

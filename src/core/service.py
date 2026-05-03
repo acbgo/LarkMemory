@@ -9,6 +9,7 @@ from src.core.access_tracker import AccessTracker
 from src.core.admission_control import AdmissionController
 from src.core.decay import DecayPolicy
 from src.core.dedup_merge import DedupMergeEngine
+from src.core.domain_classifier import DomainClassifier
 from src.core.domain_handler import DomainRuntime, MemoryDomainHandler
 from src.core.router import DomainRouter
 from src.core.scheduler import ScheduledTaskResult, Scheduler
@@ -78,9 +79,8 @@ class MemoryService:
         self.embedding_store = embedding_store
         self.embedding_client = embedding_client
         self.llm_client = llm_client
-        self.router = router or DomainRouter(llm_client=llm_client)
-        if router is not None and getattr(router, "llm_client", None) is None:
-            router.llm_client = llm_client
+        self.classifier = DomainClassifier(llm_client=llm_client)
+        self.router = router or DomainRouter(classifier=self.classifier)
         self.admission = admission or AdmissionController(llm_client=llm_client)
         if admission is not None and getattr(admission, "llm_client", None) is None:
             admission.llm_client = llm_client
@@ -183,7 +183,7 @@ class MemoryService:
             top_k,
             include_trace,
         )
-        intent = await IntentAnalyzer(self.llm_client).analyze(query)
+        intent = await IntentAnalyzer(classifier=self.classifier).analyze(query)
         logger.info(
             "action=llm_intent_analyzer done query_text=%s intent=%s",
             query.query_text,

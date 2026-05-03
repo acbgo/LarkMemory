@@ -20,6 +20,18 @@ class FakeIngestLLM:
         self.payloads = list(payloads)
         self.calls: list[dict[str, object]] = []
 
+    async def atext(
+        self,
+        system_prompt: str | None,
+        user_prompt: str,
+        **kwargs: object,
+    ) -> str:
+        self.calls.append({"system_prompt": system_prompt or "", "user_prompt": user_prompt, "kwargs": kwargs})
+        if not self.payloads:
+            raise AssertionError("unexpected LLM call")
+        first = self.payloads.pop(0)
+        return str(first.get("domain", "team_retention"))
+
     async def ajson(self, system_prompt: str | None, user_prompt: str, **kwargs: object) -> dict[str, object]:
         self.calls.append({"system_prompt": system_prompt or "", "user_prompt": user_prompt, "kwargs": kwargs})
         if not self.payloads:
@@ -147,7 +159,7 @@ class TestService(unittest.TestCase):
         self.assertIn("use SQLite for local demo", row["content_text"])
         self.assertEqual(len(llm.calls), 3)
         self.assertIn("action=llm_memory_gate", logs)
-        self.assertIn("action=llm_route", logs)
+        self.assertIn("project_decision", logs)
         self.assertIn("action=done event_id=event-llm-project candidate_count=1", logs)
         self.assertIn("action=stored event_id=event-llm-project", logs)
 

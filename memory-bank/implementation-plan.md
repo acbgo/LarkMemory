@@ -77,20 +77,18 @@
 - `larkmemory.env` + `larkmemory.env.example`。
 - 配置文件自动加载，支持环境变量覆盖。
 
-## 阶段 10：Core 层动态路由 🔨 进行中
+## 阶段 10：Core 层动态路由 ✅ 已完成
 
-目标：消除 `DomainRouter` 中对具体领域的硬编码，让路由动态适配已注册的 domain handlers。
+目标：统一两套路由逻辑（`Router.route_event()` 和 `IntentAnalyzer.analyze()`），消除关键词不同步问题。
 
-当前问题：
-- `route_event()` 硬编码了 `command_finished → cli_workflow` 和具体中文关键词。
-- Router 不感知 `domain_handlers`，新增领域必须改 router.py。
-- `route_query()` 在检索链路中未被调用（`retrieve_async` 直接用 IntentAnalyzer）。
-
-改进方向：
-- Router 构造时接收 `domain_handlers`。
-- 每个 handler 声明自己的路由兴趣（event_type / source_type / 关键字）。
-- Router 遍历 handlers 收集匹配结果，按 priority 排序输出 primary/secondary。
-- Router 只做编排，不做领域判断。
+- 新增 `src/core/domain_classifier.py` — 统一四域分类器：
+  - LLM `atext()` 四标签纯文本（temperature=0, max_tokens=16）
+  - 硬规则：`command_finished`/`command_failed` → `cli_workflow`（0ms）
+  - 统一关键词降级（4 域 × ~20 词，合并自 Router + IntentAnalyzer）
+  - `classify()` async / `classify_sync()` sync 双入口
+- Router 和 IntentAnalyzer 各自委托 `DomainClassifier`，移除自有 LLM/关键词逻辑（共 -280 行）。
+- 移除 `Router.route_query()` 死代码。
+- `service.py` 创建单一 `DomainClassifier` 实例，注入 Router 和 IntentAnalyzer。
 
 ## 阶段 11：Benchmark 评测 🔜 待开始
 
