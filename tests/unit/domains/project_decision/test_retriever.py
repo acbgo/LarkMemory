@@ -5,6 +5,7 @@ import uuid
 from pathlib import Path
 
 from src.domains.project_decision import ProjectDecision, ProjectDecisionQuery, ProjectDecisionRetriever
+from src.llm.rerank_base import RerankResponse, RerankResult
 from src.storage import MemoryCoreStore
 
 
@@ -76,6 +77,35 @@ class VariantEmbeddingStore(FakeEmbeddingStore):
         if text == "原始表达失败":
             raise RuntimeError("single variant failed")
         return self.hits_by_text.get(text, [])
+
+
+class FakeRerankClient:
+    def __init__(self, ordered_ids: list[str]) -> None:
+        self.ordered_ids = ordered_ids
+        self.calls: list[dict[str, object]] = []
+
+    def rerank(self, query: str, documents: list[object], *, top_k: int | None = None) -> RerankResponse:
+        self.calls.append({"query": query, "documents": documents, "top_k": top_k})
+        document_by_id = {getattr(document, "id"): document for document in documents}
+        results: list[RerankResult] = []
+        for rank, memory_id in enumerate(self.ordered_ids[: top_k or len(self.ordered_ids)], start=1):
+            document = document_by_id[memory_id]
+            results.append(
+                RerankResult(
+                    id=memory_id,
+                    text=getattr(document, "text"),
+                    score=1.0 / rank,
+                    rank=rank,
+                    index=rank - 1,
+                    metadata=dict(getattr(document, "metadata")),
+                )
+            )
+        return RerankResponse(model="fake-reranker", results=results)
+
+
+class RaisingRerankClient(FakeRerankClient):
+    def rerank(self, query: str, documents: list[object], *, top_k: int | None = None) -> RerankResponse:
+        raise RuntimeError("rerank unavailable")
 
 
 def _store() -> MemoryCoreStore:
@@ -322,5 +352,97 @@ def test_single_query_variant_failure_keeps_other_vector_hits() -> None:
         assert [query["text"] for query in embedding_store.queries] == ["原始表达失败", "改写表达"]
         assert [result.decision.decision_id for result in results] == ["mem-rewritten"]
         assert results[0].memory_item.extra["vector_similarity"] == 0.8
+    finally:
+        _cleanup(store)
+
+
+def test_rrf_fuses_bm25_and_vector_and_excludes_rule_when_primary_hits_exist() -> None:
+    store = _store()
+    try:
+        _insert(store, "mem-bm25", topic="SQLite storage", decision="Use SQLite for local storage")
+        _insert(store, "mem-vector", topic="预算审批", decision="选择低成本预算方案")
+        _insert(store, "mem-shared", topic="SQLite budget", decision="Use SQLite for budget tracking")
+        _insert(store, "mem-rule-only", topic="SQLite storage", decision="Only rule should match this text")
+        store.search_bm25 = lambda *args, **kwargs: [  # type: ignore[method-assign]
+            {"memory_id": "mem-bm25", "bm25_score": 1.0},
+            {"memory_id": "mem-shared", "bm25_score": 0.5},
+        ]
+        embedding_store = FakeEmbeddingStore(
+            [
+                {"memory_id": "mem-vector", "distance": 0.1},
+                {"memory_id": "mem-shared", "distance": 0.2},
+            ]
+        )
+
+        results = ProjectDecisionRetriever(store, embedding_store=embedding_store).retrieve(
+            ProjectDecisionQuery(query_text="SQLite storage", project_id="project-1"),
+            limit=10,
+        )
+
+        assert results[0].decision.decision_id == "mem-shared"
+        assert "mem-rule-only" not in {result.decision.decision_id for result in results}
+        assert results[0].memory_item.extra["recall_sources"] == ["bm25", "vector"]
+        assert results[0].memory_item.extra["rrf_score"] > results[1].memory_item.extra["rrf_score"]
+    finally:
+        _cleanup(store)
+
+
+def test_rule_recall_is_fallback_when_bm25_and_vector_are_empty() -> None:
+    store = _store()
+    try:
+        _insert(store, "mem-rule-fallback", topic="数据库选型", decision="采用方案 B")
+        store.search_bm25 = lambda *args, **kwargs: []  # type: ignore[method-assign]
+
+        results = ProjectDecisionRetriever(store).retrieve(
+            ProjectDecisionQuery(query_text="数据库", project_id="project-1"),
+            limit=5,
+        )
+
+        assert [result.decision.decision_id for result in results] == ["mem-rule-fallback"]
+        assert results[0].memory_item.extra["recall_sources"] == ["rule"]
+    finally:
+        _cleanup(store)
+
+
+def test_rerank_client_reorders_rrf_candidates() -> None:
+    store = _store()
+    try:
+        _insert(store, "mem-a", topic="SQLite A", decision="Use SQLite option A")
+        _insert(store, "mem-b", topic="SQLite B", decision="Use SQLite option B")
+        store.search_bm25 = lambda *args, **kwargs: [  # type: ignore[method-assign]
+            {"memory_id": "mem-a", "bm25_score": 1.0},
+            {"memory_id": "mem-b", "bm25_score": 0.5},
+        ]
+        rerank_client = FakeRerankClient(["mem-b", "mem-a"])
+
+        results = ProjectDecisionRetriever(
+            store,
+            rerank_client=rerank_client,  # type: ignore[arg-type]
+        ).retrieve(ProjectDecisionQuery(query_text="SQLite", project_id="project-1"), limit=2)
+
+        assert [result.decision.decision_id for result in results] == ["mem-b", "mem-a"]
+        assert rerank_client.calls[0]["top_k"] == 2
+        assert results[0].memory_item.extra["rerank_score"] == 1.0
+    finally:
+        _cleanup(store)
+
+
+def test_rerank_failure_falls_back_to_rrf_order() -> None:
+    store = _store()
+    try:
+        _insert(store, "mem-a", topic="SQLite A", decision="Use SQLite option A")
+        _insert(store, "mem-b", topic="SQLite B", decision="Use SQLite option B")
+        store.search_bm25 = lambda *args, **kwargs: [  # type: ignore[method-assign]
+            {"memory_id": "mem-a", "bm25_score": 1.0},
+            {"memory_id": "mem-b", "bm25_score": 0.5},
+        ]
+
+        results = ProjectDecisionRetriever(
+            store,
+            rerank_client=RaisingRerankClient([]),  # type: ignore[arg-type]
+        ).retrieve(ProjectDecisionQuery(query_text="SQLite", project_id="project-1"), limit=2)
+
+        assert [result.decision.decision_id for result in results] == ["mem-a", "mem-b"]
+        assert "rerank_score" not in results[0].memory_item.extra
     finally:
         _cleanup(store)

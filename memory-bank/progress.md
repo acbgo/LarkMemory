@@ -604,3 +604,14 @@
 - 验证：`python -m pytest tests\unit\storage tests\unit\domains\project_decision tests\unit\retrieval tests\unit\core\test_service.py tests\unit\app\test_dependencies.py -q -p no:cacheprovider`，120 passed, 1 skipped。
 - 验证：`python -m compileall src tests`，通过。
 - 验证：`python -m pytest tests -q -p no:cacheprovider`，467 passed, 1 skipped。
+
+## 2026-05-04 ProjectDecision RRF 与 Rerank 重排
+
+- `ProjectDecisionRetriever` 主检索链路改为 BM25 recall、embedding recall、rule fallback recall 三路结构，再用 RRF 融合候选池。
+- 当 BM25 或 embedding 有命中时，规则检索不参与主召回；当两者都无命中时，规则检索作为 fallback 进入 RRF。
+- 新增 `ProjectDecisionRecallHit`，保留每路召回的 source、rank、score 和 metadata；融合后写入 `recall_sources`、`rrf_score`、`bm25_score`、`vector_similarity` 等可观测字段。
+- `ProjectDecisionRetriever` 新增可选 `rerank_client`，对 RRF 候选池调用 rerank 模型重排；rerank 不可用或失败时回退 RRF 顺序。
+- `ProjectDecisionDomainHandler` 和 `src/app/dependencies.py` 已透传 `get_rerank_client()`，使配置启用的 rerank 服务进入 project_decision 检索链路。
+- 保留 core 层跨 domain `Reranker`，domain 内排序先由 RRF/rerank 决定，再交给 core 层做跨域融合。
+- 新增测试覆盖 BM25/vector RRF 融合、规则 fallback、rerank 模型重排、rerank 失败回退和依赖注入。
+- 验证：`python -m pytest tests\unit\domains\project_decision tests\unit\app\test_dependencies.py tests\unit\core\test_service.py tests\unit\retrieval tests\unit\storage -q -p no:cacheprovider`，125 passed, 1 skipped。

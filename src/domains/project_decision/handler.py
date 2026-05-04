@@ -4,7 +4,7 @@ import logging
 from typing import Any
 
 from src.core.domain_handler import DomainIngestResult, DomainRuntime, DomainUpdateResult
-from src.llm import EmbeddingClient
+from src.llm import EmbeddingClient, RerankClient
 from src.retrieval import RankedMemory, RetrievalQuery
 from src.schemas import NormalizedEvent
 from src.storage import EmbeddingStore, MemoryCoreStore
@@ -27,6 +27,7 @@ class ProjectDecisionDomainHandler:
         *,
         embedding_store: EmbeddingStore | None = None,
         embedding_client: EmbeddingClient | None = None,
+        rerank_client: RerankClient | None = None,
         llm_client: Any | None = None,
         extractor: ProjectDecisionExtractor | None = None,
         retriever: ProjectDecisionRetriever | None = None,
@@ -35,11 +36,13 @@ class ProjectDecisionDomainHandler:
         self.memory_store = memory_store
         self.embedding_store = embedding_store
         self.embedding_client = embedding_client
+        self.rerank_client = rerank_client
         self.extractor = extractor or ProjectDecisionExtractor(llm_client=llm_client)
         self.retriever = retriever or ProjectDecisionRetriever(
             memory_store,
             embedding_store=embedding_store,
             embedding_client=embedding_client,
+            rerank_client=rerank_client,
         )
         self.version_manager = version_manager or ProjectDecisionVersionManager(memory_store)
 

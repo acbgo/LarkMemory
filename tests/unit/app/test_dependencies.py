@@ -107,6 +107,17 @@ class TestDependencies(unittest.TestCase):
         project_handler = service.domain_handlers["project_decision"]
         self.assertIs(project_handler.embedding_store, fake_embedding)
 
+    def test_get_memory_service_wires_rerank_client_to_project_decision_retriever(self) -> None:
+        db_path = str(self.temp_dir / "service-project-rerank.db")
+        fake_rerank = object()
+        with patch.dict(os.environ, {"LARKMEMORY_SQLITE_PATH": db_path}, clear=True):
+            reset_dependency_cache()
+            with patch("src.app.dependencies.get_rerank_client", return_value=fake_rerank):
+                service = get_memory_service()
+
+        project_handler = service.domain_handlers["project_decision"]
+        self.assertIs(project_handler.retriever.rerank_client, fake_rerank)
+
     def test_get_embedding_store_returns_none_when_disabled(self) -> None:
         with patch.dict(os.environ, {"LARKMEMORY_ENABLE_EMBEDDING": "false"}, clear=True):
             reset_dependency_cache()

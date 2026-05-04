@@ -163,6 +163,7 @@ def get_memory_service() -> MemoryService:
                 get_memory_core_store(),
                 embedding_store=get_embedding_store(),
                 embedding_client=get_embedding_client(),
+                rerank_client=get_rerank_client(),
                 llm_client=get_llm_client(),
             ),
             TeamRetentionDomainHandler(
