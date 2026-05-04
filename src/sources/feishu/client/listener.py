@@ -10,6 +10,8 @@ from src.sources.feishu.events.calendar_normalizer import calendar_event_to_norm
 from src.sources.feishu.events.dispatcher import FeishuEventDispatcher
 from src.sources.feishu.events.models import FeishuMessageEvent
 from src.sources.feishu.events.normalizer import extract_text_from_message_content
+from src.sources.feishu.events.task_models import FeishuTaskEvent
+from src.sources.feishu.events.task_normalizer import task_event_to_normalized_event
 from src.sources.feishu.proactive.callbacks import FeishuCardActionHandler, parse_card_action
 
 from .config import load_feishu_settings
@@ -41,6 +43,14 @@ def build_event_handler(memory_service: Any | None = None, settings: Any | None 
         normalized = calendar_event_to_normalized_event(cal_event)
         dispatcher.dispatch_normalized_event(normalized)
 
+    def on_task_event(data: Any) -> None:
+        task_event = _task_event_from_lark(data)
+        if task_event is None:
+            logger.info("function=src.sources.feishu.client.listener.on_task_event action=skip_empty")
+            return
+        normalized = task_event_to_normalized_event(task_event)
+        dispatcher.dispatch_normalized_event(normalized)
+
     def on_card_action(data: Any) -> Any:
         raw_action = _card_action_from_lark(data)
         response_payload = card_handler.handle(parse_card_action(raw_action))
@@ -58,6 +68,7 @@ def build_event_handler(memory_service: Any | None = None, settings: Any | None 
         .register_p2_im_message_receive_v1(on_message)
         .register_p2_card_action_trigger(on_card_action)
         .register_p2_calendar_event_changed_v4(on_calendar_event)
+        .register_p2_task_updated_v2(on_task_event)
         .build()
     )
 
@@ -138,6 +149,58 @@ def _calendar_event_from_lark(data: Any) -> FeishuCalendarEvent | None:
         location=_nested_attr_str(event, "location", "name"),
         recurrence=_attr_str(event, "recurrence"),
         status=_attr_str(event, "status") or "confirmed",
+        raw_payload=_safe_payload(data),
+    )
+
+
+def _task_event_from_lark(data: Any) -> FeishuTaskEvent | None:
+    event = getattr(data, "event", None)
+    if event is None:
+        return None
+    task_id = getattr(event, "task_id", None)
+    task_name = getattr(event, "name", "") or getattr(event, "summary", "") or ""
+    if not task_id or not task_name:
+        return None
+
+    assignee_ids: list[str] = []
+    raw_assignees = getattr(event, "assignees", None)
+    if isinstance(raw_assignees, list):
+        for a in raw_assignees:
+            a_id = getattr(a, "id", None) if not isinstance(a, str) else a
+            if a_id:
+                assignee_ids.append(str(a_id))
+
+    follower_ids: list[str] = []
+    raw_followers = getattr(event, "followers", None)
+    if isinstance(raw_followers, list):
+        for f in raw_followers:
+            f_id = getattr(f, "id", None) if not isinstance(f, str) else f
+            if f_id:
+                follower_ids.append(str(f_id))
+
+    creator_id = None
+    creator = getattr(event, "creator", None)
+    if creator is not None:
+        creator_id = getattr(creator, "id", None)
+
+    tasklist_name = None
+    tasklist = getattr(event, "tasklist", None)
+    if tasklist is not None:
+        tasklist_name = getattr(tasklist, "name", None)
+
+    return FeishuTaskEvent(
+        task_id=str(task_id),
+        task_name=str(task_name),
+        description=str(getattr(event, "description", "") or ""),
+        status=_attr_str(event, "status") or "",
+        start_time=_nested_attr_str(event, "start_time", "date_time"),
+        due_time=_nested_attr_str(event, "due_time", "date_time"),
+        creator_id=creator_id,
+        assignee_ids=assignee_ids,
+        follower_ids=follower_ids,
+        tasklist_name=tasklist_name,
+        priority=_attr_str(event, "priority"),
+        url=_attr_str(event, "url"),
         raw_payload=_safe_payload(data),
     )
 

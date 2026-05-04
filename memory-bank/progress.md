@@ -682,3 +682,28 @@
 - 测试补强：`test_extracts_basic_fields` 补充 `start_time`/`end_time`/`location`/`recurrence`/`status` 断言；新增 `test_nested_fields_none_when_outer_is_none` 和 `test_nested_fields_none_when_inner_is_none` 覆盖嵌套对象为 None 的降级路径；新增 `test_normalizer_falls_back_occurred_at_when_no_start_time` 覆盖 occurred_at 降级。
 - 验证：`python -m pytest tests/unit/sources/feishu/test_calendar_events.py tests/unit/sources/feishu/test_listener.py -q`，19 passed。
 - 验证：`python -m pytest tests -q`，519 passed, 6 subtests passed，零回退。
+
+## 2026-05-04 阶段 15：飞书任务接入
+
+- 已新增 `src/sources/feishu/events/task_models.py` — `FeishuTaskEvent` 模型：
+  - 字段：`task_id`、`task_name`、`description`、`status`、`start_time`、`due_time`、`creator_id`、`assignee_ids`、`follower_ids`、`tasklist_name`、`priority`、`url`、`raw_payload`。
+- 已新增 `src/sources/feishu/events/task_normalizer.py` — 1:1 映射：
+  - `task_event_to_normalized_event()` → `NormalizedEvent(source_type="feishu_task")`。
+  - event_type 按 status 区分：`"task_created"`（pending）、`"task_completed"`（completed）、`"task_updated"`（其他/空）。
+  - `task_name` + `description` 合并为 `content_text`，全部结构化字段（含 assignees/followers/tasklist/priority/url）存入 `payload`。
+  - `occurred_at` 优先 `start_time`，其次 `due_time`，最后 fallback `utc_now_iso()`。
+  - tags 包含 `task`、`feishu`、status 和 priority。
+- 已扩展 `src/schemas/event.py`：`EventType` 新增 `"task_created"`/`"task_updated"`/`"task_completed"`，`SourceType` 新增 `"feishu_task"`。
+- 已扩展 `src/sources/feishu/client/listener.py`：
+  - 新增 `on_task_event()` 回调：`_task_event_from_lark()` 提取 → normalizer → dispatcher。
+  - 新增 `_task_event_from_lark()` 提取函数：从 lark-oapi 回调对象提取任务字段（含 `name`/`summary` fallback、assignees/followers 列表展开、tasklist.name 嵌套提取、creator.id 提取）。
+  - `build_event_handler()` 注册 `register_p2_task_updated_v2(on_task_event)`。
+- 新增测试 `tests/unit/sources/feishu/test_task_events.py`：16 tests：
+  - `TestTaskNormalizer`：基本字段映射、completed/pending/empty status、payload 结构化、occurred_at 三层降级、空描述。
+  - `TestTaskEventDispatch`：dispatcher 存入 event_store、触发 team_retention 抽取、重复事件容忍。
+  - `TestTaskEventFromLark`：SimpleNamespace 提取（含 name/summary fallback、assignees/followers/tasklist 嵌套）、空列表、嵌套字段 None。
+- 已更新 `tests/unit/sources/feishu/test_listener.py`：`_FakeBuiltHandler` 新增 `task_handler` 和 `register_p2_task_updated_v2()`，现有测试断言 task_handler 非空。
+- 特点：与日历同属"类型 A"（事件驱动 + 1:1 映射），不需要 source_state_store 或 chunker，payload 结构化字段可直接供 team_retention domain handler 使用。
+- 验证：`python -m pytest tests/unit/sources/feishu/test_task_events.py tests/unit/sources/feishu/test_listener.py tests/unit/sources/feishu/test_calendar_events.py -q`，35 passed。
+- 验证：`python -m compileall src tests`，通过。
+- 验证：`python -m pytest tests -q`，535 passed, 6 subtests passed。

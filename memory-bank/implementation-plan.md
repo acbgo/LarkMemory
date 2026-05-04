@@ -132,7 +132,7 @@
 
 特点：事件驱动、自包含、不需要 source_state_store 或 chunker。
 
-## 阶段 15：飞书任务接入 🔜 待开始
+## 阶段 15：飞书任务接入 ✅ 已完成
 
 目标：接入飞书任务 WebSocket 事件，将任务变更转为 NormalizedEvent 进入记忆引擎。
 

@@ -12,10 +12,14 @@ EventType = Literal[
     "doc_changed",
     "meeting_note",
     "memory_feedback",
+    "task_completed",
+    "task_created",
+    "task_updated",
 ]
 
 SourceType = Literal[
     "feishu_calendar",
+    "feishu_task",
     "openclaw",
     "shell",
     "feishu_chat",
