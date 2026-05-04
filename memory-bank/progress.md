@@ -556,3 +556,28 @@
 - `agent_end`：payload 增加 `user_query`，将完整对话上下文（用户问题 + Agent 回复）发给后端。
 - `buildMemoryContext`：统一使用 `content_text`（所有 domain），替换仅用 `summary_text` 的旧逻辑。
 - 验证：428 passed, 6 subtests passed。
+
+## 2026-05-04 ProjectDecision Embedding 存储
+
+- 已新增 `src/domains/project_decision/embedding.py`，实现 `ProjectDecisionEmbeddingIndexer`：
+  - `build_text()` 将主题、结论、完整结论、理由、反对意见、备选方案、阶段、范围和来源组装为稳定语义索引文本。
+  - `build_metadata()` 写入 `memory_id`、`domain`、`status`、scope、topic、stage、source_ref，并过滤空值。
+  - `upsert()` 复用现有 `EmbeddingStore` / `EmbeddingClient`；embedding client 或 store 失败只记录 warning，不阻断 ingest。
+- `ProjectDecisionDomainHandler.ingest_event()` 已在新决策成功写入 `MemoryCore` 后写入旁路向量索引；去重命中旧 memory_id 时不会为新 candidate 重复索引。
+- `src/app/dependencies.py` 已给 `ProjectDecisionDomainHandler` 注入 `embedding_store` 和 `embedding_client`，与 `team_retention` 的 embedding 装配保持一致。
+- 已新增 `tests/unit/domains/project_decision/test_embedding.py` 和 `test_handler.py`，覆盖索引文本、metadata、向量写入、去重跳过索引和索引失败容错。
+- 验证：`python -m pytest tests\unit\domains\project_decision -q -p no:cacheprovider`，30 passed。
+- 验证：`python -m pytest tests\unit\core\test_service.py tests\unit\app\test_dependencies.py tests\unit\domains\project_decision -q -p no:cacheprovider`，65 passed。
+- 验证：`python -m compileall src tests`，通过。
+
+## 2026-05-04 ProjectDecision Embedding 检索接入
+
+- `ProjectDecisionRetriever` 已接入 `EmbeddingStore` / `EmbeddingClient`，保留原规则检索作为兜底，并将向量命中作为额外召回和加分信号。
+- 检索流程更新为：先做 project/team/workspace/stage metadata 过滤的向量召回，再从 `MemoryCoreStore` 回表补充候选，最后与原规则候选一起打分排序。
+- 向量相似度按 `1 - distance` 归一化，最高贡献 0.35 分；命中会写入 `matched_fields=["vector_similarity"]` 和 `memory_item.extra["vector_similarity"]`，便于 trace/API 层观察。
+- 向量检索失败只记录 warning 并返回空向量命中，不影响原 `_load_candidates()`、`_filter_candidates()`、`_score_matches()` 规则链路。
+- `ProjectDecisionDomainHandler` 默认创建 retriever 时已透传 embedding 依赖，保证 API/runtime 注入的 embedding 配置能同时用于 ingest 和 retrieve。
+- 新增/更新 `tests/unit/domains/project_decision/test_retriever.py`、`test_handler.py`，覆盖向量补充候选、embedding client 查询向量、向量失败规则兜底和 handler 依赖透传。
+- 验证：`python -m pytest tests\unit\domains\project_decision tests\unit\app\test_dependencies.py tests\unit\core\test_service.py -q -p no:cacheprovider`，69 passed。
+- 验证：`python -m compileall src tests`，通过。
+- 验证：`python -m pytest tests -q -p no:cacheprovider`，459 passed, 1 skipped。

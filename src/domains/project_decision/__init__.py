@@ -1,5 +1,6 @@
 from .extractor import ProjectDecisionExtractor
 from .handler import ProjectDecisionDomainHandler
+from .embedding import ProjectDecisionEmbeddingIndexer
 from .models import (
     ProjectDecision,
     ProjectDecisionCandidate,
@@ -12,6 +13,7 @@ __all__ = [
     "ProjectDecision",
     "ProjectDecisionCandidate",
     "ProjectDecisionExtractor",
+    "ProjectDecisionEmbeddingIndexer",
     "ProjectDecisionDomainHandler",
     "DecisionRankWeights",
     "ProjectDecisionRanker",

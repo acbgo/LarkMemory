@@ -4,10 +4,12 @@ import logging
 from typing import Any
 
 from src.core.domain_handler import DomainIngestResult, DomainRuntime, DomainUpdateResult
+from src.llm import EmbeddingClient
 from src.retrieval import RankedMemory, RetrievalQuery
 from src.schemas import NormalizedEvent
-from src.storage import MemoryCoreStore
+from src.storage import EmbeddingStore, MemoryCoreStore
 
+from .embedding import ProjectDecisionEmbeddingIndexer
 from .extractor import ProjectDecisionExtractor
 from .retriever import ProjectDecisionRetriever
 from .versioning import ProjectDecisionVersionManager
@@ -23,14 +25,22 @@ class ProjectDecisionDomainHandler:
         self,
         memory_store: MemoryCoreStore,
         *,
+        embedding_store: EmbeddingStore | None = None,
+        embedding_client: EmbeddingClient | None = None,
         llm_client: Any | None = None,
         extractor: ProjectDecisionExtractor | None = None,
         retriever: ProjectDecisionRetriever | None = None,
         version_manager: ProjectDecisionVersionManager | None = None,
     ) -> None:
         self.memory_store = memory_store
+        self.embedding_store = embedding_store
+        self.embedding_client = embedding_client
         self.extractor = extractor or ProjectDecisionExtractor(llm_client=llm_client)
-        self.retriever = retriever or ProjectDecisionRetriever(memory_store)
+        self.retriever = retriever or ProjectDecisionRetriever(
+            memory_store,
+            embedding_store=embedding_store,
+            embedding_client=embedding_client,
+        )
         self.version_manager = version_manager or ProjectDecisionVersionManager(memory_store)
 
     def ingest_event(self, event: NormalizedEvent, runtime: DomainRuntime) -> DomainIngestResult:
@@ -52,6 +62,14 @@ class ProjectDecisionDomainHandler:
                 and memory_id == candidate.decision.decision_id
             ):
                 self.version_manager.apply_supersede(version_decision.old_memory_id, memory_id)
+            if memory_id == candidate.decision.decision_id:
+                ProjectDecisionEmbeddingIndexer(
+                    runtime.embedding_store or self.embedding_store,
+                    runtime.embedding_client or self.embedding_client,
+                ).upsert(
+                    candidate.decision,
+                    status="active",
+                )
             logger.info(
                 "action=stored event_id=%s memory_id=%s topic=%s",
                 event.event_id,

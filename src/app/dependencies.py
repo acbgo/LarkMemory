@@ -161,6 +161,8 @@ def get_memory_service() -> MemoryService:
         domain_handlers=[
             ProjectDecisionDomainHandler(
                 get_memory_core_store(),
+                embedding_store=get_embedding_store(),
+                embedding_client=get_embedding_client(),
                 llm_client=get_llm_client(),
             ),
             TeamRetentionDomainHandler(
