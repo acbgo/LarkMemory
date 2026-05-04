@@ -58,11 +58,13 @@ class TestSourceStateStore(unittest.TestCase):
         self.store.upsert_state("feishu_vc", "m2", status="complete")
         self.store.upsert_state("feishu_vc", "m3", status="partial")
         self.store.upsert_state("feishu_vc", "m4", status="error")
+        self.store.upsert_state("feishu_vc", "m5", status="pending_ai")
         pending = self.store.list_pending("feishu_vc")
         pending_ids = {p["external_id"] for p in pending}
         self.assertIn("m1", pending_ids)
         self.assertIn("m3", pending_ids)
         self.assertIn("m4", pending_ids)
+        self.assertIn("m5", pending_ids)
         self.assertNotIn("m2", pending_ids)
 
     def test_list_by_status_filters_correctly(self) -> None:

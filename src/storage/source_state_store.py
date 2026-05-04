@@ -98,7 +98,7 @@ class SourceStateStore(SQLiteStore):
         rows = self.fetch_all(
             """
             SELECT * FROM source_processed
-            WHERE source_type = ? AND status IN ('pending', 'partial', 'error')
+            WHERE source_type = ? AND status IN ('pending', 'pending_ai', 'partial', 'error')
             ORDER BY processed_at ASC
             LIMIT ?
             """,

@@ -156,11 +156,13 @@
 - `schemas/event.py`：Literal 类型扩展。
 - `listener.py`：注册 vc.meeting.ended_v1，on_meeting_ended 回调。
 
-## 阶段 16b：妙记 Scanner 兜底 🔜 待开始
+## 阶段 16b：妙记 Scanner 兜底 ✅ 已完成
 
-目标：定时轮询扫描，兜底处理非 WebSocket 触发的妙记（手动上传录音/视频、WebSocket 事件丢失）。
+目标：定时轮询扫描（1 小时间隔），兜底处理 processor 搁置的 pending_ai 会议。
 
-- `src/sources/feishu/scanner/meeting_scanner.py`：每 10 分钟扫描 source_state_store 中 status=pending_ai 的超时会议，重试拉取产物。
+已完成：
+- `scanner/meeting_scanner.py`：MeetingScanner 扫描 pending/pending_ai/error 记录，重试拉取 AI 产物，死信跳过（error_count > 10）。
+- `source_state_store.py`：list_pending 补充 `pending_ai` 状态。
 
 ## 阶段 17：飞书文档接入 🔜 待开始
 

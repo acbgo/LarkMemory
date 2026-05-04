@@ -741,3 +741,16 @@
 - 验证：`python -m pytest tests/unit/sources/feishu/test_meeting_events.py tests/unit/sources/feishu/test_listener.py -q`，18 passed。
 - 验证：`python -m compileall src tests`，通过。
 - 验证：`python -m pytest tests -q`，550 passed, 6 subtests passed。
+
+## 2026-05-04 阶段 16b：妙记 Scanner 兜底
+
+- 已新增 `src/sources/feishu/scanner/meeting_scanner.py` — 定时扫描兜底：
+  - `MeetingScanner` 依赖 `SourceStateStore` + `FeishuVcClientProtocol` + `FeishuEventDispatcher`。
+  - `run()` 扫描 `source_state_store.list_pending("feishu_vc")`，过滤 `error_count > 10` 的死信。
+  - 对每条待处理记录：检查 `minute_token` 是否存在→调用 `vc_client.get_notes()`→产物就绪则 chunker 切分+批量 dispatch+mark_complete，仍未就绪则 mark_error 累加 error_count。
+  - 返回本次成功补处理的数量，供调度方监控。
+- 修复 `SourceStateStore.list_pending()` 的 WHERE 子句：`status IN ('pending', 'partial', 'error')` → `status IN ('pending', 'pending_ai', 'partial', 'error')`，补上 processor 写入的 `pending_ai` 状态。
+- 新增测试 `tests/unit/sources/feishu/test_meeting_scanner.py`：6 tests：
+  - 成功补处理 pending_ai 记录、跳过已 complete、跳过死信（error_count>10）、产物仍空时 mark_error、无 minute_token 时 mark_error、事件 dispatch 验证。
+- 验证：`python -m pytest tests/unit/sources/feishu/test_meeting_scanner.py -q`，6 passed。
+- 验证：`python -m pytest tests -q`，556 passed, 6 subtests passed。
