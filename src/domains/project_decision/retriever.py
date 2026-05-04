@@ -121,10 +121,16 @@ class ProjectDecisionRetriever:
         if effective_limit < 1:
             raise ValueError("limit must be greater than 0")
         domain_query = self._coerce_query(query, limit=effective_limit)
+        bm25_hits = self._bm25_hits(domain_query, limit=effective_limit)
         vector_hits = self._vector_hits(domain_query, limit=effective_limit)
-        rows = self._load_candidates(domain_query, limit=effective_limit, vector_hits=vector_hits)
+        rows = self._load_candidates(
+            domain_query,
+            limit=effective_limit,
+            bm25_hits=bm25_hits,
+            vector_hits=vector_hits,
+        )
         filtered = self._filter_candidates(rows, domain_query)
-        scored = self._score_matches(filtered, domain_query, vector_hits=vector_hits)
+        scored = self._score_matches(filtered, domain_query, bm25_hits=bm25_hits, vector_hits=vector_hits)
         return self.ranker.rank(scored, domain_query, limit=effective_limit)
 
     def retrieve_cards(
@@ -142,6 +148,7 @@ class ProjectDecisionRetriever:
         query: ProjectDecisionQuery,
         *,
         limit: int,
+        bm25_hits: dict[str, float] | None = None,
         vector_hits: dict[str, tuple[float, str]] | None = None,
     ) -> list[dict[str, Any]]:
         row_map: dict[str, dict[str, Any]] = {}
@@ -159,6 +166,13 @@ class ProjectDecisionRetriever:
             )
             for row in superseded_rows:
                 row_map[row["memory_id"]] = row
+        for memory_id in bm25_hits or {}:
+            row = self.memory_store.get_memory(memory_id)
+            if row is None or row.get("domain") != "project_decision":
+                continue
+            if row.get("status") == "superseded" and not query.include_superseded:
+                continue
+            row_map[row["memory_id"]] = row
         for memory_id in vector_hits or {}:
             row = self.memory_store.get_memory(memory_id)
             if row is None or row.get("domain") != "project_decision":
@@ -198,6 +212,7 @@ class ProjectDecisionRetriever:
         rows: list[dict[str, Any]],
         query: ProjectDecisionQuery,
         *,
+        bm25_hits: dict[str, float] | None = None,
         vector_hits: dict[str, tuple[float, str]] | None = None,
     ) -> list[ProjectDecisionSearchResult]:
         terms = self._extract_query_terms(query.query_text)
@@ -229,6 +244,11 @@ class ProjectDecisionRetriever:
             if query.stage and query.stage == decision.stage:
                 score += 0.1
                 matched_fields.append("stage")
+            bm25_score = (bm25_hits or {}).get(decision.decision_id)
+            if bm25_score is not None:
+                score += min(max(bm25_score, 0.0), 1.0) * 0.3
+                matched_fields.append("bm25")
+                item.extra["bm25_score"] = bm25_score
             vector_hit = (vector_hits or {}).get(decision.decision_id)
             if vector_hit is not None:
                 vector_similarity, vector_query = vector_hit
@@ -249,6 +269,30 @@ class ProjectDecisionRetriever:
                 )
             )
         return results
+
+    def _bm25_hits(self, query: ProjectDecisionQuery, *, limit: int) -> dict[str, float]:
+        """使用 MemoryCore FTS5 BM25 索引补充关键词召回，失败时返回空结果。"""
+        try:
+            rows = self.memory_store.search_bm25(
+                query.query_text,
+                domain="project_decision",
+                status=None if query.include_superseded else "active",
+                limit=max(limit * 3, 10),
+            )
+        except Exception:
+            logger.warning(
+                "action=bm25_recall_failed domain=project_decision query_text=%s",
+                query.query_text,
+                exc_info=True,
+            )
+            return {}
+        result: dict[str, float] = {}
+        for row in rows:
+            memory_id = row.get("memory_id")
+            score = row.get("bm25_score")
+            if isinstance(memory_id, str) and isinstance(score, (int, float)):
+                result[memory_id] = max(result.get(memory_id, 0.0), float(score))
+        return result
 
     def _vector_hits(self, query: ProjectDecisionQuery, *, limit: int) -> dict[str, tuple[float, str]]:
         """使用向量索引补充 project_decision 召回，失败时返回空结果。"""

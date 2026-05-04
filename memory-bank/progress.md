@@ -592,3 +592,15 @@
 - 验证：`python -m pytest tests\unit\domains\project_decision tests\unit\retrieval tests\unit\core\test_service.py tests\unit\app\test_dependencies.py -q -p no:cacheprovider`，85 passed。
 - 验证：`python -m compileall src tests`，通过。
 - 验证：`python -m pytest tests -q -p no:cacheprovider`，463 passed, 1 skipped。
+
+## 2026-05-04 BM25 关键词检索接入
+
+- `MemoryCoreStore.create_table()` 新增 `memory_core_fts` FTS5 虚拟表，索引 summary、content、tags、entities，并保留 memory_id/domain/status/scope 作为过滤字段。
+- `insert_memory_core()`、`update_memory_status()`、`mark_superseded()`、`delete_memory()` 已同步维护 FTS 旁路索引，保证状态过滤和删除结果与主表一致。
+- 新增 `MemoryCoreStore.search_bm25()`，使用 FTS5 `bm25()` 排序并返回正向 `bm25_score`；空查询或纯标点查询返回空结果。
+- `ProjectDecisionRetriever` 已接入 BM25 关键词召回：先查询 `project_decision` 域 FTS 候选，再与原规则候选和向量候选一起回表、过滤、打分。
+- BM25 命中最高贡献 0.3 分，并写入 `matched_fields=["bm25"]` 和 `memory_item.extra["bm25_score"]`；BM25 异常只记录 warning，不阻断规则/向量兜底。
+- 新增测试覆盖 BM25 插入检索、domain/status 过滤、状态更新、删除同步、空查询容错和 project_decision BM25 加分。
+- 验证：`python -m pytest tests\unit\storage tests\unit\domains\project_decision tests\unit\retrieval tests\unit\core\test_service.py tests\unit\app\test_dependencies.py -q -p no:cacheprovider`，120 passed, 1 skipped。
+- 验证：`python -m compileall src tests`，通过。
+- 验证：`python -m pytest tests -q -p no:cacheprovider`，467 passed, 1 skipped。

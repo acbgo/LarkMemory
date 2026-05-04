@@ -99,6 +99,7 @@ def _insert(
     *,
     project_id: str = "project-1",
     topic: str = "检索层方案",
+    decision: str = "采用方案 B",
     stage: str = "技术选型",
     status: str = "confirmed",
 ) -> None:
@@ -106,7 +107,7 @@ def _insert(
         decision_id=memory_id,
         project_id=project_id,
         topic=topic,
-        decision="采用方案 B",
+        decision=decision,
         stage=stage,
         status=status,  # type: ignore[arg-type]
         source_ref=f"source-{memory_id}",
@@ -203,6 +204,29 @@ def test_retrieve_adds_vector_hits_as_candidates() -> None:
         assert results[0].memory_item.extra["vector_similarity"] == 0.8
         assert embedding_store.queries[0]["domain"] == "project_decision"
         assert embedding_store.queries[0]["filters"] == {"project_id": "project-1"}
+    finally:
+        _cleanup(store)
+
+
+def test_retrieve_adds_bm25_score_for_keyword_hit() -> None:
+    store = _store()
+    try:
+        _insert(
+            store,
+            "mem-bm25",
+            topic="SQLite storage",
+            decision="Use SQLite for local demo storage",
+            project_id="project-1",
+        )
+
+        results = ProjectDecisionRetriever(store).retrieve(
+            ProjectDecisionQuery(query_text="SQLite storage", project_id="project-1"),
+            limit=5,
+        )
+
+        assert results[0].decision.decision_id == "mem-bm25"
+        assert "bm25" in results[0].matched_fields
+        assert results[0].memory_item.extra["bm25_score"] > 0
     finally:
         _cleanup(store)
 

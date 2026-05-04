@@ -229,3 +229,80 @@ class TestMemoryCoreStore(unittest.TestCase):
 
         self.assertEqual([row["memory_id"] for row in chain], ["memory-old", "memory-new"])
         self.assertIsNone(self.store.get_memory("memory-old"))
+
+    def test_search_bm25_finds_inserted_memory_and_filters_domain(self) -> None:
+        target = MemoryCore(
+            memory_id="memory-target",
+            domain="project_decision",
+            memory_type="decision",
+            scope="project",
+            source_type="feishu_chat",
+            source_ref="event-1",
+            content_text="Use SQLite for local demo storage",
+            summary_text="SQLite storage decision",
+            entities=["project_id:project-1", "SQLite"],
+            tags=["decision", "storage"],
+        )
+        other_domain = MemoryCore(
+            memory_id="memory-other",
+            domain="cli_workflow",
+            memory_type="command_template",
+            scope="project",
+            source_type="shell",
+            source_ref="event-2",
+            content_text="Use SQLite command",
+            summary_text="SQLite command",
+            entities=["SQLite"],
+            tags=["command"],
+        )
+        self.store.insert_memory_core(target)
+        self.store.insert_memory_core(other_domain)
+
+        rows = self.store.search_bm25("SQLite storage", domain="project_decision", limit=5)
+
+        self.assertEqual([row["memory_id"] for row in rows], ["memory-target"])
+        self.assertGreater(rows[0]["bm25_score"], 0)
+
+    def test_search_bm25_tracks_status_updates_and_deletes(self) -> None:
+        memory = MemoryCore(
+            memory_id="memory-bm25-status",
+            domain="project_decision",
+            memory_type="decision",
+            scope="project",
+            source_type="feishu_chat",
+            source_ref="event-1",
+            content_text="Use PostgreSQL for analytics",
+            summary_text="PostgreSQL analytics decision",
+        )
+        self.store.insert_memory_core(memory)
+
+        active_rows = self.store.search_bm25("PostgreSQL analytics", domain="project_decision", status="active")
+        self.store.update_memory_status("memory-bm25-status", "superseded")
+        superseded_rows = self.store.search_bm25(
+            "PostgreSQL analytics",
+            domain="project_decision",
+            status="superseded",
+        )
+        active_after_update = self.store.search_bm25("PostgreSQL analytics", domain="project_decision", status="active")
+        self.store.delete_memory("memory-bm25-status")
+        after_delete = self.store.search_bm25("PostgreSQL analytics", domain="project_decision", status="superseded")
+
+        self.assertEqual([row["memory_id"] for row in active_rows], ["memory-bm25-status"])
+        self.assertEqual([row["memory_id"] for row in superseded_rows], ["memory-bm25-status"])
+        self.assertEqual(active_after_update, [])
+        self.assertEqual(after_delete, [])
+
+    def test_search_bm25_returns_empty_for_blank_or_punctuation_query(self) -> None:
+        memory = MemoryCore(
+            memory_id="memory-empty-query",
+            domain="project_decision",
+            memory_type="decision",
+            scope="project",
+            source_type="feishu_chat",
+            source_ref="event-1",
+            content_text="Use SQLite",
+        )
+        self.store.insert_memory_core(memory)
+
+        self.assertEqual(self.store.search_bm25("   ", domain="project_decision"), [])
+        self.assertEqual(self.store.search_bm25("???", domain="project_decision"), [])
