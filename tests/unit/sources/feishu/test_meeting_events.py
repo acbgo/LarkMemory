@@ -107,6 +107,7 @@ class TestMeetingNormalizer(unittest.TestCase):
         event = meeting_chapter_to_event(
             "[00:00:01] 大家好\n[00:00:05] 开始讨论",
             "开场介绍",
+            "ch-test-fingerprint-abc123",
             "meet_001",
             "min_001",
             0,
@@ -114,6 +115,7 @@ class TestMeetingNormalizer(unittest.TestCase):
 
         self.assertEqual(event.event_type, "meeting_chapter")
         self.assertEqual(event.source_type, "feishu_vc")
+        self.assertIn("ch-test-fingerprint-abc123", event.event_id)
         self.assertEqual(event.title, "开场介绍")
         self.assertIn("开始讨论", event.content_text)
         self.assertEqual(event.payload["chapter_title"], "开场介绍")
@@ -176,7 +178,7 @@ class TestMeetingProcessor(unittest.TestCase):
             self.recording_calls.append(meeting_id)
             return "min_test_001"
 
-        def get_notes(self, minute_token: str) -> MeetingNotesData:
+        def get_meeting_notes(self, minute_token: str) -> MeetingNotesData:
             self.notes_calls.append(minute_token)
             return self.notes
 
@@ -244,15 +246,17 @@ class TestMeetingEventFromLark(unittest.TestCase):
     def test_extracts_basic_fields(self) -> None:
         data = SimpleNamespace(
             event=SimpleNamespace(
-                meeting_id="meet_lark_001",
-                topic="Q2 项目复盘会",
-                start_time="2026-05-05T10:00:00Z",
-                end_time="2026-05-05T11:30:00Z",
-                organizer=SimpleNamespace(id="ou_org"),
-                participants=[
-                    SimpleNamespace(id="ou_a"),
-                    SimpleNamespace(id="ou_b"),
-                ],
+                meeting=SimpleNamespace(
+                    id="meet_lark_001",
+                    topic="Q2 项目复盘会",
+                    start_time="2026-05-05T10:00:00Z",
+                    end_time="2026-05-05T11:30:00Z",
+                    host_user=SimpleNamespace(id="ou_org"),
+                    participants=[
+                        SimpleNamespace(id="ou_a"),
+                        SimpleNamespace(id="ou_b"),
+                    ],
+                ),
             ),
         )
 
@@ -264,27 +268,13 @@ class TestMeetingEventFromLark(unittest.TestCase):
         self.assertEqual(meeting.organizer_id, "ou_org")
         self.assertEqual(meeting.participant_ids, ["ou_a", "ou_b"])
 
-    def test_topic_fallback_to_name(self) -> None:
-        data = SimpleNamespace(
-            event=SimpleNamespace(
-                meeting_id="meet_lark_002",
-                topic=None,
-                name="未命名",
-            ),
-        )
-
-        meeting = _meeting_ended_from_lark(data)
-        self.assertIsNotNone(meeting)
-        assert meeting is not None
-        self.assertEqual(meeting.topic, "未命名")
-
     def test_returns_none_when_no_event(self) -> None:
         data = SimpleNamespace(event=None)
         self.assertIsNone(_meeting_ended_from_lark(data))
 
     def test_returns_none_when_no_meeting_id(self) -> None:
         data = SimpleNamespace(
-            event=SimpleNamespace(meeting_id=None, topic="test")
+            event=SimpleNamespace(meeting=SimpleNamespace(id=None, topic="test"))
         )
         self.assertIsNone(_meeting_ended_from_lark(data))
 
@@ -318,9 +308,11 @@ class TestMeetingChapterChunking(unittest.TestCase):
         event = meeting_chapter_to_event(
             chunks[0].content,
             chunks[0].heading or "",
+            chunks[0].chunk_id,
             "meet_int",
             "min_int",
             0,
         )
         self.assertEqual(event.event_type, "meeting_chapter")
         self.assertIn("方案 B", event.content_text)
+        self.assertIn(chunks[0].chunk_id, event.event_id)

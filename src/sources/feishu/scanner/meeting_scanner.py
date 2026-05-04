@@ -1,23 +1,21 @@
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any
 
-from src.sources._shared.chunker import split_by_chapters
 from src.storage.source_state_store import SourceStateStore
 
 from ..client.vc_client import FeishuVcClientProtocol
 from ..events.dispatcher import FeishuEventDispatcher
-from ..events.meeting_normalizer import (
-    meeting_chapter_to_event,
-    meeting_summary_to_event,
-    meeting_todo_to_event,
-)
+from ..events.meeting_normalizer import ingest_notes_to_events
 
 logger = logging.getLogger(__name__)
 
 SOURCE_TYPE = "feishu_vc"
 MAX_ERROR_COUNT = 10
+RETRY_INTERVAL_SECONDS = 120
+MAX_RETRIES = 3
 
 
 class MeetingScanner:
@@ -77,49 +75,43 @@ class MeetingScanner:
             self._state.mark_error(SOURCE_TYPE, meeting_id)
             return False
 
-        notes = self._vc.get_notes(minute_token)
-        if not notes.summary and not notes.verbatim_text:
-            logger.info(
-                "action=scanner_notes_still_empty meeting_id=%s", meeting_id
-            )
-            self._state.mark_error(SOURCE_TYPE, meeting_id)
-            return False
+        for attempt in range(MAX_RETRIES):
+            try:
+                notes = self._vc.get_meeting_notes(minute_token)
+                if notes.summary or notes.verbatim_text:
+                    self._dispatch_events(
+                        ingest_notes_to_events(notes, meeting_id, topic)
+                    )
+                    self._state.mark_complete(SOURCE_TYPE, meeting_id)
+                    logger.info(
+                        "action=scanner_processed meeting_id=%s chapters=%d todos=%d attempt=%d",
+                        meeting_id,
+                        len(notes.chapters),
+                        len(notes.todos),
+                        attempt + 1,
+                    )
+                    return True
 
-        self._ingest_notes(notes, meeting_id, topic)
-        self._state.mark_complete(SOURCE_TYPE, meeting_id)
-        logger.info(
-            "action=scanner_processed meeting_id=%s chapters=%d todos=%d",
-            meeting_id,
-            len(notes.chapters),
-            len(notes.todos),
-        )
-        return True
-
-    def _ingest_notes(self, notes: Any, meeting_id: str, topic: str) -> None:
-        events: list[Any] = []
-
-        events.append(meeting_summary_to_event(notes, meeting_id, topic))
-
-        for idx, todo in enumerate(notes.todos):
-            events.append(
-                meeting_todo_to_event(todo, meeting_id, notes.minute_token, idx)
-            )
-
-        chapter_dicts: list[dict[str, Any]] = [
-            {"title": ch.title, "start_time_ms": ch.start_time_ms}
-            for ch in notes.chapters
-        ]
-        for chunk in split_by_chapters(notes.verbatim_text, chapter_dicts):
-            events.append(
-                meeting_chapter_to_event(
-                    chunk.content,
-                    chunk.heading or f"章节 {chunk.index + 1}",
+                logger.info(
+                    "action=scanner_notes_empty meeting_id=%s attempt=%d",
                     meeting_id,
-                    notes.minute_token,
-                    chunk.index,
+                    attempt + 1,
                 )
-            )
+            except Exception:
+                logger.warning(
+                    "action=scanner_notes_error meeting_id=%s attempt=%d",
+                    meeting_id,
+                    attempt + 1,
+                    exc_info=True,
+                )
 
+            if attempt < MAX_RETRIES - 1:
+                time.sleep(RETRY_INTERVAL_SECONDS)
+
+        self._state.mark_error(SOURCE_TYPE, meeting_id)
+        return False
+
+    def _dispatch_events(self, events: list[Any]) -> None:
         for evt in events:
             try:
                 self._dispatch.dispatch_normalized_event(evt)

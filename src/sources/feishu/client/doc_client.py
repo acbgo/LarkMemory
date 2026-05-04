@@ -22,10 +22,10 @@ class FeishuDocClient:
 
     def fetch_doc_content(self, doc_token: str) -> str:
         """调用 docx API 导出文档为 Markdown。"""
-        from lark_oapi.api.docx.v1 import RawDocumentRequest  # type: ignore[import-not-found]
+        from lark_oapi.api.docx.v1 import RawContentDocumentRequest  # type: ignore[import-not-found]
 
-        request = RawDocumentRequest.builder().document_id(doc_token).build()
-        response = self._client.docx.v1.document.raw(request)
+        request = RawContentDocumentRequest.builder().document_id(doc_token).build()
+        response = self._client.docx.v1.document.raw_content(request)
         if not response.success():
             raise RuntimeError(
                 f"Failed to fetch doc {doc_token}: "

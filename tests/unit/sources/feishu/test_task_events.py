@@ -252,16 +252,25 @@ class TestTaskEventFromLark(unittest.TestCase):
         data = SimpleNamespace(event=None)
         self.assertIsNone(_task_event_from_lark(data))
 
-    def test_returns_none_when_missing_id_or_name(self) -> None:
+    def test_returns_none_when_missing_id(self) -> None:
         data_no_id = SimpleNamespace(
             event=SimpleNamespace(task_id=None, name="test")
         )
         self.assertIsNone(_task_event_from_lark(data_no_id))
 
-        data_no_name = SimpleNamespace(
-            event=SimpleNamespace(task_id="t_1", name=None, summary=None)
+    def test_accepts_task_without_name(self) -> None:
+        data = SimpleNamespace(
+            event=SimpleNamespace(
+                task_id="t_light",
+                name=None,
+                summary=None,
+                obj_type="task",
+            ),
         )
-        self.assertIsNone(_task_event_from_lark(data_no_name))
+        event = _task_event_from_lark(data)
+        self.assertIsNotNone(event)
+        assert event is not None
+        self.assertEqual(event.task_id, "t_light")
 
     def test_empty_assignees_and_followers(self) -> None:
         data = SimpleNamespace(

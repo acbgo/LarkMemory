@@ -24,6 +24,7 @@ class TestDocNormalizer(unittest.TestCase):
         event = doc_section_to_event(
             "## 架构设计\n\n后端使用 Python，前端使用 React。",
             "架构设计",
+            "h-000-abc123def456",
             "doc_token_001",
             "技术方案文档",
             0,
@@ -31,6 +32,7 @@ class TestDocNormalizer(unittest.TestCase):
 
         self.assertEqual(event.event_type, "doc_section")
         self.assertEqual(event.source_type, "feishu_doc")
+        self.assertIn("h-000-abc123def456", event.event_id)
         self.assertEqual(event.title, "架构设计")
         self.assertIn("Python", event.content_text)
         self.assertEqual(event.payload["doc_token"], "doc_token_001")
@@ -43,6 +45,7 @@ class TestDocNormalizer(unittest.TestCase):
         event = doc_section_to_event(
             "无标题段落的正文内容。",
             None,
+            "chunk-002-abcdef",
             "doc_token_002",
             "项目周报",
             2,
@@ -54,6 +57,7 @@ class TestDocNormalizer(unittest.TestCase):
         event = doc_section_to_event(
             "正文内容",
             None,
+            "chunk-003-fallback",
             "doc_token_003",
             None,
             0,
@@ -104,7 +108,7 @@ class TestDocProcessor(unittest.TestCase):
         doc_client = self._FakeDocClient(content)
         processor = DocProcessor(self.state_store, doc_client, self.dispatcher)
 
-        processor._process("doc_full", "技术方案")
+        processor._process("doc_full")
 
         self.assertEqual(doc_client.fetch_calls, ["doc_full"])
 
@@ -125,7 +129,7 @@ class TestDocProcessor(unittest.TestCase):
 
         doc_client = self._FakeDocClient(content)
         processor = DocProcessor(self.state_store, doc_client, self.dispatcher)
-        processor._process("doc_same", "技术方案")
+        processor._process("doc_same")
 
         # fetch 仍然会执行，但 hash 相同不应产生新事件
         self.assertEqual(doc_client.fetch_calls, ["doc_same"])
@@ -143,7 +147,7 @@ class TestDocProcessor(unittest.TestCase):
         new_content = "# 新标题\n\n新内容已更新"
         doc_client = self._FakeDocClient(new_content)
         processor = DocProcessor(self.state_store, doc_client, self.dispatcher)
-        processor._process("doc_changed", "技术方案")
+        processor._process("doc_changed")
 
         state = self.state_store.get_state("feishu_doc", "doc_changed")
         new_hash = hashlib.sha256(new_content.encode("utf-8")).hexdigest()
@@ -153,20 +157,24 @@ class TestDocProcessor(unittest.TestCase):
         content = "# 项目概述\n\n概述内容。\n\n## 需求分析\n\n需求内容。"
         doc_client = self._FakeDocClient(content)
         processor = DocProcessor(self.state_store, doc_client, self.dispatcher)
-        processor._process("doc_dispatch", "项目文档")
+        processor._process("doc_dispatch")
 
         events = self.event_store.list_events(limit=20)
         event_ids = [e["event_id"] for e in events]
-        self.assertTrue(any("doc:doc_dispatch:0" in eid for eid in event_ids))
-        self.assertTrue(any("doc:doc_dispatch:1" in eid for eid in event_ids))
+        self.assertTrue(any("doc:doc_dispatch:h-" in eid for eid in event_ids), f"events: {event_ids}")
+        self.assertEqual(len(event_ids), 2)
 
     def test_processor_empty_content(self) -> None:
         doc_client = self._FakeDocClient("")
         processor = DocProcessor(self.state_store, doc_client, self.dispatcher)
-        processor._process("doc_empty", "空文档")
+        processor._process("doc_empty")
 
         self.assertEqual(doc_client.fetch_calls, ["doc_empty"])
-        self.assertIsNone(self.state_store.get_state("feishu_doc", "doc_empty"))
+        state = self.state_store.get_state("feishu_doc", "doc_empty")
+        self.assertIsNotNone(state)
+        assert state is not None
+        self.assertEqual(state["status"], "complete")
+        self.assertEqual(state["last_hash"], "")
 
 
 class TestDocEventFromLark(unittest.TestCase):
@@ -174,28 +182,26 @@ class TestDocEventFromLark(unittest.TestCase):
     def test_extracts_basic_fields(self) -> None:
         data = SimpleNamespace(
             event=SimpleNamespace(
-                doc_token="doc_lark_001",
-                doc_type="docx",
-                title="Q2 技术方案",
-                change_type="content_updated",
-                operator=SimpleNamespace(id="ou_editor"),
+                file_token="doc_lark_001",
+                file_type="docx",
+                operator_id_list=[
+                    SimpleNamespace(open_id="ou_editor"),
+                ],
             ),
         )
 
         doc = _doc_changed_from_lark(data)
         self.assertIsNotNone(doc)
         assert doc is not None
-        self.assertEqual(doc.doc_token, "doc_lark_001")
-        self.assertEqual(doc.doc_type, "docx")
-        self.assertEqual(doc.title, "Q2 技术方案")
-        self.assertEqual(doc.change_type, "content_updated")
+        self.assertEqual(doc.file_token, "doc_lark_001")
+        self.assertEqual(doc.file_type, "docx")
         self.assertEqual(doc.user_id, "ou_editor")
 
     def test_returns_none_when_no_event(self) -> None:
         self.assertIsNone(_doc_changed_from_lark(SimpleNamespace(event=None)))
 
-    def test_returns_none_when_no_doc_token(self) -> None:
+    def test_returns_none_when_no_file_token(self) -> None:
         data = SimpleNamespace(
-            event=SimpleNamespace(doc_token=None, title="test")
+            event=SimpleNamespace(file_token=None)
         )
         self.assertIsNone(_doc_changed_from_lark(data))

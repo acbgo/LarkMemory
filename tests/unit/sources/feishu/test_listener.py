@@ -25,19 +25,19 @@ class _FakeBuiltHandler:
         self.card_handler = handler
         return self
 
-    def register_p2_calendar_event_changed_v4(self, handler):
+    def register_p2_calendar_calendar_event_changed_v4(self, handler):
         self.calendar_handler = handler
         return self
 
-    def register_p2_task_updated_v2(self, handler):
+    def register_p2_task_task_updated_v1(self, handler):
         self.task_handler = handler
         return self
 
-    def register_p2_vc_meeting_ended_v1(self, handler):
+    def register_p2_vc_meeting_meeting_ended_v1(self, handler):
         self.meeting_handler = handler
         return self
 
-    def register_p2_doc_updated_v1(self, handler):
+    def register_p2_drive_file_edit_v1(self, handler):
         self.doc_handler = handler
         return self
 

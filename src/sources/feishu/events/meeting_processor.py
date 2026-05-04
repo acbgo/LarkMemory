@@ -5,17 +5,12 @@ import time
 import threading
 from typing import Any
 
-from src.sources._shared.chunker import split_by_chapters
 from src.storage.source_state_store import SourceStateStore
 
 from ..client.vc_client import FeishuVcClientProtocol
 from .dispatcher import FeishuEventDispatcher
-from .meeting_models import MeetingChapter, MeetingNotesData
-from .meeting_normalizer import (
-    meeting_chapter_to_event,
-    meeting_summary_to_event,
-    meeting_todo_to_event,
-)
+from .meeting_models import MeetingNotesData
+from .meeting_normalizer import ingest_notes_to_events
 
 logger = logging.getLogger(__name__)
 
@@ -92,7 +87,7 @@ class MeetingProcessor:
             )
             return
 
-        self._ingest_notes(notes, meeting_id, topic)
+        self._dispatch_events(ingest_notes_to_events(notes, meeting_id, topic))
         self._state.mark_complete(SOURCE_TYPE, meeting_id)
         logger.info(
             "action=meeting_processed meeting_id=%s chapters=%d todos=%d",
@@ -106,7 +101,7 @@ class MeetingProcessor:
 
         for attempt in range(MAX_RETRIES):
             try:
-                notes = self._vc.get_notes(minute_token)
+                notes = self._vc.get_meeting_notes(minute_token)
                 if notes.summary or notes.verbatim_text:
                     return notes
                 logger.info(
@@ -127,36 +122,7 @@ class MeetingProcessor:
 
         return None
 
-    def _ingest_notes(
-        self, notes: MeetingNotesData, meeting_id: str, topic: str
-    ) -> None:
-        events: list[Any] = []
-
-        # 总结
-        events.append(meeting_summary_to_event(notes, meeting_id, topic))
-
-        # 待办
-        for idx, todo in enumerate(notes.todos):
-            events.append(
-                meeting_todo_to_event(todo, meeting_id, notes.minute_token, idx)
-            )
-
-        # 章节
-        chapter_dicts: list[dict[str, Any]] = [
-            {"title": ch.title, "start_time_ms": ch.start_time_ms}
-            for ch in notes.chapters
-        ]
-        for chunk in split_by_chapters(notes.verbatim_text, chapter_dicts):
-            events.append(
-                meeting_chapter_to_event(
-                    chunk.content,
-                    chunk.heading or f"章节 {chunk.index + 1}",
-                    meeting_id,
-                    notes.minute_token,
-                    chunk.index,
-                )
-            )
-
+    def _dispatch_events(self, events: list[Any]) -> None:
         for evt in events:
             try:
                 self._dispatch.dispatch_normalized_event(evt)
