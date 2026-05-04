@@ -144,19 +144,23 @@
 
 特点：事件驱动、结构化 payload、不需要 source_state_store 或 chunker。
 
-## 阶段 16：飞书妙记接入 🔜 待开始
+## 阶段 16a：飞书妙记接入（核心链路） ✅ 已完成
 
-目标：接入会议结束事件，获取妙记 AI 产物（总结/章节/待办/逐字稿），按章节切分后进入记忆引擎。
+目标：会议结束事件→获取妙记 AI 产物→按章节切分→进入记忆引擎。
 
-任务：
-- 新增 `src/sources/feishu/events/meeting_models.py`：FeishuMeetingEndedEvent、MeetingNotesData。
-- 新增 `src/sources/feishu/events/meeting_normalizer.py`：总结/章节/待办→NormalizedEvent。
-- 新增 `src/sources/feishu/events/meeting_processor.py`：多步骤编排（幂等检查→等AI→拉取产物→切分→批量写入→标记完成）。
-- 新增 `src/sources/feishu/scanner/meeting_scanner.py`：定时扫描兜底非 WebSocket 场景。
-- 扩展 `src/sources/feishu/client/listener.py`：注册 `vc.meeting.ended_v1` 事件。
-- 新增 `tests/unit/sources/feishu/test_meeting_events.py`。
+已完成：
+- `vc_client.py`：VC API 客户端（get_recording/get_notes）。
+- `meeting_models.py`：FeishuMeetingEndedEvent、MeetingNotesData、MeetingTodo、MeetingChapter。
+- `meeting_normalizer.py`：四个 normalizer（ended/summary/todo/chapter）。
+- `meeting_processor.py`：多步骤编排（幂等→等AI→拉取→切分→批量dispatch→标记完成）。
+- `schemas/event.py`：Literal 类型扩展。
+- `listener.py`：注册 vc.meeting.ended_v1，on_meeting_ended 回调。
 
-特点：事件触发+轮询混合、需 source_state_store（幂等+游标）、需 chunker（按章节切逐字稿）。
+## 阶段 16b：妙记 Scanner 兜底 🔜 待开始
+
+目标：定时轮询扫描，兜底处理非 WebSocket 触发的妙记（手动上传录音/视频、WebSocket 事件丢失）。
+
+- `src/sources/feishu/scanner/meeting_scanner.py`：每 10 分钟扫描 source_state_store 中 status=pending_ai 的超时会议，重试拉取产物。
 
 ## 阶段 17：飞书文档接入 🔜 待开始
 

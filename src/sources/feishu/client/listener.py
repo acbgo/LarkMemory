@@ -8,11 +8,15 @@ from src.app.dependencies import get_memory_service
 from src.sources.feishu.events.calendar_models import FeishuCalendarEvent
 from src.sources.feishu.events.calendar_normalizer import calendar_event_to_normalized_event
 from src.sources.feishu.events.dispatcher import FeishuEventDispatcher
+from src.sources.feishu.events.meeting_models import FeishuMeetingEndedEvent
+from src.sources.feishu.events.meeting_normalizer import meeting_ended_to_event
+from src.sources.feishu.events.meeting_processor import MeetingProcessor
 from src.sources.feishu.events.models import FeishuMessageEvent
 from src.sources.feishu.events.normalizer import extract_text_from_message_content
 from src.sources.feishu.events.task_models import FeishuTaskEvent
 from src.sources.feishu.events.task_normalizer import task_event_to_normalized_event
 from src.sources.feishu.proactive.callbacks import FeishuCardActionHandler, parse_card_action
+from src.storage.source_state_store import SourceStateStore
 
 from .config import load_feishu_settings
 from .sdk import build_ws_client, _import_lark
@@ -21,12 +25,21 @@ from .sdk import build_ws_client, _import_lark
 logger = logging.getLogger(__name__)
 
 
-def build_event_handler(memory_service: Any | None = None, settings: Any | None = None) -> Any:
-    """Build lark-oapi event handler for Feishu messages and card actions."""
+def build_event_handler(
+    memory_service: Any | None = None,
+    settings: Any | None = None,
+    source_state_store: SourceStateStore | None = None,
+    vc_client: Any | None = None,
+) -> Any:
+    """Build lark-oapi event handler for Feishu messages, card actions, and multi-source events."""
     lark = _import_lark()
     service = memory_service or get_memory_service()
     dispatcher = FeishuEventDispatcher(service)
     card_handler = FeishuCardActionHandler(service)
+
+    meeting_processor: MeetingProcessor | None = None
+    if source_state_store is not None and vc_client is not None:
+        meeting_processor = MeetingProcessor(source_state_store, vc_client, dispatcher)
 
     def on_message(data: Any) -> None:
         message_event = _message_event_from_lark(data)
@@ -51,6 +64,16 @@ def build_event_handler(memory_service: Any | None = None, settings: Any | None 
         normalized = task_event_to_normalized_event(task_event)
         dispatcher.dispatch_normalized_event(normalized)
 
+    def on_meeting_ended(data: Any) -> None:
+        meeting = _meeting_ended_from_lark(data)
+        if meeting is None:
+            logger.info("function=src.sources.feishu.client.listener.on_meeting_ended action=skip_empty")
+            return
+        normalized = meeting_ended_to_event(meeting)
+        dispatcher.dispatch_normalized_event(normalized)
+        if meeting_processor is not None:
+            meeting_processor.process_meeting_ended_async(meeting.meeting_id, meeting.topic)
+
     def on_card_action(data: Any) -> Any:
         raw_action = _card_action_from_lark(data)
         response_payload = card_handler.handle(parse_card_action(raw_action))
@@ -60,7 +83,7 @@ def build_event_handler(memory_service: Any | None = None, settings: Any | None 
             return response_payload
         return P2CardActionTriggerResponse(response_payload)
 
-    return (
+    handler_builder = (
         lark.EventDispatcherHandler.builder(
             getattr(settings, "verification_token", "") if settings is not None else "",
             getattr(settings, "encrypt_key", "") if settings is not None else "",
@@ -69,8 +92,10 @@ def build_event_handler(memory_service: Any | None = None, settings: Any | None 
         .register_p2_card_action_trigger(on_card_action)
         .register_p2_calendar_event_changed_v4(on_calendar_event)
         .register_p2_task_updated_v2(on_task_event)
-        .build()
     )
+    if meeting_processor is not None:
+        handler_builder = handler_builder.register_p2_vc_meeting_ended_v1(on_meeting_ended)
+    return handler_builder.build()
 
 
 def main() -> None:
@@ -149,6 +174,39 @@ def _calendar_event_from_lark(data: Any) -> FeishuCalendarEvent | None:
         location=_nested_attr_str(event, "location", "name"),
         recurrence=_attr_str(event, "recurrence"),
         status=_attr_str(event, "status") or "confirmed",
+        raw_payload=_safe_payload(data),
+    )
+
+
+def _meeting_ended_from_lark(data: Any) -> FeishuMeetingEndedEvent | None:
+    event = getattr(data, "event", None)
+    if event is None:
+        return None
+    meeting_id = getattr(event, "meeting_id", None)
+    if not meeting_id:
+        return None
+    topic = getattr(event, "topic", "") or getattr(event, "name", "") or "未命名会议"
+
+    participant_ids: list[str] = []
+    raw_participants = getattr(event, "participants", None)
+    if isinstance(raw_participants, list):
+        for p in raw_participants:
+            p_id = getattr(p, "id", None) if not isinstance(p, str) else p
+            if p_id:
+                participant_ids.append(str(p_id))
+
+    organizer_id = None
+    organizer = getattr(event, "organizer", None)
+    if organizer is not None:
+        organizer_id = getattr(organizer, "id", None)
+
+    return FeishuMeetingEndedEvent(
+        meeting_id=str(meeting_id),
+        topic=str(topic),
+        start_time=_attr_str(event, "start_time"),
+        end_time=_attr_str(event, "end_time"),
+        organizer_id=organizer_id,
+        participant_ids=participant_ids,
         raw_payload=_safe_payload(data),
     )
 

@@ -707,3 +707,37 @@
 - 验证：`python -m pytest tests/unit/sources/feishu/test_task_events.py tests/unit/sources/feishu/test_listener.py tests/unit/sources/feishu/test_calendar_events.py -q`，35 passed。
 - 验证：`python -m compileall src tests`，通过。
 - 验证：`python -m pytest tests -q`，535 passed, 6 subtests passed。
+
+## 2026-05-04 阶段 16a：飞书妙记接入（核心链路）
+
+- 已新增 `src/sources/feishu/client/vc_client.py` — 飞书 VC API 客户端：
+  - `FeishuVcClientProtocol` 定义 `get_recording(meeting_id)→str` 和 `get_notes(minute_token)→MeetingNotesData` 接口。
+  - `FeishuVcClient` 实现：调用 `vc/v1/meetings/{id}/recording` 获取 `minute_token`，调用 `vc/v1/minutes/{token}/notes` 获取 AI 产物（summary/todo_list/chapter_list/transcript），todo_list 含 assignees 列表展开和 due_time 时间戳转换。
+- 已新增 `src/sources/feishu/events/meeting_models.py`：
+  - `FeishuMeetingEndedEvent`（meeting_id/topic/start_time/end_time/organizer_id/participant_ids）。
+  - `MeetingNotesData`（summary/todos:MeetingTodo/chapters:MeetingChapter/verbatim_text/minute_token）。
+  - `MeetingTodo`（title/content/due_time/assignee_ids）、`MeetingChapter`（title/start_time_ms）。
+- 已新增 `src/sources/feishu/events/meeting_normalizer.py` — 四个 normalizer 函数：
+  - `meeting_ended_to_event()` → `event_type="meeting_summary"`（会议结束事件本身，不依赖 AI 产物）。
+  - `meeting_summary_to_event()` → `event_type="meeting_summary"`（AI 总结锚点事件）。
+  - `meeting_todo_to_event()` → `event_type="meeting_todo"`（单条待办，含 due_time/assignees）。
+  - `meeting_chapter_to_event()` → `event_type="meeting_chapter"`（单个章节的逐字稿片段）。
+- 已新增 `src/sources/feishu/events/meeting_processor.py` — 多步骤编排：
+  - `MeetingProcessor` 依赖 `SourceStateStore` + `FeishuVcClientProtocol` + `FeishuEventDispatcher`。
+  - `process_meeting_ended_async()` 在 daemon 线程中异步处理，不阻塞 WebSocket 回调（3s 内返回 ack）。
+  - `_process()` 完整链路：幂等检查→`get_recording` 获取 minute_token→upsert status=pending_ai→等 5min→`get_notes` 拉取 AI 产物（最多重试 5 次，间隔 2min）→`chunker.split_by_chapters` 切分→批量 `dispatch_normalized_event`→`mark_complete`。
+  - 异常时 `mark_error`，AI 产物未就绪时保持 `pending_ai` 由 scanner（16b）兜底。
+- 已扩展 `src/schemas/event.py`：`EventType` 新增 `"meeting_chapter"`/`"meeting_summary"`/`"meeting_todo"`，`SourceType` 新增 `"feishu_vc"`。
+- 已扩展 `src/sources/feishu/client/listener.py`：
+  - `build_event_handler()` 新增可选参数 `source_state_store` 和 `vc_client`，两者均提供时创建 `MeetingProcessor` 并注册 `vc.meeting.ended_v1` 事件。
+  - `on_meeting_ended` 回调：先 dispatch meeting_ended 事件（不依赖 AI），再异步启动 processor 处理妙记产物。
+  - 新增 `_meeting_ended_from_lark()` 提取函数和 `_nested_attr_str()` 辅助函数。
+- 新增测试 `tests/unit/sources/feishu/test_meeting_events.py`：15 tests：
+  - `TestMeetingNormalizer`：4 个 normalizer 函数映射、occurred_at 降级、todo 空标题 fallback。
+  - `TestMeetingProcessor`：完整链路（mock vc_client + 归零延迟常量）、幂等跳过已 complete 会议、事件数量验证（summary+todo+chapter）。
+  - `TestMeetingEventFromLark`：SimpleNamespace 提取、topic/name fallback、空事件/无 meeting_id。
+  - `TestMeetingChapterChunking`：chunker 与 normalizer 集成。
+- 已更新 `tests/unit/sources/feishu/test_listener.py`：`_FakeBuiltHandler` 新增 `meeting_handler` 和 `register_p2_vc_meeting_ended_v1()`。
+- 验证：`python -m pytest tests/unit/sources/feishu/test_meeting_events.py tests/unit/sources/feishu/test_listener.py -q`，18 passed。
+- 验证：`python -m compileall src tests`，通过。
+- 验证：`python -m pytest tests -q`，550 passed, 6 subtests passed。

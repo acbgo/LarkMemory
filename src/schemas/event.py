@@ -10,7 +10,10 @@ EventType = Literal[
     "command_failed",
     "chat_message",
     "doc_changed",
+    "meeting_chapter",
     "meeting_note",
+    "meeting_summary",
+    "meeting_todo",
     "memory_feedback",
     "task_completed",
     "task_created",
@@ -20,6 +23,7 @@ EventType = Literal[
 SourceType = Literal[
     "feishu_calendar",
     "feishu_task",
+    "feishu_vc",
     "openclaw",
     "shell",
     "feishu_chat",
