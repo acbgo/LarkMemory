@@ -4,6 +4,8 @@ import json
 import logging
 from typing import Any
 
+from src.utils.time import utc_now_iso
+
 from .base import SQLiteStore
 
 logger = logging.getLogger(__name__)
@@ -57,21 +59,20 @@ class SourceStateStore(SQLiteStore):
         cursor_value: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> None:
-        from src.utils.time import utc_now_iso
-
         now = utc_now_iso()
         self.execute(
             """
             INSERT INTO source_processed
                 (source_type, external_id, status, last_hash, cursor_value,
-                 metadata_json, processed_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+                 metadata_json, processed_at, error_count)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 0)
             ON CONFLICT(source_type, external_id) DO UPDATE SET
                 status = excluded.status,
                 last_hash = COALESCE(excluded.last_hash, source_processed.last_hash),
                 cursor_value = COALESCE(excluded.cursor_value, source_processed.cursor_value),
                 metadata_json = excluded.metadata_json,
-                processed_at = excluded.processed_at
+                processed_at = excluded.processed_at,
+                error_count = 0
             """,
             (
                 source_type, external_id, status,
@@ -122,8 +123,6 @@ class SourceStateStore(SQLiteStore):
     # ---- 状态更新 ----
 
     def mark_complete(self, source_type: str, external_id: str) -> None:
-        from src.utils.time import utc_now_iso
-
         self.execute(
             "UPDATE source_processed SET status = 'complete', processed_at = ? "
             "WHERE source_type = ? AND external_id = ?",
@@ -131,8 +130,6 @@ class SourceStateStore(SQLiteStore):
         )
 
     def mark_error(self, source_type: str, external_id: str) -> None:
-        from src.utils.time import utc_now_iso
-
         self.execute(
             "UPDATE source_processed SET status = 'error', "
             "error_count = error_count + 1, processed_at = ? "
@@ -140,11 +137,16 @@ class SourceStateStore(SQLiteStore):
             (utc_now_iso(), source_type, external_id),
         )
 
+    def reset_error(self, source_type: str, external_id: str) -> None:
+        self.execute(
+            "UPDATE source_processed SET error_count = 0 "
+            "WHERE source_type = ? AND external_id = ?",
+            (source_type, external_id),
+        )
+
     def update_cursor(
         self, source_type: str, external_id: str, cursor_value: str
     ) -> None:
-        from src.utils.time import utc_now_iso
-
         self.execute(
             "UPDATE source_processed SET cursor_value = ?, processed_at = ? "
             "WHERE source_type = ? AND external_id = ?",
@@ -154,8 +156,6 @@ class SourceStateStore(SQLiteStore):
     def update_hash(
         self, source_type: str, external_id: str, last_hash: str
     ) -> None:
-        from src.utils.time import utc_now_iso
-
         self.execute(
             "UPDATE source_processed SET last_hash = ?, processed_at = ? "
             "WHERE source_type = ? AND external_id = ?",

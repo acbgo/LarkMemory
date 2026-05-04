@@ -12,6 +12,7 @@ class _FakeBuiltHandler:
         self.encrypt_key = encrypt_key
         self.message_handler = None
         self.card_handler = None
+        self.calendar_handler = None
 
     def register_p2_im_message_receive_v1(self, handler):
         self.message_handler = handler
@@ -19,6 +20,10 @@ class _FakeBuiltHandler:
 
     def register_p2_card_action_trigger(self, handler):
         self.card_handler = handler
+        return self
+
+    def register_p2_calendar_event_changed_v4(self, handler):
+        self.calendar_handler = handler
         return self
 
     def build(self):
@@ -60,6 +65,7 @@ def test_build_event_handler_uses_settings_token_and_encrypt_key(monkeypatch) ->
     assert handler.encrypt_key == "encrypt-key"
     assert handler.message_handler is not None
     assert handler.card_handler is not None
+    assert handler.calendar_handler is not None
 
 
 def test_message_event_from_lark_extracts_required_fields() -> None:

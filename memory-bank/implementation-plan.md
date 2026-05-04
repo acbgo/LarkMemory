@@ -120,7 +120,7 @@
 - Source 层只通过依赖注入使用 `SourceStateStore`，不直接持有 DB 连接。
 - Chunker 纯文本处理，不依赖飞书 SDK 或 LLM。
 
-## 阶段 14：飞书日历接入 🔜 待开始
+## 阶段 14：飞书日历接入 ✅ 已完成
 
 目标：接入飞书日历 WebSocket 事件，将日程变更转为 NormalizedEvent 进入记忆引擎。
 

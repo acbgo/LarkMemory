@@ -637,3 +637,48 @@
 - 验证：`python -m pytest tests/unit/storage/test_source_state_store.py tests/unit/sources/_shared/test_chunker.py -q -p no:cacheprovider`，35 passed。
 - 验证：`python -m compileall src tests`，通过。
 - 验证：`python -m pytest tests -q -p no:cacheprovider`，499 passed, 6 subtests passed。
+
+## 2026-05-04 阶段 13 审查修复
+
+- 修复 `SourceStateStore` 6 处局部 `from src.utils.time import utc_now_iso` → 提升到模块顶部统一导入。
+- 修复 `split_by_chapters` 不可达 `tail_bucket` 死代码：while 循环 `current_chapter_idx + 1 < len(chapter_boundaries)` 严格保证 `current_chapter_idx < len(chapter_buckets)` 恒真，删除 else 分支和尾部处理块。
+- 新增 `SourceStateStore.reset_error()` 方法，显式重置 `error_count` 为 0。
+- `upsert_state` 写入新行时显式设置 `error_count = 0`，ON CONFLICT 更新时也重置为 0，确保错误修复后重新 upsert 不会残留旧计数值。
+- 补充 COALESCE 语义边界测试：`test_upsert_empty_string_overwrites_hash`（空字符串覆盖旧值）、`test_upsert_none_preserves_hash`（None 保留旧值）、`test_upsert_resets_error_count`、`test_reset_error`。
+- 补充 `test_content_beyond_last_boundary_stays_in_last_chapter`：超出最后章节边界的行归入最后一章而非独立尾部。
+- 验证：`python -m pytest tests/unit/storage/test_source_state_store.py tests/unit/sources/_shared/test_chunker.py -q`，39 passed。
+- 验证：`python -m pytest tests -q`，503 passed, 6 subtests passed，零回退。
+
+## 2026-05-04 阶段 14：飞书日历接入
+
+- 已新增 `src/sources/feishu/events/calendar_models.py` — `FeishuCalendarEvent` 模型：
+  - 字段：`calendar_event_id`、`summary`、`description`、`start_time`、`end_time`、`organizer_id`、`attendee_ids`、`location`、`recurrence`、`status`、`raw_payload`。
+- 已新增 `src/sources/feishu/events/calendar_normalizer.py` — 1:1 映射：
+  - `calendar_event_to_normalized_event()` → `NormalizedEvent(event_type="calendar_event", source_type="feishu_calendar")`。
+  - `summary` + `description` 合并为 `content_text`，结构化字段（时间/地点/参会人/重复规则）存入 `payload`。
+  - tags 包含 `calendar`、`feishu`、status 和可选的 `recurring`。
+- 已扩展 `src/sources/feishu/client/listener.py`：
+  - 新增 `on_calendar_event()` 回调：`_calendar_event_from_lark()` 提取 → normalizer → dispatcher。
+  - 新增 `_calendar_event_from_lark()` 提取函数：从 lark-oapi 回调对象中提取日历字段（含 attendees 列表展开、organizer id、status 空值兜底）。
+  - 新增 `_attr_str()` 辅助方法，安全转换 SDK 属性为 `str | None`。
+  - `build_event_handler()` 注册 `register_p2_calendar_event_changed_v4(on_calendar_event)`。
+- 已更新 `tests/unit/sources/feishu/test_listener.py`：
+  - `_FakeBuiltHandler` 新增 `calendar_handler` 和 `register_p2_calendar_event_changed_v4()`。
+  - 现有 `test_build_event_handler` 断言增加 `calendar_handler is not None`。
+- 新增测试 `tests/unit/sources/feishu/test_calendar_events.py`：13 tests：
+  - `TestCalendarNormalizer`：基本字段映射、payload 结构化、空描述、tentative/cancelled/recurring 状态。
+  - `TestCalendarEventDispatch`：通过 dispatcher 存入 event_store、触发 project_decision 抽取、重复事件容忍。
+  - `TestCalendarEventFromLark`：从 SimpleNamespace 提取字段、无事件/无 ID 返回 None、空 attendees、无 organizer_id。
+- 特点：事件驱动 + 1:1 映射，不需要 source_state_store 或 chunker，完全复用现有 dispatcher 模式。
+- 验证：`python -m pytest tests/unit/sources/feishu/test_calendar_events.py tests/unit/sources/feishu/test_listener.py -q`，16 passed。
+- 验证：`python -m compileall src tests`，通过。
+- 验证：`python -m pytest tests -q`，516 passed, 6 subtests passed。
+
+## 2026-05-04 阶段 14 审查修复
+
+- 修复 `_attr_str` 无法提取 lark-oapi 嵌套对象字段：新增 `_nested_attr_str(obj, outer, inner)` 函数，对 `start_time`/`end_time` 深入取 `date_time`，对 `location` 深入取 `name`，避免 `str(TimeInfo)` 把整个对象序列化为 Python repr。
+- 修复 `schemas/event.py` Literal 类型缺失：`EventType` 新增 `"calendar_event"`，`SourceType` 新增 `"feishu_calendar"`，确保下游 router、domain handler 等依赖 Literal 分发时不会静默漏掉日历事件。
+- 修复 `calendar_normalizer` 的 `occurred_at` 语义：优先使用 `event.start_time`（事件实际发生时间），`None` 时 fallback 到 `utc_now_iso()`，与 IM normalizer 使用消息 `create_time` 的模式保持一致，避免飞书重试推送时 `occurred_at` 次次不同。
+- 测试补强：`test_extracts_basic_fields` 补充 `start_time`/`end_time`/`location`/`recurrence`/`status` 断言；新增 `test_nested_fields_none_when_outer_is_none` 和 `test_nested_fields_none_when_inner_is_none` 覆盖嵌套对象为 None 的降级路径；新增 `test_normalizer_falls_back_occurred_at_when_no_start_time` 覆盖 occurred_at 降级。
+- 验证：`python -m pytest tests/unit/sources/feishu/test_calendar_events.py tests/unit/sources/feishu/test_listener.py -q`，19 passed。
+- 验证：`python -m pytest tests -q`，519 passed, 6 subtests passed，零回退。

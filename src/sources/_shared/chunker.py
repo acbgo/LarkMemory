@@ -120,17 +120,13 @@ def split_by_chapters(
     # 按章段时间边界分配行
     current_chapter_idx = 0
     chapter_buckets: list[list[str]] = [[] for _ in chapters]
-    tail_bucket: list[str] = []
 
     for line in lines:
         line_ms = _line_to_ms(line)
         if line_ms is not None:
             while current_chapter_idx + 1 < len(chapter_boundaries) and line_ms >= chapter_boundaries[current_chapter_idx + 1]:
                 current_chapter_idx += 1
-        if current_chapter_idx < len(chapter_buckets):
-            chapter_buckets[current_chapter_idx].append(line)
-        else:
-            tail_bucket.append(line)
+        chapter_buckets[current_chapter_idx].append(line)
 
     for i, (ch, bucket) in enumerate(zip(chapters, chapter_buckets)):
         content = "\n".join(bucket).strip()
@@ -145,15 +141,5 @@ def split_by_chapters(
             index=i,
             metadata={"chapter_title": heading, "start_time_ms": chapter_boundaries[i]},
         ))
-
-    if tail_bucket:
-        tail_content = "\n".join(tail_bucket).strip()
-        if tail_content:
-            chunks.append(ChunkResult(
-                chunk_id=_make_chunk_id("ch", len(chapters), tail_content),
-                content=tail_content,
-                heading="尾部",
-                index=len(chapters),
-            ))
 
     return chunks

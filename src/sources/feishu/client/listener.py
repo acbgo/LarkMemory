@@ -5,6 +5,8 @@ import logging
 from typing import Any
 
 from src.app.dependencies import get_memory_service
+from src.sources.feishu.events.calendar_models import FeishuCalendarEvent
+from src.sources.feishu.events.calendar_normalizer import calendar_event_to_normalized_event
 from src.sources.feishu.events.dispatcher import FeishuEventDispatcher
 from src.sources.feishu.events.models import FeishuMessageEvent
 from src.sources.feishu.events.normalizer import extract_text_from_message_content
@@ -31,6 +33,14 @@ def build_event_handler(memory_service: Any | None = None, settings: Any | None 
             return
         dispatcher.dispatch_message(message_event)
 
+    def on_calendar_event(data: Any) -> None:
+        cal_event = _calendar_event_from_lark(data)
+        if cal_event is None:
+            logger.info("function=src.sources.feishu.client.listener.on_calendar_event action=skip_empty")
+            return
+        normalized = calendar_event_to_normalized_event(cal_event)
+        dispatcher.dispatch_normalized_event(normalized)
+
     def on_card_action(data: Any) -> Any:
         raw_action = _card_action_from_lark(data)
         response_payload = card_handler.handle(parse_card_action(raw_action))
@@ -47,6 +57,7 @@ def build_event_handler(memory_service: Any | None = None, settings: Any | None 
         )
         .register_p2_im_message_receive_v1(on_message)
         .register_p2_card_action_trigger(on_card_action)
+        .register_p2_calendar_event_changed_v4(on_calendar_event)
         .build()
     )
 
@@ -92,6 +103,62 @@ def _card_action_from_lark(data: Any) -> dict[str, Any]:
         "operator": {"open_id": getattr(operator, "open_id", None)},
         "raw": _safe_payload(data),
     }
+
+
+def _calendar_event_from_lark(data: Any) -> FeishuCalendarEvent | None:
+    event = getattr(data, "event", None)
+    if event is None:
+        return None
+    calendar_event_id = getattr(event, "event_id", None)
+    summary = getattr(event, "summary", "") or ""
+    if not calendar_event_id or not summary:
+        return None
+
+    attendee_ids: list[str] = []
+    raw_attendees = getattr(event, "attendees", None)
+    if isinstance(raw_attendees, list):
+        for a in raw_attendees:
+            a_id = getattr(a, "id", None) if not isinstance(a, str) else a
+            if a_id:
+                attendee_ids.append(str(a_id))
+
+    organizer_id = None
+    organizer = getattr(event, "organizer", None)
+    if organizer is not None:
+        organizer_id = getattr(organizer, "id", None)
+
+    return FeishuCalendarEvent(
+        calendar_event_id=str(calendar_event_id),
+        summary=str(summary),
+        description=str(getattr(event, "description", "") or ""),
+        start_time=_nested_attr_str(event, "start_time", "date_time"),
+        end_time=_nested_attr_str(event, "end_time", "date_time"),
+        organizer_id=organizer_id,
+        attendee_ids=attendee_ids,
+        location=_nested_attr_str(event, "location", "name"),
+        recurrence=_attr_str(event, "recurrence"),
+        status=_attr_str(event, "status") or "confirmed",
+        raw_payload=_safe_payload(data),
+    )
+
+
+def _attr_str(obj: Any, name: str) -> str | None:
+    value = getattr(obj, name, None)
+    if value is None:
+        return None
+    s = str(value)
+    return s or None
+
+
+def _nested_attr_str(obj: Any, outer: str, inner: str) -> str | None:
+    outer_obj = getattr(obj, outer, None)
+    if outer_obj is None:
+        return None
+    inner_val = getattr(outer_obj, inner, None)
+    if inner_val is None:
+        return None
+    s = str(inner_val)
+    return s or None
 
 
 def _safe_payload(data: Any) -> dict[str, Any]:

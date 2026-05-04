@@ -103,6 +103,36 @@ class TestSourceStateStore(unittest.TestCase):
         self.store.mark_error("feishu_vc", "meeting-1")
         self.assertEqual(self.store.get_state("feishu_vc", "meeting-1")["error_count"], 2)
 
+    def test_reset_error(self) -> None:
+        self.store.upsert_state("feishu_vc", "meeting-1", status="pending")
+        self.store.mark_error("feishu_vc", "meeting-1")
+        self.store.mark_error("feishu_vc", "meeting-1")
+        self.assertEqual(self.store.get_state("feishu_vc", "meeting-1")["error_count"], 2)
+        self.store.reset_error("feishu_vc", "meeting-1")
+        self.assertEqual(self.store.get_state("feishu_vc", "meeting-1")["error_count"], 0)
+
+    def test_upsert_resets_error_count(self) -> None:
+        self.store.upsert_state("feishu_vc", "meeting-1", status="pending")
+        self.store.mark_error("feishu_vc", "meeting-1")
+        self.store.mark_error("feishu_vc", "meeting-1")
+        self.assertEqual(self.store.get_state("feishu_vc", "meeting-1")["error_count"], 2)
+        # 重新 upsert 应重置 error_count
+        self.store.upsert_state("feishu_vc", "meeting-1", status="pending")
+        self.assertEqual(self.store.get_state("feishu_vc", "meeting-1")["error_count"], 0)
+
+    def test_upsert_empty_string_overwrites_hash(self) -> None:
+        self.store.upsert_state("feishu_doc", "doc-1", last_hash="original-hash")
+        self.assertEqual(self.store.get_state("feishu_doc", "doc-1")["last_hash"], "original-hash")
+        # 空字符串不是 NULL，应覆盖旧值
+        self.store.upsert_state("feishu_doc", "doc-1", last_hash="")
+        self.assertEqual(self.store.get_state("feishu_doc", "doc-1")["last_hash"], "")
+
+    def test_upsert_none_preserves_hash(self) -> None:
+        self.store.upsert_state("feishu_doc", "doc-1", last_hash="original-hash")
+        # None 应被 COALESCE 保留旧值
+        self.store.upsert_state("feishu_doc", "doc-1", last_hash=None)
+        self.assertEqual(self.store.get_state("feishu_doc", "doc-1")["last_hash"], "original-hash")
+
     def test_update_cursor(self) -> None:
         self.store.upsert_state("feishu_vc", "scanner", status="scanning")
         self.store.update_cursor("feishu_vc", "scanner", "2026-05-04T12:00:00Z")

@@ -5,6 +5,7 @@ from typing import Any, Literal
 
 
 EventType = Literal[
+    "calendar_event",
     "command_finished",
     "command_failed",
     "chat_message",
@@ -14,6 +15,7 @@ EventType = Literal[
 ]
 
 SourceType = Literal[
+    "feishu_calendar",
     "openclaw",
     "shell",
     "feishu_chat",

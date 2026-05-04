@@ -134,11 +134,13 @@ class TestSplitByChapters(unittest.TestCase):
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0].heading, "有内容")
 
-    def test_tail_content_after_last_chapter(self) -> None:
+    def test_content_beyond_last_boundary_stays_in_last_chapter(self) -> None:
         chapters = [{"title": "总结", "start_time_ms": 0}]
-        text = "[00:00:01] 总结内容\n[00:01:00] 这个没有对应章节的时间"
+        text = "[00:00:01] 总结内容\n[00:01:00] 超出最后边界的行归入最后一章"
         results = split_by_chapters(text, chapters)
         self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].heading, "总结")
+        self.assertIn("超出最后边界的行归入最后一章", results[0].content)
 
     def test_chunk_id_prefix(self) -> None:
         chapters = [{"title": "测试", "start_time_ms": 0}]
