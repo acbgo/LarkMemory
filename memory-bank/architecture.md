@@ -32,15 +32,30 @@ LarkMemory/
 │   └── openclaw.plugin.json        # OpenClaw 插件元信息
 │
 ├── sources/                        # 外部消息源接入层
+│   ├── _shared/                    # 多信息源共享基础设施
+│   │   └── chunker.py              # 通用文本切分工具（Markdown 标题切分 / 妙记章节切分）
+│   │
 │   ├── feishu/                     # 飞书消息源、卡片推送和回调适配
 │   │   ├── client/                 # 飞书 SDK 连接与监听
 │   │   │   ├── config.py           # 飞书企业自建应用凭证和运行配置
 │   │   │   ├── sdk.py              # lark-oapi OpenAPI/WebSocket client 工厂
-│   │   │   └── listener.py         # 飞书 WebSocket 事件监听入口
+│   │   │   └── listener.py         # 飞书 WebSocket 事件监听入口（多事件类型注册）
 │   │   ├── events/                 # 飞书事件模型、标准化和分发
-│   │   │   ├── models.py           # 飞书消息、卡片动作和原始事件模型
-│   │   │   ├── normalizer.py       # 飞书消息转 NormalizedEvent
-│   │   │   └── dispatcher.py       # 标准化事件分发到 MemoryService
+│   │   │   ├── models.py           # 飞书 IM 消息、卡片动作和原始事件模型
+│   │   │   ├── normalizer.py       # 飞书 IM 消息转 NormalizedEvent
+│   │   │   ├── dispatcher.py       # 标准化事件分发到 MemoryService（通用）
+│   │   │   ├── calendar_models.py  # 飞书日历事件模型
+│   │   │   ├── calendar_normalizer.py  # 日历事件→NormalizedEvent (1:1)
+│   │   │   ├── task_models.py      # 飞书任务事件模型
+│   │   │   ├── task_normalizer.py  # 任务事件→NormalizedEvent (1:1)
+│   │   │   ├── meeting_models.py   # 飞书会议/妙记事件模型
+│   │   │   ├── meeting_normalizer.py   # 会议总结/章节/待办→NormalizedEvent
+│   │   │   ├── meeting_processor.py    # 妙记多步骤编排(等AI→拉取产物→切chunk)
+│   │   │   ├── doc_models.py       # 飞书文档事件模型
+│   │   │   ├── doc_normalizer.py   # 文档章节→NormalizedEvent
+│   │   │   └── doc_processor.py    # 文档变更处理(拉取→diff→切chunk)
+│   │   ├── scanner/                # 定时轮询扫描（兜底非 WebSocket 场景）
+│   │   │   └── meeting_scanner.py  # 妙记增量扫描
 │   │   └── proactive/              # 飞书主动服务输出与反馈
 │   │       ├── cards.py            # 主动提醒 suggestion 转飞书互动卡片
 │   │       ├── notifier.py         # 调用飞书 API 发送文本和互动卡片
@@ -127,7 +142,8 @@ LarkMemory/
 │   ├── team_retention_store.py     # 团队保留领域 memory 持久化
 │   ├── embedding_store.py          # 向量索引和语义检索
 │   ├── access_log_store.py         # 命中、采纳和反馈日志
-│   └── review_schedule_store.py    # 复习计划和提醒时间
+│   ├── review_schedule_store.py    # 复习计划和提醒时间
+│   └── source_state_store.py       # Source 层外部资源处理状态（书签/游标/指纹）
 │
 ├── llm/                            # LLM provider 与结构化调用封装
 │   ├── base.py                     # provider 抽象
@@ -229,6 +245,121 @@ MemoryService.proactive_suggestions()
 - 飞书 listener 不做长期记忆判断，不直接调用 domain extractor。
 - 飞书卡片 JSON 构造不调用飞书 API；发送逻辑只放在 notifier。
 - 当前本地实现可以进程内调用 `MemoryService`；后续可替换为 HTTP 调用 `/api/v1/ingest` 和 `/api/v1/update`。
+
+### `sources/_shared/` — 多信息源共享工具
+
+**`chunker.py`** — 纯文本切分工具，无 DB 依赖，无外部服务依赖：
+
+- `split_by_headings(markdown_text)` → `list[ChunkResult]`：按 Markdown H1/H2 标题切分，用于文档分段。
+- `split_by_chapters(verbatim_text, chapter_list)` → `list[ChunkResult]`：按妙记 AI 章节时间戳切分逐字稿，用于会议内容分段。
+- `ChunkResult` 包含 `chunk_id, heading/heading_level, content, index`，可直接映射到 `NormalizedEvent.title` 和 `content_text`。
+
+### `storage/source_state_store.py` — Source 层外部资源处理状态
+
+属于 storage 层（复用 `SQLiteStore` 基类），对 source adapter 暴露稳定的读写接口。
+
+- 独立 DB 文件 `.larkmemory/source_state.db`，与后端记忆引擎 DB 物理隔离。
+- 表 `source_processed(source_type, external_id, status, last_hash, cursor_value, metadata_json, processed_at, error_count)`。
+- 只做"书签/游标/指纹"，不存储业务数据（事件、记忆）。
+- 使用场景：
+  - 妙记 scanner：判断 meeting 是否已处理、AI 产物是否就绪。
+  - 文档 processor：对比内容 hash 判断是否有实质变更，避免重复抽取无变化的文档。
+- source adapter 通过依赖注入获取 `SourceStateStore` 实例，不直接持有 DB 连接。
+
+### 多信息源扩展模式
+
+新增信息源按复杂度分为两类，采用不同的处理模式：
+
+**┌─────────────────────────────────────────────────────────────────┐**
+**│ 类型 A：事件驱动 + 1:1 映射（日历、任务）                          │**
+**│                                                                  │**
+**│ WS 事件 → xxx_normalizer.py  → 1 条 NormalizedEvent              │**
+**│                (1:1 映射)     → dispatcher.dispatch()            │**
+**│                                                                │**
+**│ 不需要 source_state_store，不需要 chunker。                       │**
+**└─────────────────────────────────────────────────────────────────┘**
+
+**┌─────────────────────────────────────────────────────────────────┐**
+**│ 类型 B：事件触发 + 多步骤 + 1:N 切分（妙记、文档）                  │**
+**│                                                                  │**
+**│ WS 事件 → xxx_processor.py → 拉取外部数据 → chunker 切分          │**
+**│                              → 每条 chunk → xxx_normalizer.py    │**
+**│                              → N 条 NormalizedEvent               │**
+**│                              → dispatcher.dispatch_all()         │**
+**│                              → source_state_store 记录状态        │**
+**│                                                                  │**
+**│ 需要 source_state_store（幂等+书签）+ chunker（切分）+ processor。  │**
+**│ 轮询兜底由 scanner/ 提供。                                        │**
+**└─────────────────────────────────────────────────────────────────┘**
+
+各模块职责边界：
+
+| 模块 | 职责 | 适用于 |
+|------|------|--------|
+| `xxx_normalizer.py` | 1 条外部数据→1 条 NormalizedEvent 的纯映射 | 所有信息源 |
+| `xxx_processor.py` | 多步骤编排：拉取外部API→等AI产物→切分→批量写入→标记状态 | 妙记、文档 |
+| `chunker.py` | 纯文本切分：按标题/章节将长文本切为独立片段 | 妙记逐字稿、文档正文 |
+| `scanner/*.py` | 定时轮询：按间隔扫描新数据源，兜底非 WebSocket 场景 | 妙记非会议上传 |
+| `source_state_store.py` | 记录"哪个外部资源已处理到什么程度" | processor、scanner |
+
+### 新增信息源的数据流
+
+**飞书日历（事件驱动 + 1:1 映射）：**
+
+```text
+Feishu WebSocket calendar.event.changed_v4
+→ listener.on_calendar_event()
+→ calendar_normalizer.calendar_event_to_normalized_event()
+    event_type="calendar_event", source_type="feishu_calendar"
+    content_text=标题+描述, payload={start_time, end_time, attendees, ...}
+→ dispatcher.dispatch_normalized_event()
+→ MemoryService.ingest_event()
+```
+
+**飞书任务（事件驱动 + 1:1 映射）：**
+
+```text
+Feishu WebSocket task.updated_v2
+→ listener.on_task_event()
+→ task_normalizer.task_event_to_normalized_event()
+    event_type="task_created/updated/completed", source_type="feishu_task"
+    content_text=任务名+描述, payload={status, due_time, assignees, tasklist, ...}
+→ dispatcher.dispatch_normalized_event()
+→ MemoryService.ingest_event()
+```
+
+**飞书妙记（事件触发 + 多步骤 + 按章节切 chunk）：**
+
+```text
+Feishu WebSocket vc.meeting.ended_v1
+→ listener.on_meeting_ended()
+→ meeting_processor.process_meeting_ended(meeting_id)
+    ├─ source_state_store: 幂等检查
+    ├─ vc +recording → minute_token
+    ├─ 延迟 5min 等待 AI 产物生成
+    ├─ vc +notes → summary + todos + chapters + verbatim
+    ├─ chunker.split_by_chapter(verbatim, chapters) → N 条章节 chunk
+    ├─ normalizer: 每个 chunk → NormalizedEvent(event_type="meeting_chapter")
+    ├─ normalizer: summary → NormalizedEvent(event_type="meeting_summary")
+    ├─ normalizer: 每条 todo → NormalizedEvent(event_type="meeting_todo")
+    ├─ dispatcher.dispatch_all([summary, *chapters, *todos])
+    └─ source_state_store.mark_complete()
+```
+
+**飞书文档（事件触发 + diff + 按标题切 chunk）：**
+
+```text
+Feishu WebSocket doc.updated_v1
+→ listener.on_doc_changed()
+→ doc_processor.process_doc(doc_token)
+    ├─ docs +fetch → markdown 全文
+    ├─ source_state_store: 对比 last_hash → 无变更跳过
+    ├─ chunker.split_by_headings(markdown) → 按 H1/H2 切分
+    ├─ 仅变更章节 → normalizer.doc_section_to_event()
+    │   event_type="doc_section", source_type="feishu_doc"
+    ├─ dispatcher.dispatch_all(chapter_events)
+    └─ source_state_store: 更新 hash + processed_at
+```
 
 ## 5. 服务与 API 层 `app/`、`api/`
 
@@ -441,6 +572,7 @@ RetrievalQuery
 - `embedding_store`：保存向量索引和语义检索信息。
 - `access_log_store`：保存检索命中、采纳、反馈等访问记录。
 - `review_schedule_store`：保存复习计划和下一次提醒时间。
+- `source_state_store`：Source 层轻量处理状态（书签/游标/指纹），独立 DB，供 source adapter 追踪外部资源处理进度。
 
 存储层原则：
 

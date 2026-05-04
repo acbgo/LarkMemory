@@ -615,3 +615,25 @@
 - 保留 core 层跨 domain `Reranker`，domain 内排序先由 RRF/rerank 决定，再交给 core 层做跨域融合。
 - 新增测试覆盖 BM25/vector RRF 融合、规则 fallback、rerank 模型重排、rerank 失败回退和依赖注入。
 - 验证：`python -m pytest tests\unit\domains\project_decision tests\unit\app\test_dependencies.py tests\unit\core\test_service.py tests\unit\retrieval tests\unit\storage -q -p no:cacheprovider`，125 passed, 1 skipped。
+
+## 2026-05-04 阶段 13：Source 层基础设施
+
+- 已新增 `src/storage/source_state_store.py` — Source 层轻量处理状态 DB：
+  - 复用 `SQLiteStore` 基类，独立 DB 文件 `.larkmemory/source_state.db`，与 backend 记忆引擎 DB 物理隔离。
+  - 表 `source_processed(source_type, external_id, status, last_hash, cursor_value, metadata_json, processed_at, error_count)`。
+  - 提供 `upsert_state`（幂等写入/更新）、`get_state`、`list_pending`（按 oldest first）、`list_by_status`、`mark_complete`、`mark_error`（累加 error_count）、`update_cursor`、`update_hash`、`delete_states_before`。
+  - `upsert_state` 使用 `ON CONFLICT DO UPDATE` 实现幂等，`COALESCE` 保证 hash/cursor 在显式传 None 时保留旧值。
+- 已新增 `src/sources/_shared/chunker.py` — 通用文本切分工具：
+  - `split_by_headings(markdown_text)` 按 Markdown H1/H2 标题切分，支持 preamble（标题前导文）、H3 忽略、chunk_id 唯一性。
+  - `split_by_chapters(verbatim_text, chapters)` 按妙记 AI 章段时间戳切分逐字稿，支持无时间戳行跟随前一章节、空章节跳过、尾部内容处理。
+  - `ChunkResult` 包含 `chunk_id`、`content`、`heading`、`heading_level`、`index`、`metadata`。
+- 已在 `src/storage/__init__.py` 导出 `SourceStateStore`，与 `EventStore`、`MemoryCoreStore` 平级。
+- 组织原则：持久化逻辑归入 storage 层，纯文本处理归入 sources/_shared/，两层通过依赖注入协作。
+- 已更新 `memory-bank/architecture.md`：Source Adapter 层文件树增加 `_shared/chunker.py`、calendar/task/meeting/doc 事件模块、scanner 目录；补充"多信息源扩展模式"章节（类型 A: 1:1 映射 / 类型 B: 多步骤+1:N 切分）。
+- 已更新 `memory-bank/implementation-plan.md`：新增阶段 13（Source 层基础设施）、14（日历接入）、15（任务接入）、16（妙记接入）、17（文档接入）。
+- 新增测试：
+  - `tests/unit/storage/test_source_state_store.py`：16 tests — CRUD、幂等 upsert、COALESCE 保留旧值、metadata 存取、多状态过滤、limit、排序、多 source_type 隔离、error_count 累加、delete 清理。
+  - `tests/unit/sources/_shared/test_chunker.py`：19 tests — 空文本、无标题全文、H1/H2 单标题、preamble、多标题混合、H3 忽略、特殊字符标题、空章节跳过、时间戳边界切分、无时间戳行跟随、尾部内容、chunk_id 唯一性。
+- 验证：`python -m pytest tests/unit/storage/test_source_state_store.py tests/unit/sources/_shared/test_chunker.py -q -p no:cacheprovider`，35 passed。
+- 验证：`python -m compileall src tests`，通过。
+- 验证：`python -m pytest tests -q -p no:cacheprovider`，499 passed, 6 subtests passed。

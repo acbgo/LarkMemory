@@ -104,3 +104,69 @@
 目标：实现用户习惯、偏好和默认配置的隐式学习。
 
 - `src/domains/personal_preference/`：models 已定义，extractor / handler / retriever 待实现。
+
+## 阶段 13：Source 层基础设施 ✅ 已完成
+
+目标：为多信息源接入提供共享基础设施（source_state_store、chunker）。
+
+任务：
+- 新增 `src/storage/source_state_store.py`：复用 `SQLiteStore` 基类，提供 Source 层轻量处理状态 DB（独立 DB 文件 `.larkmemory/source_state.db`）。
+- 新增 `src/sources/_shared/chunker.py`：纯文本切分工具（Markdown 标题切分、妙记章节切分），无 DB 依赖。
+- 新增 `tests/unit/storage/test_source_state_store.py`：覆盖 SourceStateStore CRUD。
+- 新增 `tests/unit/sources/_shared/test_chunker.py`：覆盖 Chunker 切分逻辑。
+
+设计原则：
+- `SourceStateStore` 归入 storage 层，与其他 store 平等，复用 `SQLiteStore` 基类。
+- Source 层只通过依赖注入使用 `SourceStateStore`，不直接持有 DB 连接。
+- Chunker 纯文本处理，不依赖飞书 SDK 或 LLM。
+
+## 阶段 14：飞书日历接入 🔜 待开始
+
+目标：接入飞书日历 WebSocket 事件，将日程变更转为 NormalizedEvent 进入记忆引擎。
+
+任务：
+- 新增 `src/sources/feishu/events/calendar_models.py`：FeishuCalendarEvent 模型。
+- 新增 `src/sources/feishu/events/calendar_normalizer.py`：1:1 映射日历事件→NormalizedEvent。
+- 扩展 `src/sources/feishu/client/listener.py`：注册 `calendar.event.changed_v4` 事件。
+- 新增 `tests/unit/sources/feishu/test_calendar_events.py`。
+
+特点：事件驱动、自包含、不需要 source_state_store 或 chunker。
+
+## 阶段 15：飞书任务接入 🔜 待开始
+
+目标：接入飞书任务 WebSocket 事件，将任务变更转为 NormalizedEvent 进入记忆引擎。
+
+任务：
+- 新增 `src/sources/feishu/events/task_models.py`：FeishuTaskEvent 模型。
+- 新增 `src/sources/feishu/events/task_normalizer.py`：1:1 映射任务事件→NormalizedEvent。
+- 扩展 `src/sources/feishu/client/listener.py`：注册 `task.updated_v2` 事件。
+- 新增 `tests/unit/sources/feishu/test_task_events.py`。
+
+特点：事件驱动、结构化 payload、不需要 source_state_store 或 chunker。
+
+## 阶段 16：飞书妙记接入 🔜 待开始
+
+目标：接入会议结束事件，获取妙记 AI 产物（总结/章节/待办/逐字稿），按章节切分后进入记忆引擎。
+
+任务：
+- 新增 `src/sources/feishu/events/meeting_models.py`：FeishuMeetingEndedEvent、MeetingNotesData。
+- 新增 `src/sources/feishu/events/meeting_normalizer.py`：总结/章节/待办→NormalizedEvent。
+- 新增 `src/sources/feishu/events/meeting_processor.py`：多步骤编排（幂等检查→等AI→拉取产物→切分→批量写入→标记完成）。
+- 新增 `src/sources/feishu/scanner/meeting_scanner.py`：定时扫描兜底非 WebSocket 场景。
+- 扩展 `src/sources/feishu/client/listener.py`：注册 `vc.meeting.ended_v1` 事件。
+- 新增 `tests/unit/sources/feishu/test_meeting_events.py`。
+
+特点：事件触发+轮询混合、需 source_state_store（幂等+游标）、需 chunker（按章节切逐字稿）。
+
+## 阶段 17：飞书文档接入 🔜 待开始
+
+目标：接入飞书文档变更事件，拉取最新内容并 diff，按标题切分后进入记忆引擎。
+
+任务：
+- 新增 `src/sources/feishu/events/doc_models.py`：FeishuDocChangedEvent。
+- 新增 `src/sources/feishu/events/doc_normalizer.py`：文档章节/评论→NormalizedEvent。
+- 新增 `src/sources/feishu/events/doc_processor.py`：拉取→hash对比→切分→增量写入→更新书签。
+- 扩展 `src/sources/feishu/client/listener.py`：注册 `doc.updated_v1` 事件。
+- 新增 `tests/unit/sources/feishu/test_doc_events.py`。
+
+特点：事件触发、需 source_state_store（hash指纹+增量检测）、需 chunker（按标题切分）。
