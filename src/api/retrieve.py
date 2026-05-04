@@ -24,7 +24,7 @@ async def retrieve_memories(
         logger.warning("action=retrieve_memories blank_query")
         raise HTTPException(status_code=422, detail="query_text cannot be blank")
     logger.info(
-        "function=src.api.retrieve.retrieve_memories action=build_query query_text=%s top_k=%s include_trace=%s user_id=%s project_id=%s",
+        "action=retrieve_request_received query_text=%s top_k=%s include_trace=%s user_id=%s project_id=%s",
         request.query_text,
         request.top_k,
         request.include_trace,
@@ -63,7 +63,7 @@ async def retrieve_memories(
         for ranked in result.ranked_memories
     ]
     logger.info(
-        "function=src.api.retrieve.retrieve_memories action=done query_id=%s result_count=%s",
+        "action=retrieve_response_ready query_id=%s result_count=%s",
         result.query_id,
         len(hits),
     )
@@ -82,5 +82,5 @@ async def search_memories_alias(
     memory_service: MemoryService = Depends(get_memory_service),
 ) -> RetrieveResponse:
     """兼容 `/memories/search` 别名路由，输入输出与 `retrieve_memories` 相同。"""
-    logger.info("function=src.api.retrieve.search_memories_alias action=delegate")
+    logger.info("action=retrieve_alias_delegate")
     return await retrieve_memories(request, memory_service)

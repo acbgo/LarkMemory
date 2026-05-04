@@ -177,7 +177,7 @@ class MemoryService:
             raise ValueError("top_k must be greater than 0")
         query_id = new_query_id()
         logger.info(
-            "action=start query_id=%s query_text=%s top_k=%s include_trace=%s",
+            "action=retrieve_start query_id=%s query_text=%s top_k=%s include_trace=%s",
             query_id,
             query.query_text,
             top_k,
@@ -185,15 +185,20 @@ class MemoryService:
         )
         intent = await IntentAnalyzer(classifier=self.classifier).analyze(query)
         logger.info(
-            "action=llm_intent_analyzer done query_text=%s intent=%s",
+            "action=intent_analyzed query_text=%s primary_domains=%s secondary_domains=%s intent_type=%s confidence=%s keyword_count=%s",
             query.query_text,
-            intent,
+            [domain.value for domain in intent.primary_domains],
+            [domain.value for domain in intent.secondary_domains],
+            intent.intent_type,
+            intent.confidence,
+            len(intent.keywords),
         )
         rewritten = await QueryRewriter(self.llm_client).rewrite(query, intent)
         logger.info(
-            "action=llm_rewriter done query_text=%s rewritten=%s",
+            "action=query_rewritten query_text=%s rewritten_text=%s variant_count=%s",
             query.query_text,
             rewritten.rewritten_text,
+            len(rewritten.query_variants or []),
         )
         target_domains = [
             domain.value
@@ -207,7 +212,7 @@ class MemoryService:
             for ranked in self.domain_handlers[domain].retrieve(handler_query, top_k=top_k):
                 domain_ranked.append((domain, ranked))
         logger.info(
-            "action=domain_handlers query_id=%s target_domains=%s candidate_count=%s",
+            "action=domain_retrieve_done query_id=%s target_domains=%s candidate_count=%s",
             query_id,
             target_domains,
             len(domain_ranked),
@@ -246,7 +251,7 @@ class MemoryService:
             query,
         )
         logger.info(
-            "action=fallback_loaded query_id=%s row_count=%s",
+            "action=memory_core_fallback_loaded query_id=%s row_count=%s",
             query_id,
             len(rows),
         )

@@ -23,6 +23,14 @@ def _model_to_dict(model: object) -> dict[str, object]:
     return model.dict()  # type: ignore[no-any-return,attr-defined]
 
 
+def _content_preview(value: str | None, *, limit: int = 80) -> str:
+    """生成日志用内容预览，避免完整正文进入日志。"""
+    if not value:
+        return ""
+    compact = " ".join(value.split())
+    return compact[:limit]
+
+
 @router.post("/ingest", response_model=IngestResponse)
 def ingest_event(
     request: IngestRequest,
@@ -32,11 +40,12 @@ def ingest_event(
     event_id = request.event_id or new_event_id()
     occurred_at = request.occurred_at or utc_now_iso()
     logger.info(
-        "function=src.api.ingest.ingest_event action=build_event event_id=%s event_type=%s source_type=%s content_text=%s",
+        "action=ingest_request_received event_id=%s event_type=%s source_type=%s content_length=%s content_preview=%s",
         event_id,
         request.event_type,
         request.source_type,
-        request.content_text,
+        len(request.content_text or ""),
+        _content_preview(request.content_text),
     )
     event = NormalizedEvent(
         event_id=event_id,
@@ -70,7 +79,7 @@ def ingest_event(
         raise HTTPException(status_code=500, detail="failed to store event") from exc
 
     logger.info(
-        "action=ingest done event_id=%s stored=%s memory_candidates=%s memory_ids=%s",
+        "action=ingest_response_ready event_id=%s stored=%s memory_candidates=%s memory_ids=%s",
         result.event_id,
         result.stored,
         result.candidate_count,

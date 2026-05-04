@@ -42,10 +42,9 @@ class TestRetrieveApi(unittest.TestCase):
         self.assertEqual(body["status"], "ok")
         self.assertEqual(body["results"], [])
         self.assertEqual(body["trace"]["mode"], "memory_core_fallback")
-        self.assertIn(
-            "function=src.api.retrieve.retrieve_memories",
-            "\n".join(captured.output),
-        )
+        logs = "\n".join(captured.output)
+        self.assertIn("action=retrieve_request_received", logs)
+        self.assertNotIn("function=src.api.retrieve.retrieve_memories", logs)
 
     def test_retrieve_returns_active_memory_hit_and_respects_top_k(self) -> None:
         store = get_memory_core_store()

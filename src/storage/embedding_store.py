@@ -192,12 +192,12 @@ class EmbeddingStore:
         if domain is not None:
             where["domain"] = domain
         if not where:
-            logger.info("action=embedding_where_built condition_count=0")
+            logger.debug("action=embedding_where_built condition_count=0")
             return None
         if len(where) == 1:
-            logger.info("action=embedding_where_built condition_count=1")
+            logger.debug("action=embedding_where_built condition_count=1")
             return where
-        logger.info("action=embedding_where_built condition_count=%s", len(where))
+        logger.debug("action=embedding_where_built condition_count=%s", len(where))
         return {"$and": [{key: value} for key, value in where.items()]}
 
     def _normalize_query_result(self, result: dict[str, Any]) -> list[dict[str, Any]]:

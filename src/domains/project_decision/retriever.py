@@ -12,7 +12,6 @@ from src.storage import EmbeddingStore, MemoryCoreStore
 from src.utils.text import clean_text
 
 from .models import ProjectDecision
-from .ranker import ProjectDecisionRanker
 
 
 logger = logging.getLogger(__name__)
@@ -117,13 +116,11 @@ class ProjectDecisionRetriever:
         embedding_store: EmbeddingStore | None = None,
         embedding_client: EmbeddingClient | None = None,
         rerank_client: RerankClient | None = None,
-        ranker: ProjectDecisionRanker | None = None,
     ) -> None:
         self.memory_store = memory_store
         self.embedding_store = embedding_store
         self.embedding_client = embedding_client
         self.rerank_client = rerank_client
-        self.ranker = ranker or ProjectDecisionRanker()
 
     def retrieve(
         self,
@@ -136,7 +133,7 @@ class ProjectDecisionRetriever:
             raise ValueError("limit must be greater than 0")
         domain_query = self._coerce_query(query, limit=effective_limit)
         logger.info(
-            "action=start domain=project_decision scope=None limit=%s",
+            "action=domain_retrieve_start domain=project_decision limit=%s",
             effective_limit,
         )
         candidate_limit = max(effective_limit * 5, 30)

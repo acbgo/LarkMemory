@@ -5,7 +5,6 @@ from .models import (
     ProjectDecision,
     ProjectDecisionCandidate,
 )
-from .ranker import DecisionRankWeights, ProjectDecisionRanker
 from .retriever import ProjectDecisionQuery, ProjectDecisionRetriever, ProjectDecisionSearchResult
 from .versioning import DecisionVersionDecision, ProjectDecisionVersionManager
 
@@ -15,8 +14,6 @@ __all__ = [
     "ProjectDecisionExtractor",
     "ProjectDecisionEmbeddingIndexer",
     "ProjectDecisionDomainHandler",
-    "DecisionRankWeights",
-    "ProjectDecisionRanker",
     "ProjectDecisionQuery",
     "ProjectDecisionRetriever",
     "ProjectDecisionSearchResult",

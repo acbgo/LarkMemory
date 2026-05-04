@@ -356,7 +356,7 @@ class TestService(unittest.TestCase):
             "查询项目中为什么选择方案 B 的历史决策和理由",
         )
 
-    def test_retrieve_emits_function_level_logs(self) -> None:
+    def test_retrieve_emits_clear_pipeline_logs(self) -> None:
         self.memory_store.insert_memory_core(
             create_memory_core(
                 memory_id="mem-log",
@@ -377,12 +377,11 @@ class TestService(unittest.TestCase):
 
         logs = "\n".join(captured.output)
         self.assertEqual(len(result.ranked_memories), 1)
-        self.assertIn("function=src.core.service.MemoryService.retrieve_async", logs)
-        self.assertIn(
-            "action=start domain=project_decision scope=None",
-            logs,
-        )
-        self.assertIn("function=src.retrieval.rerank.Reranker.rerank", logs)
+        self.assertIn("action=retrieve_start", logs)
+        self.assertIn("action=domain_retrieve_start domain=project_decision", logs)
+        self.assertIn("action=rerank_start", logs)
+        self.assertNotIn("function=src.core.service.MemoryService.retrieve_async", logs)
+        self.assertNotIn("function=src.retrieval.rerank.Reranker.rerank", logs)
 
     def test_update_actions(self) -> None:
         for memory_id, text in [("mem-old", "old"), ("mem-new", "new"), ("mem-score", "score")]:

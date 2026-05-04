@@ -51,10 +51,10 @@ class TestIngestApi(unittest.TestCase):
         self.assertIsNotNone(stored)
         assert stored is not None
         self.assertEqual(stored["project_id"], "project-1")
-        self.assertIn(
-            "action=build_event",
-            "\n".join(captured.output),
-        )
+        logs = "\n".join(captured.output)
+        self.assertIn("action=ingest_request_received", logs)
+        self.assertIn("content_length=22", logs)
+        self.assertNotIn("content_text=decide to use option B", logs)
 
     def test_ingest_project_decision_creates_memory_core(self) -> None:
         response = self.client.post(

@@ -805,3 +805,14 @@
 - 验证：`uv run pytest tests\unit\app\test_config.py tests\unit\app\test_dependencies.py -q -k "vector_store or defaults or env_file_from_config_path or embedding_store"`，7 passed。
 - 验证：`uv run pytest tests\unit\llm\test_openai_compatible_embedding_provider.py tests\unit\domains\project_decision\test_embedding.py tests\unit\domains\team_retention\test_embedding.py tests\unit\storage\test_embedding_store.py -q`，13 passed, 1 skipped。
 - 验证：当前 `larkmemory.env` 下 `get_embedding_client()` 返回 `EmbeddingClient`，`get_embedding_store()` 返回 `None`。
+
+## 2026-05-04 日志输出清理
+
+- ingest API 日志从 `action=build_event` 调整为 `action=ingest_request_received`，不再打印完整 `content_text`，改为记录 `content_length` 和最多 80 字的 `content_preview`。
+- retrieve API、`MemoryService.retrieve_async()`、project_decision retriever 和 core reranker 去掉冗余 `function=...` 字段，统一使用更明确的 action：`retrieve_start`、`intent_analyzed`、`query_rewritten`、`domain_retrieve_start/done`、`rerank_start/done`。
+- `MemoryService` 的 intent 日志不再直接打印完整 `IntentResult(...)`，改为记录 primary/secondary domain、intent_type、confidence 和 keyword_count。
+- `EmbeddingStore._build_where()` 的 `embedding_where_built` 从 INFO 下沉到 DEBUG，减少 retrieve 链路正常日志噪音。
+- 更新 API 和 core 日志断言测试，防止完整用户正文和旧 `function=...` 字段回流。
+- 验证：`python -m pytest tests\unit\api\test_ingest_api.py tests\unit\api\test_retrieve_api.py tests\unit\core\test_service.py -q -p no:cacheprovider`，27 passed。
+- 验证：`python -m pytest tests\unit\domains\project_decision tests\unit\retrieval tests\unit\storage\test_embedding_store.py -q -p no:cacheprovider`，54 passed, 1 skipped。
+- 验证：`python -m compileall src tests`，通过。
