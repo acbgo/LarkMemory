@@ -59,6 +59,25 @@ class FakeVectorEmbeddingStore(FakeEmbeddingStore):
         return self.hits
 
 
+class VariantEmbeddingStore(FakeEmbeddingStore):
+    def __init__(self, hits_by_text: dict[str, list[dict[str, object]]]) -> None:
+        super().__init__()
+        self.hits_by_text = hits_by_text
+
+    def query_similar(
+        self,
+        text: str,
+        domain: str | None = None,
+        *,
+        top_k: int = 10,
+        filters: dict[str, object] | None = None,
+    ) -> list[dict[str, object]]:
+        self.queries.append({"text": text, "domain": domain, "top_k": top_k, "filters": filters})
+        if text == "原始表达失败":
+            raise RuntimeError("single variant failed")
+        return self.hits_by_text.get(text, [])
+
+
 def _store() -> MemoryCoreStore:
     root = Path.cwd() / ".tmp-tests"
     root.mkdir(exist_ok=True)
@@ -219,5 +238,65 @@ def test_vector_failure_falls_back_to_rule_retrieval() -> None:
 
         assert [result.decision.decision_id for result in results] == ["mem-rule"]
         assert "topic" in results[0].matched_fields
+    finally:
+        _cleanup(store)
+
+
+def test_retrieve_queries_all_query_variants_and_merges_highest_similarity() -> None:
+    store = _store()
+    try:
+        _insert(store, "mem-shared", topic="预算审批", project_id="project-1")
+        embedding_store = VariantEmbeddingStore(
+            {
+                "原始表达": [{"memory_id": "mem-shared", "distance": 0.4}],
+                "改写表达": [{"memory_id": "mem-shared", "distance": 0.1}],
+            }
+        )
+
+        results = ProjectDecisionRetriever(
+            store,
+            embedding_store=embedding_store,  # type: ignore[arg-type]
+        ).retrieve(
+            ProjectDecisionQuery(
+                query_text="原始表达",
+                query_variants=["原始表达", "改写表达"],
+                project_id="project-1",
+            ),
+            limit=5,
+        )
+
+        assert [query["text"] for query in embedding_store.queries] == ["原始表达", "改写表达"]
+        assert results[0].decision.decision_id == "mem-shared"
+        assert results[0].memory_item.extra["vector_similarity"] == 0.9
+        assert results[0].memory_item.extra["vector_query"] == "改写表达"
+    finally:
+        _cleanup(store)
+
+
+def test_single_query_variant_failure_keeps_other_vector_hits() -> None:
+    store = _store()
+    try:
+        _insert(store, "mem-rewritten", topic="预算审批", project_id="project-1")
+        embedding_store = VariantEmbeddingStore(
+            {
+                "改写表达": [{"memory_id": "mem-rewritten", "distance": 0.2}],
+            }
+        )
+
+        results = ProjectDecisionRetriever(
+            store,
+            embedding_store=embedding_store,  # type: ignore[arg-type]
+        ).retrieve(
+            ProjectDecisionQuery(
+                query_text="原始表达失败",
+                query_variants=["原始表达失败", "改写表达"],
+                project_id="project-1",
+            ),
+            limit=5,
+        )
+
+        assert [query["text"] for query in embedding_store.queries] == ["原始表达失败", "改写表达"]
+        assert [result.decision.decision_id for result in results] == ["mem-rewritten"]
+        assert results[0].memory_item.extra["vector_similarity"] == 0.8
     finally:
         _cleanup(store)

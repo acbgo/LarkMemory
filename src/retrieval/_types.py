@@ -206,6 +206,7 @@ class RewrittenQuery:
 
     original: RetrievalQuery
     rewritten_text: str = ""
+    query_variants: list[str] = field(default_factory=list)
     extracted_topics: list[str] = field(default_factory=list)
     time_window: TimeWindow | None = None
     scope_filters: dict[str, str] = field(default_factory=dict)

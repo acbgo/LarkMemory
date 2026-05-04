@@ -581,3 +581,14 @@
 - 验证：`python -m pytest tests\unit\domains\project_decision tests\unit\app\test_dependencies.py tests\unit\core\test_service.py -q -p no:cacheprovider`，69 passed。
 - 验证：`python -m compileall src tests`，通过。
 - 验证：`python -m pytest tests -q -p no:cacheprovider`，459 passed, 1 skipped。
+
+## 2026-05-04 Query Variants 并行向量召回
+
+- `RewrittenQuery` 新增 `query_variants`，由 `QueryRewriter` 生成原始 query + LLM rewritten query 的去重列表；纯规则 rewrite 时只保留原始 query。
+- `MemoryService.retrieve_async()` 会把 `rewritten_text` 和 `query_variants` 写入传给 domain handler 的 `session_context`，不改变外部 API schema，也不影响规则检索默认输入。
+- `ProjectDecisionQuery.from_retrieval_query()` 已读取 `session_context["query_variants"]`，供领域 retriever 的 embedding 召回使用。
+- `ProjectDecisionRetriever._vector_hits()` 改为逐个 query variant 做向量检索，同一 memory 取最高 similarity，并记录命中的 `vector_query`；单个 variant 失败只跳过该路，不阻断其他 variant 和规则兜底。
+- 新增测试覆盖 query variants 生成、service 到 handler 的传递、多路向量召回融合、单路失败容错。
+- 验证：`python -m pytest tests\unit\domains\project_decision tests\unit\retrieval tests\unit\core\test_service.py tests\unit\app\test_dependencies.py -q -p no:cacheprovider`，85 passed。
+- 验证：`python -m compileall src tests`，通过。
+- 验证：`python -m pytest tests -q -p no:cacheprovider`，463 passed, 1 skipped。

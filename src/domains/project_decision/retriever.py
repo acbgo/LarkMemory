@@ -30,6 +30,7 @@ class ProjectDecisionQuery:
     limit: int = 10
     include_superseded: bool = False
     timestamp: str | None = None
+    query_variants: list[str] = field(default_factory=list)
 
     @classmethod
     def from_retrieval_query(cls, query: RetrievalQuery, *, limit: int = 10) -> ProjectDecisionQuery:
@@ -40,6 +41,7 @@ class ProjectDecisionQuery:
         if isinstance(time_window, dict):
             time_window_start = time_window.get("start")
             time_window_end = time_window.get("end")
+        query_variants = session.get("query_variants")
         return cls(
             query_text=query.query_text,
             project_id=query.project_id or session.get("project_id"),
@@ -51,6 +53,11 @@ class ProjectDecisionQuery:
             time_window_end=time_window_end,
             limit=limit,
             timestamp=query.timestamp,
+            query_variants=[
+                variant
+                for variant in (query_variants if isinstance(query_variants, list) else [query.query_text])
+                if isinstance(variant, str) and variant.strip()
+            ],
         )
 
 
@@ -135,7 +142,7 @@ class ProjectDecisionRetriever:
         query: ProjectDecisionQuery,
         *,
         limit: int,
-        vector_hits: dict[str, float] | None = None,
+        vector_hits: dict[str, tuple[float, str]] | None = None,
     ) -> list[dict[str, Any]]:
         row_map: dict[str, dict[str, Any]] = {}
         active_rows = self.memory_store.list_active_memories(
@@ -191,7 +198,7 @@ class ProjectDecisionRetriever:
         rows: list[dict[str, Any]],
         query: ProjectDecisionQuery,
         *,
-        vector_hits: dict[str, float] | None = None,
+        vector_hits: dict[str, tuple[float, str]] | None = None,
     ) -> list[ProjectDecisionSearchResult]:
         terms = self._extract_query_terms(query.query_text)
         results: list[ProjectDecisionSearchResult] = []
@@ -222,11 +229,13 @@ class ProjectDecisionRetriever:
             if query.stage and query.stage == decision.stage:
                 score += 0.1
                 matched_fields.append("stage")
-            vector_similarity = (vector_hits or {}).get(decision.decision_id)
-            if vector_similarity is not None:
+            vector_hit = (vector_hits or {}).get(decision.decision_id)
+            if vector_hit is not None:
+                vector_similarity, vector_query = vector_hit
                 score += min(max(vector_similarity, 0.0), 1.0) * 0.35
                 matched_fields.append("vector_similarity")
                 item.extra["vector_similarity"] = vector_similarity
+                item.extra["vector_query"] = vector_query
             score += min(decision.confidence, 1.0) * 0.05
             score += min(decision.importance, 1.0) * 0.05
             match_reason = "、".join(matched_fields) if matched_fields else "domain_fallback"
@@ -241,7 +250,7 @@ class ProjectDecisionRetriever:
             )
         return results
 
-    def _vector_hits(self, query: ProjectDecisionQuery, *, limit: int) -> dict[str, float]:
+    def _vector_hits(self, query: ProjectDecisionQuery, *, limit: int) -> dict[str, tuple[float, str]]:
         """使用向量索引补充 project_decision 召回，失败时返回空结果。"""
         if self.embedding_store is None:
             return {}
@@ -254,39 +263,42 @@ class ProjectDecisionRetriever:
             filters["workspace_id"] = query.workspace_id
         if query.stage:
             filters["stage"] = query.stage
-        try:
-            if self.embedding_client is not None:
-                hits = self.embedding_store.query_by_embedding(
-                    self.embedding_client.embed_text(query.query_text),
-                    domain="project_decision",
-                    top_k=max(limit * 3, 10),
-                    filters=filters or None,
+        result: dict[str, tuple[float, str]] = {}
+        variants = query.query_variants or [query.query_text]
+        for variant in variants:
+            try:
+                if self.embedding_client is not None:
+                    hits = self.embedding_store.query_by_embedding(
+                        self.embedding_client.embed_text(variant),
+                        domain="project_decision",
+                        top_k=max(limit * 3, 10),
+                        filters=filters or None,
+                    )
+                else:
+                    hits = self.embedding_store.query_similar(
+                        variant,
+                        domain="project_decision",
+                        top_k=max(limit * 3, 10),
+                        filters=filters or None,
+                    )
+            except Exception:
+                logger.warning(
+                    "action=vector_recall_failed domain=project_decision query_text=%s",
+                    variant,
+                    exc_info=True,
                 )
-            else:
-                hits = self.embedding_store.query_similar(
-                    query.query_text,
-                    domain="project_decision",
-                    top_k=max(limit * 3, 10),
-                    filters=filters or None,
-                )
-        except Exception:
-            logger.warning(
-                "action=vector_recall_failed domain=project_decision query_text=%s",
-                query.query_text,
-                exc_info=True,
-            )
-            return {}
-
-        result: dict[str, float] = {}
-        for hit in hits:
-            memory_id = hit.get("memory_id") or hit.get("id")
-            if not isinstance(memory_id, str):
                 continue
-            distance = hit.get("distance")
-            similarity = 0.0
-            if isinstance(distance, (int, float)):
-                similarity = max(0.0, min(1.0, 1.0 - float(distance)))
-            result[memory_id] = max(result.get(memory_id, 0.0), similarity)
+            for hit in hits:
+                memory_id = hit.get("memory_id") or hit.get("id")
+                if not isinstance(memory_id, str):
+                    continue
+                distance = hit.get("distance")
+                similarity = 0.0
+                if isinstance(distance, (int, float)):
+                    similarity = max(0.0, min(1.0, 1.0 - float(distance)))
+                old_similarity = result.get(memory_id, (0.0, ""))[0]
+                if similarity >= old_similarity:
+                    result[memory_id] = (similarity, variant)
         return result
 
     def _extract_query_terms(self, query_text: str) -> list[str]:

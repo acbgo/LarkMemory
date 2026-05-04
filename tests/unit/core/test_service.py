@@ -39,6 +39,44 @@ class FakeIngestLLM:
         return self.payloads.pop(0)
 
 
+class FakeRetrieveLLM:
+    def __init__(self, texts: list[str]) -> None:
+        self.texts = list(texts)
+
+    async def atext(
+        self,
+        system_prompt: str | None,
+        user_prompt: str,
+        **kwargs: object,
+    ) -> str:
+        if not self.texts:
+            raise AssertionError("unexpected LLM call")
+        return self.texts.pop(0)
+
+
+class SpyRetrieveHandler:
+    domain = "project_decision"
+
+    def __init__(self) -> None:
+        self.queries: list[RetrievalQuery] = []
+
+    def ingest_event(self, event: NormalizedEvent, runtime: object) -> object:
+        raise AssertionError("not used")
+
+    def retrieve(self, query: RetrievalQuery, *, top_k: int) -> list[object]:
+        self.queries.append(query)
+        return []
+
+    def update_memory(self, action: str, **kwargs: object) -> object | None:
+        return None
+
+    def proactive_suggestions(self, **kwargs: object) -> list[dict[str, object]]:
+        return []
+
+    def scan_review_due(self, **kwargs: object) -> list[dict[str, object]]:
+        return []
+
+
 class TestService(unittest.TestCase):
     def setUp(self) -> None:
         root = Path.cwd() / ".tmp-tests"
@@ -296,6 +334,27 @@ class TestService(unittest.TestCase):
             return result.ranked_memories[0].item.memory_id
 
         self.assertEqual(asyncio.run(run_retrieve()), "mem-async")
+
+    def test_retrieve_passes_rewritten_query_variants_to_domain_handler(self) -> None:
+        handler = SpyRetrieveHandler()
+        service = MemoryService(
+            event_store=self.event_store,
+            memory_store=self.memory_store,
+            llm_client=FakeRetrieveLLM(["project_decision", "查询项目中为什么选择方案 B 的历史决策和理由"]),
+            domain_handlers=[handler],  # type: ignore[list-item]
+        )
+
+        service.retrieve(RetrievalQuery("为什么选方案B", project_id="project-1"), top_k=1)
+
+        self.assertEqual(len(handler.queries), 1)
+        self.assertEqual(
+            handler.queries[0].session_context["query_variants"],
+            ["为什么选方案B", "查询项目中为什么选择方案 B 的历史决策和理由"],
+        )
+        self.assertEqual(
+            handler.queries[0].session_context["rewritten_text"],
+            "查询项目中为什么选择方案 B 的历史决策和理由",
+        )
 
     def test_retrieve_emits_function_level_logs(self) -> None:
         self.memory_store.insert_memory_core(

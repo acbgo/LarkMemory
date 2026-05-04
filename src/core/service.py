@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Iterable
 
 from src.core.access_tracker import AccessTracker
@@ -202,8 +202,9 @@ class MemoryService:
         ]
 
         domain_ranked: list[tuple[str, RankedMemory]] = []
+        handler_query = self._with_rewritten_context(query, rewritten)
         for domain in target_domains:
-            for ranked in self.domain_handlers[domain].retrieve(query, top_k=top_k):
+            for ranked in self.domain_handlers[domain].retrieve(handler_query, top_k=top_k):
                 domain_ranked.append((domain, ranked))
         logger.info(
             "function=src.core.service.MemoryService.retrieve action=domain_handlers query_id=%s target_domains=%s candidate_count=%s",
@@ -409,6 +410,13 @@ class MemoryService:
                 continue
             result.append(row)
         return result
+
+    def _with_rewritten_context(self, query: RetrievalQuery, rewritten: Any) -> RetrievalQuery:
+        """将改写查询信号放入 session_context，供领域 retriever 选择性消费。"""
+        context = dict(query.session_context)
+        context["rewritten_text"] = rewritten.rewritten_text
+        context["query_variants"] = list(rewritten.query_variants or [query.query_text])
+        return replace(query, session_context=context)
 
     def _row_has_scope(self, terms: list[str], key: str, value: str) -> bool:
         return value in terms or f"{key}:{value}" in terms

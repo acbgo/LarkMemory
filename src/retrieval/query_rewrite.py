@@ -11,6 +11,8 @@ import re
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
 
+from src.utils.text import clean_text
+
 from ._types import (
     IntentResult,
     MemoryDomain,
@@ -189,6 +191,22 @@ def _clean_rewritten_text(text: str) -> str:
     return cleaned_lines[0] if cleaned_lines else ""
 
 
+def _build_query_variants(original_text: str, rewritten_text: str) -> list[str]:
+    """构造去重后的检索变体列表，原始查询始终优先。"""
+    variants: list[str] = []
+    seen: set[str] = set()
+    for text in (original_text, rewritten_text):
+        cleaned = clean_text(text)
+        if not cleaned:
+            continue
+        key = cleaned.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        variants.append(cleaned)
+    return variants
+
+
 # ---------------------------------------------------------------------------
 # QueryRewriter
 # ---------------------------------------------------------------------------
@@ -249,6 +267,7 @@ class QueryRewriter:
         cleaned = _clean_rewritten_text(rewritten_text)
         if cleaned:
             result.rewritten_text = cleaned
+            result.query_variants = _build_query_variants(query.query_text, cleaned)
         return result
 
     # ------------------------------------------------------------------
@@ -273,6 +292,7 @@ class QueryRewriter:
         return RewrittenQuery(
             original=query,
             rewritten_text=query.query_text,
+            query_variants=_build_query_variants(query.query_text, query.query_text),
             extracted_topics=topics,
             time_window=time_window,
             scope_filters=scope_filters,

@@ -127,8 +127,20 @@ def test_llm_rewrite_returns_plain_query_and_keeps_rule_boosts() -> None:
     rewritten = asyncio.run(rewriter.rewrite(query, intent))
 
     assert rewritten.rewritten_text == "查询项目中为什么选择方案 B 的历史决策和理由"
+    assert rewritten.query_variants == ["为什么选方案B", "查询项目中为什么选择方案 B 的历史决策和理由"]
     assert rewritten.boost_signals["project_match"] == 0.7
     assert rewritten.boost_signals["topic_match"] == 0.8
+
+
+def test_rule_rewrite_uses_original_query_as_single_variant() -> None:
+    rewriter = QueryRewriter()
+    query = RetrievalQuery("为什么选方案B", project_id="project-1")
+    intent = IntentResult(primary_domains=[MemoryDomain.PROJECT_DECISION])
+
+    rewritten = asyncio.run(rewriter.rewrite(query, intent))
+
+    assert rewritten.rewritten_text == "为什么选方案B"
+    assert rewritten.query_variants == ["为什么选方案B"]
 
 
 def test_llm_rewrite_preserves_rule_topics_scope_and_time_window() -> None:
