@@ -108,14 +108,13 @@ def test_upsert_uses_embedding_client_vector() -> None:
     assert store.upserts[0]["metadata"]["domain"] == "project_decision"
 
 
-def test_upsert_continues_without_vector_when_embedding_client_fails() -> None:
+def test_upsert_skips_store_when_embedding_client_fails() -> None:
     store = FakeEmbeddingStore()
     indexer = ProjectDecisionEmbeddingIndexer(store, RaisingEmbeddingClient())  # type: ignore[arg-type]
 
     indexer.upsert(_decision(), status="active")
 
-    assert len(store.upserts) == 1
-    assert store.upserts[0]["embedding"] is None
+    assert store.upserts == []
 
 
 def test_upsert_store_failure_does_not_raise() -> None:

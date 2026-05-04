@@ -2,15 +2,9 @@ from __future__ import annotations
 
 from typing import Any
 
+import requests
+
 from .embedding_base import EmbeddingResponse
-
-try:
-    from openai import OpenAI
-
-    HAS_OPENAI = True
-except ImportError:
-    OpenAI = None  # type: ignore[assignment]
-    HAS_OPENAI = False
 
 
 class OpenAICompatibleEmbeddingProvider:
@@ -31,17 +25,13 @@ class OpenAICompatibleEmbeddingProvider:
             raise ValueError("Embedding model is required")
         if not api_key:
             raise ValueError("Embedding API key is required")
-        if not HAS_OPENAI:
-            raise ImportError("Missing dependency: openai")
+        self.api_key = api_key
         self.model = model
+        self.base_url = (base_url or "https://api.openai.com/v1").rstrip("/")
         self.dimensions = dimensions
         self.encoding_format = encoding_format
-        self._client = OpenAI(
-            api_key=api_key,
-            base_url=base_url,
-            timeout=timeout,
-            max_retries=max_retries,
-        )
+        self.timeout = timeout
+        self.max_retries = max_retries
 
     def embed_texts(self, texts: list[str]) -> EmbeddingResponse:
         """Call `/embeddings` and return vectors in the same order as input."""
@@ -52,11 +42,22 @@ class OpenAICompatibleEmbeddingProvider:
         }
         if self.dimensions is not None:
             request["dimensions"] = self.dimensions
-        response = self._client.embeddings.create(**request)
-        embeddings = [list(item.embedding) for item in response.data]
-        usage = _usage_to_dict(getattr(response, "usage", None))
+        response = requests.post(
+            f"{self.base_url}/embeddings",
+            headers={
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json",
+            },
+            json=request,
+            timeout=self.timeout,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        data = payload.get("data", [])
+        embeddings = [list(item["embedding"]) for item in data]
+        usage = _usage_to_dict(payload.get("usage"))
         return EmbeddingResponse(
-            model=getattr(response, "model", None) or self.model,
+            model=payload.get("model") or self.model,
             embeddings=embeddings,
             dimensions=len(embeddings[0]) if embeddings else 0,
             usage=usage,
@@ -67,6 +68,12 @@ def _usage_to_dict(usage: Any | None) -> dict[str, int] | None:
     """Normalize OpenAI SDK usage objects into plain dictionaries."""
     if usage is None:
         return None
+    if isinstance(usage, dict):
+        return {
+            key: value
+            for key in ("prompt_tokens", "total_tokens")
+            if isinstance((value := usage.get(key)), int)
+        } or None
     if hasattr(usage, "model_dump"):
         return dict(usage.model_dump())
     result: dict[str, int] = {}

@@ -123,6 +123,29 @@ class TestDependencies(unittest.TestCase):
             reset_dependency_cache()
             self.assertIsNone(get_embedding_store())
 
+    def test_get_embedding_store_returns_none_when_vector_store_disabled(self) -> None:
+        with patch.dict(os.environ, {"LARKMEMORY_ENABLE_EMBEDDING": "true"}, clear=True):
+            reset_dependency_cache()
+            self.assertIsNone(get_embedding_store())
+
+    def test_get_embedding_store_builds_when_vector_store_enabled(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "LARKMEMORY_ENABLE_EMBEDDING": "true",
+                "LARKMEMORY_ENABLE_VECTOR_STORE": "true",
+                "LARKMEMORY_CHROMA_COLLECTION": "memory_core_test",
+                "LARKMEMORY_CHROMA_DIR": ".tmp-tests/chroma",
+            },
+            clear=True,
+        ):
+            reset_dependency_cache()
+            store = get_embedding_store()
+
+        self.assertIsNotNone(store)
+        self.assertEqual(store.collection_name, "memory_core_test")
+        self.assertEqual(store.persist_directory, ".tmp-tests/chroma")
+
     def test_get_embedding_client_returns_none_when_disabled(self) -> None:
         with patch.dict(os.environ, {"LARKMEMORY_ENABLE_EMBEDDING": "false"}, clear=True):
             reset_dependency_cache()
@@ -191,7 +214,8 @@ class TestDependencies(unittest.TestCase):
             clear=True,
         ):
             reset_dependency_cache()
-            with patch("src.app.dependencies.LocalSentenceTransformersEmbeddingProvider") as provider_cls:
+            with patch("src.app.dependencies._load_local_sentence_transformers_provider_cls") as loader:
+                provider_cls = loader.return_value
                 client = get_embedding_client()
 
         self.assertIsNotNone(client)
@@ -220,7 +244,7 @@ class TestDependencies(unittest.TestCase):
         ):
             reset_dependency_cache()
             with patch(
-                "src.app.dependencies.LocalSentenceTransformersEmbeddingProvider",
+                "src.app.dependencies._load_local_sentence_transformers_provider_cls",
                 side_effect=ImportError("Missing dependency: sentence-transformers"),
             ):
                 self.assertIsNone(get_embedding_client())

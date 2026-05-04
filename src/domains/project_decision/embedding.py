@@ -30,25 +30,46 @@ class ProjectDecisionEmbeddingIndexer:
     def upsert(self, decision: ProjectDecision, *, status: str) -> None:
         """将单条项目决策写入向量索引，失败只记录日志不阻断入库。"""
         if self.embedding_store is None:
+            logger.info(
+                "action=embedding_index_skipped reason=store_unavailable memory_id=%s domain=project_decision",
+                decision.decision_id,
+            )
             return
         text = self.build_text(decision)
         metadata = self.build_metadata(decision, status=status)
+        logger.info(
+            "action=embedding_payload_built memory_id=%s domain=project_decision text_length=%s metadata_count=%s",
+            decision.decision_id,
+            len(text),
+            len(metadata),
+        )
         embedding = None
         if self.embedding_client is not None:
             try:
                 embedding = self.embedding_client.embed_text(text)
+                logger.info(
+                    "action=embedding_vector_done memory_id=%s domain=project_decision embedding_dim=%s",
+                    decision.decision_id,
+                    len(embedding),
+                )
             except Exception:
                 logger.warning(
                     "action=embedding_vector_failed memory_id=%s domain=project_decision",
                     decision.decision_id,
                     exc_info=True,
                 )
+                return
         try:
             self.embedding_store.upsert_embedding(
                 memory_id=decision.decision_id,
                 text=text,
                 metadata=metadata,
                 embedding=embedding,
+            )
+            logger.info(
+                "action=embedding_indexed memory_id=%s domain=project_decision has_embedding=%s",
+                decision.decision_id,
+                embedding is not None,
             )
         except Exception:
             logger.warning(

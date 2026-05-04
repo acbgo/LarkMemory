@@ -177,7 +177,7 @@ class MemoryService:
             raise ValueError("top_k must be greater than 0")
         query_id = new_query_id()
         logger.info(
-            "function=src.core.service.MemoryService.retrieve_async action=start query_id=%s query_text=%s top_k=%s include_trace=%s",
+            "action=start query_id=%s query_text=%s top_k=%s include_trace=%s",
             query_id,
             query.query_text,
             top_k,
@@ -207,7 +207,7 @@ class MemoryService:
             for ranked in self.domain_handlers[domain].retrieve(handler_query, top_k=top_k):
                 domain_ranked.append((domain, ranked))
         logger.info(
-            "function=src.core.service.MemoryService.retrieve action=domain_handlers query_id=%s target_domains=%s candidate_count=%s",
+            "action=domain_handlers query_id=%s target_domains=%s candidate_count=%s",
             query_id,
             target_domains,
             len(domain_ranked),
@@ -246,7 +246,7 @@ class MemoryService:
             query,
         )
         logger.info(
-            "function=src.core.service.MemoryService.retrieve action=fallback_loaded query_id=%s row_count=%s",
+            "action=fallback_loaded query_id=%s row_count=%s",
             query_id,
             len(rows),
         )

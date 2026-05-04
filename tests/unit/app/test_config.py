@@ -20,7 +20,11 @@ class TestConfig(unittest.TestCase):
         return temp_dir
 
     def test_load_settings_defaults(self) -> None:
-        with patch.dict(os.environ, {}, clear=True):
+        with patch.dict(
+            os.environ,
+            {"LARKMEMORY_CONFIG_FILE": str(self._temp_dir() / "missing.env")},
+            clear=True,
+        ):
             settings = load_settings()
 
         self.assertEqual(settings.app_name, "LarkMemory Engine")
@@ -31,6 +35,7 @@ class TestConfig(unittest.TestCase):
         self.assertEqual(settings.sqlite_path, ".larkmemory/larkmemory.db")
         self.assertFalse(settings.enable_llm)
         self.assertFalse(settings.enable_embedding)
+        self.assertFalse(settings.enable_vector_store)
         self.assertEqual(settings.log_dir, "logs")
         self.assertEqual(settings.log_file, "larkmemory.log")
 
@@ -62,6 +67,7 @@ class TestConfig(unittest.TestCase):
                     "# local runtime config",
                     "LARKMEMORY_PORT=9010",
                     "LARKMEMORY_ENABLE_EMBEDDING=true",
+                    "LARKMEMORY_ENABLE_VECTOR_STORE=true",
                     "LARKMEMORY_EMBEDDING_PROVIDER=http",
                     "LARKMEMORY_EMBEDDING_BASE_URL=http://127.0.0.1:8001/v1",
                     "LARKMEMORY_EMBEDDING_MODEL=Qwen/Qwen3-Embedding-4B",
@@ -77,6 +83,7 @@ class TestConfig(unittest.TestCase):
 
         self.assertEqual(settings.port, 9010)
         self.assertTrue(settings.enable_embedding)
+        self.assertTrue(settings.enable_vector_store)
         self.assertEqual(settings.embedding_provider, "http")
         self.assertEqual(settings.embedding_base_url, "http://127.0.0.1:8001/v1")
         self.assertEqual(settings.embedding_model, "Qwen/Qwen3-Embedding-4B")

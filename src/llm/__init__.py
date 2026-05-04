@@ -10,9 +10,6 @@ from .base import LLMJSONDecodeError, LLMProvider
 from .client import LLMClient
 from .embedding_base import EmbeddingProvider, EmbeddingResponse
 from .embedding_client import EmbeddingClient
-from .local_sentence_transformers_embedding_provider import (
-    LocalSentenceTransformersEmbeddingProvider,
-)
 from .http_rerank_provider import HttpRerankProvider
 from .openai_provider import OpenAIProvider
 from .openai_compatible_embedding_provider import OpenAICompatibleEmbeddingProvider
@@ -34,7 +31,6 @@ __all__ = [
     "LLMClient",
     "LLMProvider",
     "LLMResponse",
-    "LocalSentenceTransformersEmbeddingProvider",
     "Message",
     "HttpRerankProvider",
     "OpenAIProvider",

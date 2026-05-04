@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 try:
     import chromadb
 except ImportError:
     chromadb = None  # type: ignore[assignment]
+
+
+logger = logging.getLogger(__name__)
 
 
 class EmbeddingStore:
@@ -24,7 +28,13 @@ class EmbeddingStore:
             self.collection_name = name
         self._client = chromadb.PersistentClient(path=self.persist_directory)
         self._collection = self._client.get_or_create_collection(
-            name=self.collection_name
+            name=self.collection_name,
+            embedding_function=None,
+        )
+        logger.info(
+            "action=embedding_collection_ready collection=%s persist_directory=%s",
+            self.collection_name,
+            self.persist_directory,
         )
 
     def upsert_embedding(
@@ -44,6 +54,11 @@ class EmbeddingStore:
         if embedding is not None:
             payload["embeddings"] = [embedding]
         collection.upsert(**payload)
+        logger.info(
+            "action=embedding_upserted memory_id=%s has_embedding=%s",
+            memory_id,
+            embedding is not None,
+        )
 
     def upsert_many(self, items: list[dict[str, Any]]) -> None:
         """批量写入 embedding 条目，输入包含 memory_id、text、metadata 的字典列表。"""
@@ -58,6 +73,11 @@ class EmbeddingStore:
         if any(item.get("embedding") is not None for item in items):
             payload["embeddings"] = [item.get("embedding") for item in items]
         collection.upsert(**payload)
+        logger.info(
+            "action=embedding_batch_upserted item_count=%s has_any_embedding=%s",
+            len(items),
+            "embeddings" in payload,
+        )
 
     def query_similar(
         self,
@@ -74,7 +94,14 @@ class EmbeddingStore:
             n_results=top_k,
             where=self._build_where(domain, filters),
         )
-        return self._normalize_query_result(result)
+        rows = self._normalize_query_result(result)
+        logger.info(
+            "action=embedding_text_query_done domain=%s top_k=%s result_count=%s",
+            domain,
+            top_k,
+            len(rows),
+        )
+        return rows
 
     def query_by_embedding(
         self,
@@ -90,7 +117,14 @@ class EmbeddingStore:
             n_results=top_k,
             where=self._build_where(domain, filters),
         )
-        return self._normalize_query_result(result)
+        rows = self._normalize_query_result(result)
+        logger.info(
+            "action=embedding_vector_query_done domain=%s top_k=%s result_count=%s",
+            domain,
+            top_k,
+            len(rows),
+        )
+        return rows
 
     def get_embedding_meta(self, memory_id: str) -> dict[str, Any] | None:
         """按 memory_id 查询向量元数据，返回文本、metadata 和 ID 信息。"""
@@ -113,6 +147,7 @@ class EmbeddingStore:
         """按 memory_id 删除单条向量记录。"""
         collection = self._require_collection()
         collection.delete(ids=[memory_id])
+        logger.info("action=embedding_deleted memory_id=%s", memory_id)
 
     def delete_by_domain(self, domain: str) -> int:
         """删除指定 domain 下的向量记录，返回删除数量。"""
@@ -122,6 +157,7 @@ class EmbeddingStore:
         if not ids:
             return 0
         collection.delete(ids=ids)
+        logger.info("action=embedding_domain_deleted domain=%s count=%s", domain, len(ids))
         return len(ids)
 
     def rebuild_index(self, items: list[dict[str, Any]]) -> None:
@@ -132,6 +168,11 @@ class EmbeddingStore:
         if existing_ids:
             collection.delete(ids=existing_ids)
         self.upsert_many(items)
+        logger.info(
+            "action=embedding_index_rebuilt old_count=%s new_count=%s",
+            len(existing_ids),
+            len(items),
+        )
 
     def _require_collection(self) -> Any:
         """返回当前 collection；未创建时先按配置创建。"""
@@ -150,7 +191,14 @@ class EmbeddingStore:
             where.update(filters)
         if domain is not None:
             where["domain"] = domain
-        return where or None
+        if not where:
+            logger.info("action=embedding_where_built condition_count=0")
+            return None
+        if len(where) == 1:
+            logger.info("action=embedding_where_built condition_count=1")
+            return where
+        logger.info("action=embedding_where_built condition_count=%s", len(where))
+        return {"$and": [{key: value} for key, value in where.items()]}
 
     def _normalize_query_result(self, result: dict[str, Any]) -> list[dict[str, Any]]:
         """将 Chroma query 结果规范化为统一的命中字典列表。"""

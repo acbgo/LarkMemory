@@ -12,7 +12,6 @@ from src.llm import (
     EmbeddingClient,
     HttpRerankProvider,
     LLMClient,
-    LocalSentenceTransformersEmbeddingProvider,
     OpenAICompatibleEmbeddingProvider,
     RerankClient,
 )
@@ -20,6 +19,15 @@ from src.storage import EmbeddingStore, EventStore, MemoryCoreStore, TeamRetenti
 
 
 logger = logging.getLogger(__name__)
+
+
+def _load_local_sentence_transformers_provider_cls() -> type:
+    """延迟加载本地 embedding provider，避免应用启动时强制导入 torch。"""
+    from src.llm.local_sentence_transformers_embedding_provider import (
+        LocalSentenceTransformersEmbeddingProvider,
+    )
+
+    return LocalSentenceTransformersEmbeddingProvider
 
 
 @lru_cache(maxsize=1)
@@ -56,7 +64,7 @@ def get_team_retention_store() -> TeamRetentionStore:
 def get_embedding_store() -> EmbeddingStore | None:
     """按配置返回缓存的向量存储实例；未启用嵌入时返回 None。"""
     settings = get_settings()
-    if not settings.enable_embedding:
+    if not settings.enable_embedding or not settings.enable_vector_store:
         return None
     return EmbeddingStore(
         collection_name=settings.chroma_collection,
@@ -86,7 +94,8 @@ def get_embedding_client() -> EmbeddingClient | None:
         elif settings.embedding_provider in {"local", "local_sentence_transformers"}:
             if not settings.embedding_model_path:
                 return None
-            provider = LocalSentenceTransformersEmbeddingProvider(
+            provider_cls = _load_local_sentence_transformers_provider_cls()
+            provider = provider_cls(
                 model_path=settings.embedding_model_path,
                 device=settings.embedding_device,
                 normalize_embeddings=settings.embedding_normalize,

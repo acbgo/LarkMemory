@@ -42,8 +42,10 @@ class FakeCollection:
 class FakeClient:
     def __init__(self, collection: FakeCollection) -> None:
         self.collection = collection
+        self.get_or_create_calls: list[dict] = []
 
-    def get_or_create_collection(self, name: str) -> FakeCollection:
+    def get_or_create_collection(self, **kwargs: dict) -> FakeCollection:
+        self.get_or_create_calls.append(kwargs)
         return self.collection
 
 
@@ -99,12 +101,52 @@ class TestEmbeddingStore(unittest.TestCase):
         self.assertEqual(collection.upsert_calls[1]["ids"], ["memory-2"])
         self.assertEqual(
             collection.query_calls[0]["where"],
-            {"status": "active", "domain": "project_decision"},
+            {"$and": [{"status": "active"}, {"domain": "project_decision"}]},
         )
         self.assertEqual(rows[0]["memory_id"], "memory-1")
         self.assertEqual(rows[0]["document"], "Use SQLite")
         self.assertEqual(rows[0]["distance"], 0.12)
         self.assertEqual(by_embedding_rows[0]["id"], "memory-1")
+
+    def test_build_where_uses_plain_filter_for_single_condition_and_and_for_many(self) -> None:
+        store = EmbeddingStore(
+            collection_name="memory_core",
+            persist_directory="./tmp_chroma",
+        )
+
+        self.assertIsNone(store._build_where(None, None))
+        self.assertEqual(store._build_where("project_decision", None), {"domain": "project_decision"})
+        self.assertEqual(
+            store._build_where(
+                "project_decision",
+                {"project_id": "project-1", "team_id": "team-1"},
+            ),
+            {
+                "$and": [
+                    {"project_id": "project-1"},
+                    {"team_id": "team-1"},
+                    {"domain": "project_decision"},
+                ]
+            },
+        )
+
+    def test_create_collection_disables_chroma_default_embedding_function(self) -> None:
+        collection = FakeCollection()
+        fake_client = FakeClient(collection)
+        store = EmbeddingStore(
+            collection_name="memory_core",
+            persist_directory="./tmp_chroma",
+        )
+
+        with patch("src.storage.embedding_store.chromadb") as fake_chromadb:
+            fake_chromadb.PersistentClient.return_value = fake_client
+            store.create_collection()
+
+        self.assertEqual(
+            fake_client.get_or_create_calls[0],
+            {"name": "memory_core", "embedding_function": None},
+        )
+        self.assertIs(store._collection, collection)
 
     def test_get_meta_delete_by_domain_and_rebuild_index(self) -> None:
         collection = FakeCollection()

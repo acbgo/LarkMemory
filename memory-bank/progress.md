@@ -784,3 +784,24 @@
 - 验证：`python -m pytest tests/unit/sources/feishu/test_doc_events.py tests/unit/sources/feishu/test_listener.py -q`，14 passed。
 - 验证：`python -m compileall src tests`，通过。
 - 验证：`python -m pytest tests -q`，567 passed, 6 subtests passed。
+
+## 2026-05-04 阶段 18：Embedding HTTP 兼容与降级
+
+- 已定位 embedding 日志中的 502：普通 HTTP 请求 `POST /v1/embeddings` 可成功，但 OpenAI Python SDK 调同一服务返回 502，说明当前 embedding 服务与 SDK 请求细节不完全兼容。
+- 已将 `OpenAICompatibleEmbeddingProvider` 从 OpenAI SDK 调用改为 `requests.post()` 直连 OpenAI-compatible `/embeddings` 接口，保留 `model`、`input`、`encoding_format`、`dimensions`、`Authorization: Bearer ...` 请求形态。
+- 已修复向量生成失败后的二次错误：`project_decision` 和 `team_retention` 的 embedding indexer 在配置了 `EmbeddingClient` 且向量生成失败时直接跳过 Chroma 写入，避免 `embedding=None` 触发 Chroma 默认 ONNX embedding 和 onnxruntime DLL 错误。
+- 新增/更新测试：
+  - `tests/unit/llm/test_openai_compatible_embedding_provider.py`：覆盖 requests 请求体、headers、HTTP 错误抛出。
+  - `tests/unit/domains/project_decision/test_embedding.py`：覆盖 embedding client 失败时不写 store。
+  - `tests/unit/domains/team_retention/test_embedding.py`：覆盖 team_retention 向量写入和失败跳过。
+- 验证：`uv run pytest tests\unit\llm\test_openai_compatible_embedding_provider.py tests\unit\domains\project_decision\test_embedding.py tests\unit\domains\team_retention\test_embedding.py -q`，10 passed。
+- 验证：使用修复后的 provider 请求 `http://172.18.36.51:8011/v1/embeddings`，返回 `Qwen3-Embedding-8B`、1 条 4096 维向量。
+- 验证：`uv run python -m compileall src\llm\openai_compatible_embedding_provider.py src\domains\project_decision\embedding.py src\domains\team_retention\embedding.py tests\unit\llm\test_openai_compatible_embedding_provider.py tests\unit\domains\project_decision\test_embedding.py tests\unit\domains\team_retention\test_embedding.py`，通过。
+- 已新增 `LARKMEMORY_ENABLE_VECTOR_STORE` 配置，默认 `false`：
+  - `LARKMEMORY_ENABLE_EMBEDDING=true` 仅表示启用 embedding 模型客户端。
+  - 只有同时设置 `LARKMEMORY_ENABLE_VECTOR_STORE=true` 时才装配 Chroma `EmbeddingStore`。
+  - 当前 Windows 环境 Chroma/onnxruntime native DLL 可能导致 Python 进程级崩溃，默认关闭 vector store 可避免 ingest 后端进程被直接打掉。
+- `EmbeddingStore.create_collection()` 已显式设置 `embedding_function=None`，避免 Chroma 在未传 embedding 时自动加载默认 ONNX embedding。
+- 验证：`uv run pytest tests\unit\app\test_config.py tests\unit\app\test_dependencies.py -q -k "vector_store or defaults or env_file_from_config_path or embedding_store"`，7 passed。
+- 验证：`uv run pytest tests\unit\llm\test_openai_compatible_embedding_provider.py tests\unit\domains\project_decision\test_embedding.py tests\unit\domains\team_retention\test_embedding.py tests\unit\storage\test_embedding_store.py -q`，13 passed, 1 skipped。
+- 验证：当前 `larkmemory.env` 下 `get_embedding_client()` 返回 `EmbeddingClient`，`get_embedding_store()` 返回 `None`。

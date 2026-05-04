@@ -43,6 +43,7 @@ class TeamRetentionEmbeddingIndexer:
                     memory.retention_id,
                     exc_info=True,
                 )
+                return
         try:
             self.embedding_store.upsert_embedding(
                 memory_id=memory.retention_id,

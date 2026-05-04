@@ -24,6 +24,7 @@ class AppSettings:
     llm_max_retries: int = 2
     enable_llm: bool = False
     enable_embedding: bool = False
+    enable_vector_store: bool = False
     embedding_provider: str = "openai_compatible"
     embedding_api_key: str | None = None
     embedding_model: str | None = None
@@ -137,6 +138,7 @@ def load_settings() -> AppSettings:
         llm_max_retries=_env_int("LARKMEMORY_LLM_MAX_RETRIES", 2, file_values),
         enable_llm=_env_bool("LARKMEMORY_ENABLE_LLM", False, file_values),
         enable_embedding=_env_bool("LARKMEMORY_ENABLE_EMBEDDING", False, file_values),
+        enable_vector_store=_env_bool("LARKMEMORY_ENABLE_VECTOR_STORE", False, file_values),
         embedding_provider=_env_str("LARKMEMORY_EMBEDDING_PROVIDER", "openai_compatible", file_values)
         or "openai_compatible",
         embedding_api_key=_env_str("LARKMEMORY_EMBEDDING_API_KEY", None, file_values),
