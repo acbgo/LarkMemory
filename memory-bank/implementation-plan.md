@@ -164,7 +164,7 @@
 - `scanner/meeting_scanner.py`：MeetingScanner 扫描 pending/pending_ai/error 记录，重试拉取 AI 产物，死信跳过（error_count > 10）。
 - `source_state_store.py`：list_pending 补充 `pending_ai` 状态。
 
-## 阶段 17：飞书文档接入 🔜 待开始
+## 阶段 17：飞书文档接入 ✅ 已完成
 
 目标：接入飞书文档变更事件，拉取最新内容并 diff，按标题切分后进入记忆引擎。
 

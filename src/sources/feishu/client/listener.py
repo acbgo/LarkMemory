@@ -8,6 +8,8 @@ from src.app.dependencies import get_memory_service
 from src.sources.feishu.events.calendar_models import FeishuCalendarEvent
 from src.sources.feishu.events.calendar_normalizer import calendar_event_to_normalized_event
 from src.sources.feishu.events.dispatcher import FeishuEventDispatcher
+from src.sources.feishu.events.doc_models import FeishuDocChangedEvent
+from src.sources.feishu.events.doc_processor import DocProcessor
 from src.sources.feishu.events.meeting_models import FeishuMeetingEndedEvent
 from src.sources.feishu.events.meeting_normalizer import meeting_ended_to_event
 from src.sources.feishu.events.meeting_processor import MeetingProcessor
@@ -30,6 +32,7 @@ def build_event_handler(
     settings: Any | None = None,
     source_state_store: SourceStateStore | None = None,
     vc_client: Any | None = None,
+    doc_client: Any | None = None,
 ) -> Any:
     """Build lark-oapi event handler for Feishu messages, card actions, and multi-source events."""
     lark = _import_lark()
@@ -40,6 +43,10 @@ def build_event_handler(
     meeting_processor: MeetingProcessor | None = None
     if source_state_store is not None and vc_client is not None:
         meeting_processor = MeetingProcessor(source_state_store, vc_client, dispatcher)
+
+    doc_processor: DocProcessor | None = None
+    if source_state_store is not None and doc_client is not None:
+        doc_processor = DocProcessor(source_state_store, doc_client, dispatcher)
 
     def on_message(data: Any) -> None:
         message_event = _message_event_from_lark(data)
@@ -74,6 +81,14 @@ def build_event_handler(
         if meeting_processor is not None:
             meeting_processor.process_meeting_ended_async(meeting.meeting_id, meeting.topic)
 
+    def on_doc_changed(data: Any) -> None:
+        doc = _doc_changed_from_lark(data)
+        if doc is None:
+            logger.info("function=src.sources.feishu.client.listener.on_doc_changed action=skip_empty")
+            return
+        if doc_processor is not None:
+            doc_processor.process_doc_changed_async(doc.doc_token, doc.title)
+
     def on_card_action(data: Any) -> Any:
         raw_action = _card_action_from_lark(data)
         response_payload = card_handler.handle(parse_card_action(raw_action))
@@ -95,6 +110,8 @@ def build_event_handler(
     )
     if meeting_processor is not None:
         handler_builder = handler_builder.register_p2_vc_meeting_ended_v1(on_meeting_ended)
+    if doc_processor is not None:
+        handler_builder = handler_builder.register_p2_doc_updated_v1(on_doc_changed)
     return handler_builder.build()
 
 
@@ -174,6 +191,27 @@ def _calendar_event_from_lark(data: Any) -> FeishuCalendarEvent | None:
         location=_nested_attr_str(event, "location", "name"),
         recurrence=_attr_str(event, "recurrence"),
         status=_attr_str(event, "status") or "confirmed",
+        raw_payload=_safe_payload(data),
+    )
+
+
+def _doc_changed_from_lark(data: Any) -> FeishuDocChangedEvent | None:
+    event = getattr(data, "event", None)
+    if event is None:
+        return None
+    doc_token = getattr(event, "doc_token", None)
+    if not doc_token:
+        return None
+    user_id = None
+    operator = getattr(event, "operator", None)
+    if operator is not None:
+        user_id = getattr(operator, "id", None)
+    return FeishuDocChangedEvent(
+        doc_token=str(doc_token),
+        doc_type=_attr_str(event, "doc_type") or "docx",
+        title=_attr_str(event, "title"),
+        change_type=_attr_str(event, "change_type") or "",
+        user_id=user_id,
         raw_payload=_safe_payload(data),
     )
 

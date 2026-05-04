@@ -754,3 +754,33 @@
   - 成功补处理 pending_ai 记录、跳过已 complete、跳过死信（error_count>10）、产物仍空时 mark_error、无 minute_token 时 mark_error、事件 dispatch 验证。
 - 验证：`python -m pytest tests/unit/sources/feishu/test_meeting_scanner.py -q`，6 passed。
 - 验证：`python -m pytest tests -q`，556 passed, 6 subtests passed。
+
+## 2026-05-04 阶段 17：飞书文档接入
+
+- 已新增 `src/sources/feishu/client/doc_client.py` — 飞书文档 API 客户端：
+  - `FeishuDocClientProtocol` 定义 `fetch_doc_content(doc_token)→str` 接口。
+  - `FeishuDocClient` 实现：调用 `docx/v1/documents/{id}/raw` 获取文档 Markdown 全文。
+- 已新增 `src/sources/feishu/events/doc_models.py` — `FeishuDocChangedEvent` 模型：
+  - 字段：`doc_token`、`doc_type`、`title`、`change_type`、`user_id`、`raw_payload`。
+- 已新增 `src/sources/feishu/events/doc_normalizer.py` — `doc_section_to_event()`：
+  - 章节内容→`NormalizedEvent(event_type="doc_section", source_type="feishu_doc")`。
+  - title 优先用 heading，其次 doc_title，最后 fallback `"章节 N"`。
+  - payload 携带 `doc_token`/`doc_title`/`heading`/`section_index`。
+- 已新增 `src/sources/feishu/events/doc_processor.py` — 文档变更处理编排：
+  - `DocProcessor` 依赖 `SourceStateStore` + `FeishuDocClientProtocol` + `FeishuEventDispatcher`。
+  - `process_doc_changed_async()` 在 daemon 线程中异步处理。
+  - `_process()` 完整链路：拉取全文→SHA256 hash 对比→无变更跳过→`chunker.split_by_headings` 按 H1/H2 切分→逐个章节 dispatch→更新 hash+状态。
+  - 不 dispatch doc_changed 事件本身（与 meeting_ended 不同），只产出章节事件。
+- 已扩展 `src/schemas/event.py`：`EventType` 新增 `"doc_section"`（`"doc_changed"` 和 `"feishu_doc"` 已存在）。
+- 已扩展 `src/sources/feishu/client/listener.py`：
+  - `build_event_handler()` 新增可选参数 `doc_client`，与 `source_state_store` 同时提供时创建 `DocProcessor` 并注册 `doc.updated_v1` 事件。
+  - `on_doc_changed` 回调：提取 `FeishuDocChangedEvent`→异步启动 `doc_processor.process_doc_changed_async()`。
+  - 新增 `_doc_changed_from_lark()` 提取函数。
+- 新增测试 `tests/unit/sources/feishu/test_doc_events.py`：11 tests：
+  - `TestDocNormalizer`：章节映射、标题 fallback（doc_title→generic）。
+  - `TestDocProcessor`：完整链路（hash 写入 state）、无变更跳过（hash 相同不产生事件）、hash 更新、章节 dispatch、空内容处理。
+  - `TestDocEventFromLark`：SimpleNamespace 提取、空事件/无 doc_token。
+- 已更新 `tests/unit/sources/feishu/test_listener.py`：`_FakeBuiltHandler` 新增 `doc_handler` 和 `register_p2_doc_updated_v1()`。
+- 验证：`python -m pytest tests/unit/sources/feishu/test_doc_events.py tests/unit/sources/feishu/test_listener.py -q`，14 passed。
+- 验证：`python -m compileall src tests`，通过。
+- 验证：`python -m pytest tests -q`，567 passed, 6 subtests passed。

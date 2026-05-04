@@ -10,6 +10,7 @@ EventType = Literal[
     "command_failed",
     "chat_message",
     "doc_changed",
+    "doc_section",
     "meeting_chapter",
     "meeting_note",
     "meeting_summary",

@@ -15,6 +15,7 @@ class _FakeBuiltHandler:
         self.calendar_handler = None
         self.task_handler = None
         self.meeting_handler = None
+        self.doc_handler = None
 
     def register_p2_im_message_receive_v1(self, handler):
         self.message_handler = handler
@@ -34,6 +35,10 @@ class _FakeBuiltHandler:
 
     def register_p2_vc_meeting_ended_v1(self, handler):
         self.meeting_handler = handler
+        return self
+
+    def register_p2_doc_updated_v1(self, handler):
+        self.doc_handler = handler
         return self
 
     def build(self):
