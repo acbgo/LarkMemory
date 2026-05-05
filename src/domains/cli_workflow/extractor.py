@@ -491,7 +491,7 @@ class CLIWorkflowExtractor:
                     ),
                     schema=self._LLM_SEMANTICS_SCHEMA,
                     temperature=0,
-                    max_tokens=512,
+                    max_tokens=1024,
                 )
             )
             result: list[ParameterBinding] = []

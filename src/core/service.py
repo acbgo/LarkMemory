@@ -27,6 +27,10 @@ from src.retrieval import (
 from src.schemas import MemoryCore, NormalizedEvent
 from src.storage import EmbeddingStore, EventStore, MemoryCoreStore
 from src.llm import EmbeddingClient, RerankClient
+<<<<<<< HEAD
+=======
+from src.llm.rerank_base import RerankDocument
+>>>>>>> f887be784d9c5f28340da7fbad9b3edbfd9f9db6
 from src.utils.ids import query_id as new_query_id
 
 
@@ -76,6 +80,7 @@ class MemoryService:
         access_tracker: AccessTracker | None = None,
         domain_handlers: Iterable[MemoryDomainHandler] | None = None,
         proactive_engine: ProactiveEngine | None = None,
+        rerank_client: RerankClient | None = None,
     ) -> None:
         self.event_store = event_store
         self.memory_store = memory_store
@@ -97,6 +102,7 @@ class MemoryService:
             for handler in (domain_handlers or [])
         }
         self.proactive_engine = proactive_engine
+        self.rerank_client = rerank_client
 
     def ingest_event(self, event: NormalizedEvent) -> IngestResult:
         logger.info(
@@ -234,17 +240,29 @@ class MemoryService:
             rewritten.rewritten_text,
             len(rewritten.query_variants or []),
         )
-        target_domains = [
+        primary_domains = [
             domain.value
-            for domain in [*intent.primary_domains, *intent.secondary_domains]
+            for domain in intent.primary_domains
             if domain.value in self.domain_handlers
+        ]
+        secondary_domains = [
+            domain.value
+            for domain in intent.secondary_domains
+            if domain.value in self.domain_handlers and domain.value not in primary_domains
         ]
 
         domain_ranked: list[tuple[str, RankedMemory]] = []
         handler_query = self._with_rewritten_context(query, rewritten)
-        for domain in target_domains:
+        target_domains: list[str] = []
+        for domain in primary_domains:
+            target_domains.append(domain)
             for ranked in self.domain_handlers[domain].retrieve(handler_query, top_k=top_k):
                 domain_ranked.append((domain, ranked))
+        if not domain_ranked:
+            for domain in secondary_domains:
+                target_domains.append(domain)
+                for ranked in self.domain_handlers[domain].retrieve(handler_query, top_k=top_k):
+                    domain_ranked.append((domain, ranked))
         logger.info(
             "action=domain_retrieve_done query_id=%s target_domains=%s candidate_count=%s",
             query_id,
@@ -262,11 +280,15 @@ class MemoryService:
                 )
                 for index, (_domain, ranked) in enumerate(domain_ranked)
             ]
+<<<<<<< HEAD
             ranked = await Reranker(rerank_client=self.rerank_client).rerank(
                 candidates,
                 rewritten,
                 top_k=top_k,
             )
+=======
+            ranked = await self._rerank_candidates(candidates, rewritten, top_k=top_k)
+>>>>>>> f887be784d9c5f28340da7fbad9b3edbfd9f9db6
             for result in ranked:
                 self.access_tracker.record_access(result.item.memory_id, query_id=query_id)
             trace = None
@@ -302,11 +324,15 @@ class MemoryService:
             )
             for index, row in enumerate(rows)
         ]
+<<<<<<< HEAD
         ranked = await Reranker(rerank_client=self.rerank_client).rerank(
             candidates,
             rewritten,
             top_k=top_k,
         )
+=======
+        ranked = await self._rerank_candidates(candidates, rewritten, top_k=top_k)
+>>>>>>> f887be784d9c5f28340da7fbad9b3edbfd9f9db6
         for result in ranked:
             self.access_tracker.record_access(result.item.memory_id, query_id=query_id)
         trace = None
@@ -321,6 +347,104 @@ class MemoryService:
             ranked_memories=ranked,
             trace=trace,
             message="memory_core fallback; no domain handler results",
+        )
+
+    async def _rerank_candidates(
+        self,
+        candidates: list[FusedCandidate],
+        query: Any,
+        *,
+        top_k: int,
+    ) -> list[RankedMemory]:
+        """用全局 rerank provider 重排候选；不可用时回退到本地多因子排序。"""
+        if self.rerank_client is None or len(candidates) <= 1:
+            logger.info(
+                "action=global_rerank_skipped reason=%s candidate_count=%s top_k=%s",
+                "client_unavailable" if self.rerank_client is None else "single_candidate",
+                len(candidates),
+                top_k,
+            )
+            return await Reranker(llm_client=None).rerank(candidates, query, top_k=top_k)
+        documents = [
+            RerankDocument(
+                id=candidate.item.memory_id,
+                text=self._build_global_rerank_text(candidate),
+                metadata={
+                    "domain": candidate.item.domain,
+                    "fusion_score": candidate.fusion_score,
+                },
+            )
+            for candidate in candidates
+        ]
+        try:
+            response = self.rerank_client.rerank(query.rewritten_text or query.original.query_text, documents, top_k=top_k)
+        except Exception:
+            logger.warning(
+                "action=global_rerank_failed candidate_count=%s top_k=%s",
+                len(candidates),
+                top_k,
+                exc_info=True,
+            )
+            return await Reranker(llm_client=None).rerank(candidates, query, top_k=top_k)
+
+        candidate_by_id = {candidate.item.memory_id: candidate for candidate in candidates}
+        scores = [float(result.score) for result in response.results]
+        if scores and all(score == 0.0 for score in scores):
+            logger.warning(
+                "action=global_rerank_zero_scores candidate_count=%s result_count=%s top_k=%s fallback=local_reranker raw_scores=%s",
+                len(candidates),
+                len(response.results),
+                top_k,
+                [(result.id, float(result.score)) for result in response.results[:top_k]],
+            )
+            return await Reranker(llm_client=None).rerank(candidates, query, top_k=top_k)
+        score_min = min(scores) if scores else 0.0
+        score_max = max(scores) if scores else 1.0
+        score_range = score_max - score_min or 1.0
+        ranked: list[RankedMemory] = []
+        for index, result in enumerate(response.results[:top_k], start=1):
+            candidate = candidate_by_id.get(result.id)
+            if candidate is None:
+                continue
+            raw_score = float(result.score)
+            normalized_score = (raw_score - score_min) / score_range
+            ranked.append(
+                RankedMemory(
+                    item=candidate.item,
+                    final_score=normalized_score,
+                    rank=index,
+                    score_breakdown={
+                        "global_rerank": normalized_score,
+                        "global_rerank_raw": raw_score,
+                        "fusion": candidate.fusion_score,
+                    },
+                )
+            )
+        logger.info(
+            "action=global_rerank_done model=%s candidate_count=%s result_count=%s top_k=%s top_ids=%s raw_scores=%s normalized_scores=%s",
+            getattr(response, "model", None),
+            len(candidates),
+            len(response.results),
+            top_k,
+            [item.item.memory_id for item in ranked],
+            [(result.id, float(result.score)) for result in response.results[:top_k]],
+            [(item.item.memory_id, item.final_score) for item in ranked],
+        )
+        return ranked
+
+    def _build_global_rerank_text(self, candidate: FusedCandidate) -> str:
+        """为跨域 rerank 构造简洁、带 domain 的候选文本。"""
+        item = candidate.item
+        return "\n".join(
+            part
+            for part in (
+                f"domain={item.domain}",
+                f"summary={item.summary_text or ''}",
+                f"content={item.content_text or ''}",
+                f"tags={' '.join(item.tags)}",
+                f"entities={' '.join(item.entities)}",
+            )
+            if part
         )
 
     def update_memory(

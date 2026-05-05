@@ -219,6 +219,7 @@ def get_proactive_engine() -> ProactiveEngine | None:
         summarizer=ProjectDecisionProactiveSummarizer(llm_client),
         default_chat_id=load_feishu_settings().default_chat_id,
         related_top_k=settings.proactive_related_top_k,
+        min_related_score=settings.proactive_min_related_score,
     )
 
 
@@ -229,7 +230,6 @@ def get_memory_service() -> MemoryService:
         get_memory_core_store(),
         embedding_store=get_embedding_store(),
         embedding_client=get_embedding_client(),
-        rerank_client=get_rerank_client(),
         llm_client=get_llm_client(),
     )
     team_handler = TeamRetentionDomainHandler(
@@ -257,6 +257,7 @@ def get_memory_service() -> MemoryService:
         llm_client=get_llm_client(),
         domain_handlers=handlers,
         proactive_engine=proactive_engine,
+        rerank_client=get_rerank_client(),
     )
 
 

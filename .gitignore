@@ -9,6 +9,7 @@ logs/
 .larkmemory/
 .pip-tmp
 lark-oapi-demo
+benchmark_project_decision
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

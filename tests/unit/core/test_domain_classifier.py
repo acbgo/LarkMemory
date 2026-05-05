@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 
 import pytest
+from src.llm.base import LLMJSONDecodeError
 from src.core.domain_classifier import (
     ALL_DOMAINS,
     DomainClassifier,
@@ -17,6 +18,34 @@ class FakeLLM:
     async def atext(self, system_prompt: str | None, user_prompt: str, **kwargs: object) -> str:
         self.calls.append({"system_prompt": system_prompt or "", "user_prompt": user_prompt, "kwargs": kwargs})
         return self.label
+
+
+class FakeJsonLLM:
+    def __init__(self, payload: dict[str, object]) -> None:
+        self.payload = payload
+        self.json_calls: list[dict[str, object]] = []
+        self.text_calls: list[dict[str, object]] = []
+
+    async def ajson(self, system_prompt: str | None, user_prompt: str, **kwargs: object) -> dict[str, object]:
+        self.json_calls.append({"system_prompt": system_prompt or "", "user_prompt": user_prompt, "kwargs": kwargs})
+        return self.payload
+
+    async def atext(self, system_prompt: str | None, user_prompt: str, **kwargs: object) -> str:
+        self.text_calls.append({"system_prompt": system_prompt or "", "user_prompt": user_prompt, "kwargs": kwargs})
+        return "team_retention"
+
+
+class EmptyTextLLM:
+    async def atext(self, *_args: object, **_kwargs: object) -> str:
+        return ""
+
+
+class JSONDecodeFailingLLM:
+    async def ajson(self, *_args: object, **_kwargs: object) -> dict[str, object]:
+        raise LLMJSONDecodeError("bad json", content='{"primary":"project_decision"')
+
+    async def atext(self, *_args: object, **_kwargs: object) -> str:
+        return "project_decision"
 
 
 class FailingLLM:
@@ -39,6 +68,34 @@ class TestKeywordClassification:
         c = DomainClassifier()
         result = c.classify_sync("团队决定采用方案B")
         assert result.primary == ["project_decision"]
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "支付模块出故障了怎么办",
+            "成本预算费用采购",
+            "API 网关限流策略",
+            "张三负责什么 李四负责什么",
+            "支付回调超时如何处理",
+            "公开 API 现在的默认限流阈值是多少",
+        ],
+    )
+    def test_project_decision_benchmark_queries_route_to_project_decision(self, text: str):
+        c = DomainClassifier()
+        result = c.classify_sync(text)
+        assert result.primary[0] == "project_decision"
+
+    def test_release_decision_signal_uses_llm_before_keyword_fallback(self):
+        c = DomainClassifier(llm_client=FakeLLM("cli_workflow"))
+        result = c.classify_sync("上线脚本已通过演练。结论：v2.3 准予上线，按 5%-20%-100% 灰度发布。")
+        assert result.primary == ["cli_workflow"]
+        assert result.method == "llm"
+
+    def test_release_decision_signal_falls_back_to_project_decision_when_llm_unavailable(self):
+        c = DomainClassifier(llm_client=FailingLLM())
+        result = c.classify_sync("上线脚本已通过演练。结论：v2.3 准予上线，按 5%-20%-100% 灰度发布。")
+        assert result.primary[0] == "project_decision"
+        assert result.method == "keyword_rule"
 
     def test_personal_preference_hit(self):
         c = DomainClassifier()
@@ -143,6 +200,57 @@ class TestLLMClassification:
         c = DomainClassifier(llm_client=llm)
         result = c.classify_sync("deploy command")
         assert "team_retention" in result.secondary
+
+    def test_llm_json_contract_is_preferred_over_text(self):
+        llm = FakeJsonLLM({"primary": "project_decision", "confidence": 0.91, "reason": "rate limit decision"})
+        c = DomainClassifier(llm_client=llm)
+        result = c.classify_sync("公开 API 现在的默认限流阈值是多少")
+        assert result.primary == ["project_decision"]
+        assert result.confidence == 0.91
+        assert result.method == "llm_json"
+        assert result.reason == "rate limit decision"
+        assert len(llm.json_calls) == 1
+        assert llm.text_calls == []
+        kwargs = llm.json_calls[0]["kwargs"]
+        assert kwargs["max_tokens"] >= 160
+        assert isinstance(kwargs["schema"], dict)
+
+    def test_llm_json_invalid_domain_falls_back_to_keywords(self):
+        llm = FakeJsonLLM({"primary": "unknown", "confidence": 0.91, "reason": "bad"})
+        c = DomainClassifier(llm_client=llm)
+        result = c.classify_sync("公开 API 现在的默认限流阈值是多少")
+        assert result.primary[0] == "project_decision"
+        assert result.method == "keyword_rule"
+
+    def test_llm_empty_text_output_falls_back_without_traceback(self, caplog: pytest.LogCaptureFixture):
+        c = DomainClassifier(llm_client=EmptyTextLLM())
+        with caplog.at_level("INFO", logger="src.core.domain_classifier"):
+            result = c.classify_sync("支付模块出故障了怎么办")
+        assert result.primary[0] == "project_decision"
+        assert result.method == "keyword_rule"
+        logs = "\n".join(record.getMessage() for record in caplog.records)
+        assert "action=classify_llm_empty_output" in logs
+        assert "Traceback" not in logs
+
+    def test_llm_json_decode_error_falls_back_without_domain_traceback(self, caplog: pytest.LogCaptureFixture):
+        c = DomainClassifier(llm_client=JSONDecodeFailingLLM())
+        with caplog.at_level("INFO", logger="src.core.domain_classifier"):
+            result = c.classify_sync("SQLite 数据库选型理由")
+        assert result.primary == ["project_decision"]
+        assert result.method == "llm"
+        logs = "\n".join(record.getMessage() for record in caplog.records)
+        assert "action=classify_llm_json_decode_failed" in logs
+        assert "Traceback" not in logs
+
+    def test_llm_prompt_describes_project_decision_boundaries(self):
+        llm = FakeLLM("project_decision")
+        c = DomainClassifier(llm_client=llm)
+        result = c.classify_sync("公开 API 现在的默认限流阈值是多少")
+        prompt = str(llm.calls[0]["system_prompt"])
+        assert result.primary == ["project_decision"]
+        assert "default rate limits" in prompt
+        assert "not personal_preference" in prompt
+        assert "project_decision over cli_workflow" in prompt
 
     def test_llm_failure_falls_back_to_keywords(self):
         c = DomainClassifier(llm_client=FailingLLM())

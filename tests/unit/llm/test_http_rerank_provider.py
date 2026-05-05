@@ -75,6 +75,55 @@ def test_http_rerank_provider_accepts_scores_response(monkeypatch: pytest.Monkey
     assert [(score.index, score.score) for score in scores] == [(0, 0.3), (1, 0.7)]
 
 
+def test_http_rerank_provider_accepts_vllm_relevance_score_response(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_urlopen(request: Any, timeout: float) -> FakeHTTPResponse:
+        return FakeHTTPResponse(
+            {
+                "results": [
+                    {"index": 1, "relevance_score": 0.82},
+                    {"index": 0, "relevance_score": 0.27},
+                ]
+            }
+        )
+
+    monkeypatch.setattr(http_rerank_provider.request, "urlopen", fake_urlopen)
+    provider = HttpRerankProvider(base_url="http://127.0.0.1:9000")
+
+    scores = provider.score("query", ["doc-a", "doc-b"])
+
+    assert [(score.index, score.score) for score in scores] == [(1, 0.82), (0, 0.27)]
+
+
+def test_http_rerank_provider_accepts_similarity_and_logit_scores(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_urlopen(request: Any, timeout: float) -> FakeHTTPResponse:
+        return FakeHTTPResponse(
+            {
+                "results": [
+                    {"index": 0, "similarity": 0.61},
+                    {"index": 1, "logit": 3.2},
+                ]
+            }
+        )
+
+    monkeypatch.setattr(http_rerank_provider.request, "urlopen", fake_urlopen)
+    provider = HttpRerankProvider(base_url="http://127.0.0.1:9000")
+
+    scores = provider.score("query", ["doc-a", "doc-b"])
+
+    assert [(score.index, score.score) for score in scores] == [(0, 0.61), (1, 3.2)]
+
+
+def test_http_rerank_provider_rejects_error_response(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_urlopen(request: Any, timeout: float) -> FakeHTTPResponse:
+        return FakeHTTPResponse({"error": "model unavailable"})
+
+    monkeypatch.setattr(http_rerank_provider.request, "urlopen", fake_urlopen)
+    provider = HttpRerankProvider(base_url="http://127.0.0.1:9000")
+
+    with pytest.raises(RuntimeError, match="Rerank provider returned error"):
+        provider.score("query", ["doc-a"])
+
+
 def test_http_rerank_provider_requires_base_url() -> None:
     with pytest.raises(ValueError, match="Rerank base URL is required"):
         HttpRerankProvider(base_url="")

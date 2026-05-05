@@ -27,7 +27,12 @@ class ProjectDecisionProactiveDecider:
         self.llm_client = llm_client
         self.min_confidence = min_confidence
 
-    def decide(self, event: NormalizedEvent, memory: ProjectDecision) -> ProactiveDecision:
+    def decide(
+        self,
+        event: NormalizedEvent,
+        memory: ProjectDecision,
+        related_rows: list[dict[str, object]] | None = None,
+    ) -> ProactiveDecision:
         if self.llm_client is None:
             return ProactiveDecision(False, reason="llm_unavailable")
         schema = {
@@ -38,20 +43,26 @@ class ProjectDecisionProactiveDecider:
                 "reason": {"type": "string"},
                 "push_type": {"type": "string"},
             },
-            "required": ["push", "reason"],
+            "required": ["push", "confidence", "reason"],
         }
+        related_text = "\n".join(
+            f"- memory_id={row.get('memory_id')} summary={row.get('summary_text') or row.get('content_text')}"
+            for row in (related_rows or [])
+        )
         try:
             raw = _run_async(
                 self.llm_client.ajson(
-                    "你是项目决策主动推送判断器。判断当前消息是否值得推送相关的历史决策上下文。只输出 JSON。",
+                    "你是项目决策主动推送判断器。判断当前消息和候选历史决策是否确实相关且值得推送。只输出 JSON。",
                     (
                         "判断这条消息是否值得主动推送历史决策上下文。\n"
                         "标准：涉及对已有决策的询问、质疑、回顾或变更提议 → 推送；"
                         "与历史决策有明显关联的新决策声明 → 推送；"
+                        "候选历史决策与当前消息不直接相关 → 不推送；"
                         "日常闲聊、纯信息通知、无明显关联 → 不推送。\n"
                         f"topic={memory.topic}\n"
                         f"decision={memory.conclusion or memory.decision}\n"
-                        f"event_text={event.content_text or ''}"
+                        f"event_text={event.content_text or ''}\n"
+                        f"related_memories:\n{related_text}"
                     ),
                     schema=schema,
                     temperature=0,
@@ -71,7 +82,7 @@ class ProjectDecisionProactiveDecider:
             raw,
         )
         raw_should_push = raw.get("should_push") if "should_push" in raw else raw.get("push")
-        confidence = _coerce_confidence(raw.get("confidence", 1.0))
+        confidence = _coerce_confidence(raw.get("confidence", 0.0))
         should_push = bool(raw_should_push) and confidence >= self.min_confidence
         return ProactiveDecision(
             should_push=should_push,

@@ -17,15 +17,16 @@ from src.storage import MemoryCoreStore, ProactiveStore
 class FakeProjectDecisionHandler:
     domain = "project_decision"
 
-    def __init__(self, ranked_rows: list[dict[str, object]] | None = None) -> None:
+    def __init__(self, ranked_rows: list[dict[str, object]] | None = None, *, score: float = 0.9) -> None:
         self.ranked_rows = list(ranked_rows or [])
+        self.score = score
         self.queries: list[RetrievalQuery] = []
 
     def retrieve(self, query: RetrievalQuery, *, top_k: int) -> list[RankedMemory]:
         self.queries.append(query)
         rows = self.ranked_rows[:top_k]
         return [
-            RankedMemory(item=memory_item_from_core(row), final_score=0.9, rank=index + 1)
+            RankedMemory(item=memory_item_from_core(row), final_score=self.score, rank=index + 1)
             for index, row in enumerate(rows)
         ]
 
@@ -35,8 +36,14 @@ class FakeDecider:
         self.decision = decision
         self.calls = 0
 
-    def decide(self, event: NormalizedEvent, memory: ProjectDecision) -> ProactiveDecision:
+    def decide(
+        self,
+        event: NormalizedEvent,
+        memory: ProjectDecision,
+        related_rows: list[dict[str, object]] | None = None,
+    ) -> ProactiveDecision:
         self.calls += 1
+        self.related_rows = list(related_rows or [])
         return self.decision
 
 
@@ -169,6 +176,62 @@ class TestProactiveEngine(unittest.TestCase):
         self.assertEqual(row["memory_id"], "mem-1")
         self.assertEqual(row["related_memory_ids"], ["mem-2"])
         self.assertEqual(len(handler.queries), 1)
+        self.assertEqual(len(engine.decider.related_rows), 1)  # type: ignore[attr-defined,union-attr]
+
+    def test_maybe_push_skips_when_related_scores_are_too_low(self) -> None:
+        event = _event()
+        decision = _decision("mem-1", decision_text="采用方案 B，而不是方案 A")
+        related = _decision("mem-2", decision_text="无关历史")
+        self.memory_store.insert_memory_core(decision.to_memory_core())
+        self.memory_store.insert_memory_core(related.to_memory_core())
+        handler = FakeProjectDecisionHandler([asdict(related.to_memory_core())], score=0.2)
+        notifier = FakeNotifier()
+        engine = ProactiveEngine(
+            memory_store=self.memory_store,
+            proactive_store=self.proactive_store,
+            domain_handlers={"project_decision": handler},
+            decider=FakeDecider(
+                ProactiveDecision(True, confidence=0.92, reason="has_history", push_type="decision_context_push")
+            ),
+            summarizer=FakeSummarizer({}),
+            notifier=notifier,
+            min_related_score=0.55,
+        )
+
+        engine.maybe_push(event, domain="project_decision", memory_ids=["mem-1"])
+
+        self.assertEqual(notifier.calls, [])
+        row = self.proactive_store.get_record(event.event_id, "decision_context_push")
+        assert row is not None
+        self.assertEqual(row["status"], "skipped")
+        self.assertEqual(row["reason"], "no_related_memories")
+
+    def test_maybe_push_skips_when_summarizer_marks_unrelated(self) -> None:
+        event = _event()
+        decision = _decision("mem-1", decision_text="采用方案 B，而不是方案 A")
+        related = _decision("mem-2", decision_text="之前也优先方案 B")
+        self.memory_store.insert_memory_core(decision.to_memory_core())
+        self.memory_store.insert_memory_core(related.to_memory_core())
+        handler = FakeProjectDecisionHandler([asdict(related.to_memory_core())])
+        notifier = FakeNotifier()
+        engine = ProactiveEngine(
+            memory_store=self.memory_store,
+            proactive_store=self.proactive_store,
+            domain_handlers={"project_decision": handler},
+            decider=FakeDecider(
+                ProactiveDecision(True, confidence=0.92, reason="has_history", push_type="decision_context_push")
+            ),
+            summarizer=FakeSummarizer({"summary": "无直接关联", "is_related": False, "memory_ids": ["mem-2"]}),
+            notifier=notifier,
+        )
+
+        engine.maybe_push(event, domain="project_decision", memory_ids=["mem-1"])
+
+        self.assertEqual(notifier.calls, [])
+        row = self.proactive_store.get_record(event.event_id, "decision_context_push")
+        assert row is not None
+        self.assertEqual(row["status"], "skipped")
+        self.assertEqual(row["reason"], "summary_unrelated")
 
     def test_maybe_push_records_failed_when_notifier_raises(self) -> None:
         event = _event()
@@ -266,8 +329,8 @@ class TestProactiveEngine(unittest.TestCase):
 
         self.assertEqual(decider.calls, 0)
 
-    def test_maybe_push_skips_synthetic_when_decider_rejects(self) -> None:
-        """Synthetic path: decider rejects → records skipped, no notifier call."""
+    def test_maybe_push_skips_synthetic_when_no_handler(self) -> None:
+        """Synthetic path: without related recall there is no decider call."""
         event = _event()
         decider = FakeDecider(
             ProactiveDecision(False, confidence=0.3, reason="not_important", push_type="decision_context_push")
@@ -283,6 +346,5 @@ class TestProactiveEngine(unittest.TestCase):
         engine.maybe_push(event, domain="project_decision", memory_ids=[])
 
         row = self.proactive_store.get_record(event.event_id, "decision_context_push")
-        assert row is not None
-        self.assertEqual(row["status"], "skipped")
-        self.assertEqual(row["reason"], "not_important")
+        self.assertIsNone(row)
+        self.assertEqual(decider.calls, 0)

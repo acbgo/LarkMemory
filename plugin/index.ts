@@ -23,7 +23,7 @@ declare const process:
 type JsonObject = Record<string, unknown>;
 
 type PluginConfig = {
-  memoryApiUrl: string;
+  memoryApiBase: string;
   userId: string;
   debug: boolean;
   requestTimeoutMs: number;
@@ -51,7 +51,7 @@ type BackendRetrieveResponse = {
 };
 
 const DEFAULT_CONFIG: PluginConfig = {
-  memoryApiUrl: "http://127.0.0.1:8765/api/v1",
+  memoryApiBase: "http://127.0.0.1:8765",
   userId: "default_user",
   debug: true,
   requestTimeoutMs: 5000,
@@ -89,12 +89,12 @@ function readConfig(ctx: unknown): PluginConfig {
   const record = asRecord(ctx);
   const ctxConfig = asRecord(record.config);
   const env = typeof process !== "undefined" ? process?.env ?? {} : {};
+  const configuredBase =
+    ctxConfig.memoryApiBase ??
+    env.LARKMEMORY_API_BASE ??
+    DEFAULT_CONFIG.memoryApiBase;
   return {
-    memoryApiUrl: String(
-      ctxConfig.memoryApiUrl ??
-        env.LARKMEMORY_API_URL ??
-        DEFAULT_CONFIG.memoryApiUrl,
-    ).replace(/\/+$/, ""),
+    memoryApiBase: normalizeApiBase(String(configuredBase)),
     userId: String(ctxConfig.userId ?? env.LARKMEMORY_USER_ID ?? DEFAULT_CONFIG.userId),
     debug: Boolean(ctxConfig.debug ?? DEFAULT_CONFIG.debug),
     requestTimeoutMs: Number(
@@ -103,6 +103,14 @@ function readConfig(ctx: unknown): PluginConfig {
         DEFAULT_CONFIG.requestTimeoutMs,
     ),
   };
+}
+
+function normalizeApiBase(value: string): string {
+  return value.replace(/\/+$/, "").replace(/\/api\/v1$/, "");
+}
+
+function apiUrl(config: PluginConfig, path: string): string {
+  return `${config.memoryApiBase}/api/v1${path}`;
 }
 
 function extractText(event: unknown): string {
@@ -267,7 +275,7 @@ async function ingestEvent(
     raw_payload: jsonSafe(evt) as JsonObject,
     tags,
   };
-  return postJson<JsonObject>(`${config.memoryApiUrl}/ingest`, body, config);
+  return postJson<JsonObject>(apiUrl(config, "/ingest"), body, config);
 }
 
 async function retrieveMemories(
@@ -294,7 +302,7 @@ async function retrieveMemories(
     include_trace: true,
   };
   const response = await postJson<BackendRetrieveResponse>(
-    `${config.memoryApiUrl}/retrieve`,
+    apiUrl(config, "/retrieve"),
     body,
     config,
   );

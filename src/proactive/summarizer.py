@@ -32,6 +32,7 @@ class ProjectDecisionProactiveSummarizer:
                 "summary": {"type": "string"},
                 "bullets": {"type": "array", "items": {"type": "string"}},
                 "memory_ids": {"type": "array", "items": {"type": "string"}},
+                "is_related": {"type": "boolean"},
                 "suggested_action": {"type": "string"},
             },
             "required": ["summary"],
@@ -100,6 +101,7 @@ class ProjectDecisionProactiveSummarizer:
             "summary": raw.get("summary") or fallback["summary"],
             "bullets": raw.get("bullets") or fallback["bullets"],
             "memory_ids": raw.get("memory_ids") or fallback["memory_ids"],
+            "is_related": raw.get("is_related", fallback["is_related"]),
             "suggested_action": raw.get("suggested_action") or fallback["suggested_action"],
         }
 
@@ -128,6 +130,7 @@ class ProjectDecisionProactiveSummarizer:
             "summary": f"当前决策“{memory.topic}”可能和之前的历史结论有关。",
             "bullets": bullets,
             "memory_ids": memory_ids,
+            "is_related": bool(memory_ids),
             "suggested_action": "查看历史决策上下文",
         }
 

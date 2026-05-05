@@ -947,3 +947,169 @@
 - 顺手修复测试环境对本地 `larkmemory.env` 的隐式依赖，避免依赖测试和 proactive API 测试误连真实 LLM 服务。
 - 验证：`python -m pytest tests\unit\storage\test_proactive_store.py tests\unit\proactive\test_engine.py tests\unit\sources\feishu\test_proactive.py tests\unit\core\test_service.py tests\unit\app\test_dependencies.py -q -p no:cacheprovider`，58 passed。
 - 验证：`python -m pytest tests\unit\domains\project_decision tests\unit\api\test_ingest_api.py tests\unit\api\test_retrieve_api.py tests\unit\api\test_proactive_api.py -q -p no:cacheprovider`，63 passed。
+
+## 2026-05-05 ProjectDecision Benchmark 评测框架
+
+- 新增 `benchmark/metrics.py`，提供检索评测基础指标：
+  - `hit@k`
+  - `MRR`
+  - `false_positive_rate`
+- 新增固定 JSONL 数据集：
+  - `benchmark/dataset/project_decision_seeds.jsonl`：13 条项目决策种子消息，覆盖技术选型、架构决策、方案否决、上线决策、人物关联、交叉引用、预算决策、回滚决策。
+  - `benchmark/dataset/project_decision_queries.jsonl`：10 条检索评测 query，包含 expected keywords 和 must-not keywords。
+  - `benchmark/dataset/project_decision_proactive.jsonl`：主动推送观测样例。
+- 新增 `benchmark/eval_project_decision.py`：
+  - 通过 HTTP 调用 `/health`、`/api/v1/ingest`、`/api/v1/retrieve`；
+  - 自动写入 seeds；
+  - 自动计算 retrieval hit@k、MRR、false positive rate；
+  - 从 SQLite `proactive_push` 表读取本轮主动推送状态；
+  - 输出 JSON 和 Markdown 报告到 `benchmark/results/`。
+- 补充 `tests/unit/benchmark/`，覆盖指标计算、UTF-8 JSONL 读取和报告写入。
+- 验证：`python -m pytest tests\unit\benchmark -q -p no:cacheprovider`，5 passed。
+- 验证：`python -m compileall benchmark tests\unit\benchmark`，通过。
+- 验证：`python benchmark\eval_project_decision.py --skip-ingest --top-k 3 --timeout 120`，脚本可运行并输出报告；未写入 `project-benchmark` seeds 时 hit@3 为 0，符合预期。
+
+## 2026-05-05 云端部署访问配置
+
+- 更新 `larkmemory.env` 和 `larkmemory.env.example`：
+  - 将后端绑定地址和客户端访问地址拆开。
+  - 后端部署到云服务器时使用 `LARKMEMORY_HOST=0.0.0.0`。
+  - 本地 benchmark/demo/CLI/OpenClaw 访问远端时统一使用 `LARKMEMORY_API_BASE`。
+- 更新 OpenClaw 插件配置：
+  - 新增 `memoryApiBase`，默认值为 `http://127.0.0.1:8765`。
+  - 插件内部统一拼接 `/api/v1/ingest` 和 `/api/v1/retrieve`。
+  - 移除旧的 `memoryApiUrl` 和 `LARKMEMORY_API_URL` 配置路径，统一使用 `LARKMEMORY_API_BASE`。
+- 更新本地演示脚本默认后端地址：
+  - `benchmark/demo_project_decision.py`
+  - `benchmark/eval_project_decision.py`
+  - `lark-oapi-demo/larkmemory_api_test.py`
+  - `lark-oapi-demo/larkmemory_proactive_test.py`
+  现在这些脚本会优先读取 `LARKMEMORY_API_BASE`，没有配置时才回退到 `http://127.0.0.1:8765`。
+- 验证：`python -m compileall benchmark lark-oapi-demo`，通过。
+
+## 2026-05-05 Benchmark 官方要求补齐
+
+- 删除旧的 `benchmark/results/run-20260505-170805.{json,md}`，避免把 `--skip-ingest` 的空结果误认为正式评测结论。
+- 新增抗干扰数据集：
+  - `benchmark/dataset/project_decision_noise.jsonl`：30 条同 scope 无关办公消息。
+  - `benchmark/dataset/project_decision_interference_queries.jsonl`：验证噪声注入后仍能找回 SQLite、支付回滚、负责人分工等关键记忆。
+- 新增矛盾更新数据集：
+  - `benchmark/dataset/project_decision_updates.jsonl`：先写入 1000 次/分钟限流旧结论，再写入 800 次/分钟新结论并废弃旧方案。
+  - `benchmark/dataset/project_decision_update_queries.jsonl`：验证当前有效结论命中 800，旧方案只作为废弃上下文出现。
+- 新增效能指标数据集：
+  - `benchmark/dataset/project_decision_efficiency.jsonl`：用 baseline/assisted 字符数和步骤数计算提效。
+- 扩展 `benchmark/metrics.py`：
+  - `evaluate_efficiency_case()`
+  - `summarize_efficiency_scores()`
+- 扩展 `benchmark/eval_project_decision.py`：
+  - 自动加载 noise/update/interference/update-query/efficiency 数据集。
+  - 报告中新增 `Official Requirement Coverage`，对应抗干扰、矛盾更新、效能指标三类官方要求。
+- 更新 `tests/unit/benchmark/`，覆盖效能指标计算和官方要求报告输出。
+- 验证：`python -m pytest tests\unit\benchmark -q -p no:cacheprovider`，7 passed。
+- 验证：`python -m compileall benchmark tests\unit\benchmark`，通过。
+
+## 2026-05-05 Benchmark 进度输出
+
+- 为 `benchmark/eval_project_decision.py` 增加默认进度输出：
+  - 启动时打印 run_id、base_url、project_id。
+  - health check 完成后打印服务状态。
+  - 数据集加载后打印 seeds/noise/updates/query 数量。
+  - ingest 阶段逐条打印 case_id、status、memory_ids。
+  - retrieval、anti-interference、contradiction-update 查询阶段逐条打印 hit、MRR、top1。
+  - proactive 检查、efficiency 计算和报告写入阶段打印阶段状态。
+- 新增 `--quiet` 参数，用于关闭过程输出，只保留最终 JSON summary 和报告路径。
+- 更新 `tests/unit/benchmark/test_eval_project_decision.py`，覆盖 quiet 参数和 verbose 配置。
+- 验证：`python -m pytest tests\unit\benchmark -q -p no:cacheprovider`，9 passed。
+- 验证：`python -m compileall benchmark tests\unit\benchmark`，通过。
+
+## 2026-05-05 Retrieve 与主动推送准确性修正
+
+- 修复 retrieve 跨域污染：
+  - `MemoryService.retrieve_async()` 先查询 primary domains。
+  - 只有 primary domains 无结果时，才查询 secondary domains。
+  - trace 中的 `target_domains` 现在反映实际查询过的 domain。
+- 修复全局 rerank：
+  - `MemoryService` 新增 `rerank_client` 注入。
+  - 跨域候选统一通过全局 `RerankClient` 重排；失败时回退本地多因子排序。
+  - `src/app/dependencies.py` 不再把 rerank client 注入 ProjectDecisionRetriever，而是注入 MemoryService。
+- 收紧 team_retention 噪声入库：
+  - `TeamRetentionAdmissionDecider` 增加普通行政/办公设备/闲聊类噪声拒绝规则。
+  - 会议室白板笔、外卖、快递、投影仪、订餐等信息不会进入长期 team_retention 记忆，除非同时包含客户、密钥、合规、风险、长期记住等强信号。
+- 增强 benchmark 抗干扰观测：
+  - `_summarize_ingest()` 增加 `noise_case_count` 和 `noise_store_count`。
+  - Markdown summary 增加 `Noise stored: x/y`。
+- 修复 proactive 误推：
+  - 主动推送链路先召回 related memories，再让 LLM 判断“当前消息 + 候选历史”是否值得推。
+  - 新增 `LARKMEMORY_PROACTIVE_MIN_RELATED_SCORE`，默认 `0.55`。
+  - related memory 低于阈值时不进入 decider/summarizer。
+  - LLM decider 不再把缺失 confidence 默认成 1.0；必须显式返回足够置信度。
+  - summarizer 返回 `is_related=false` 时记录 `summary_unrelated` 并跳过发送。
+- 更新测试：
+  - primary 有结果时不查 secondary。
+  - primary 无结果时才使用 secondary。
+  - 全局 rerank client 会改写最终顺序。
+  - team_retention 行政噪声拒绝。
+  - benchmark 统计 noise 入库数。
+  - proactive 相关性阈值、summarizer unrelated、decider confidence 契约。
+- 验证：`python -m pytest tests\unit\core\test_service.py tests\unit\app\test_dependencies.py tests\unit\domains\team_retention\test_handler_llm_embedding.py tests\unit\benchmark tests\unit\proactive -q -p no:cacheprovider`，94 passed。
+- 验证：`python -m pytest tests\unit\domains\project_decision tests\unit\domains\team_retention tests\unit\api\test_retrieve_api.py tests\unit\api\test_ingest_api.py tests\unit\api\test_proactive_api.py tests\unit\retrieval tests\unit\core\test_domain_classifier.py tests\unit\core\test_router.py -q -p no:cacheprovider`，154 passed。
+- 验证：`python -m compileall src benchmark tests\unit`，通过。
+
+## 2026-05-05 Rerank 观测与 ProjectDecision 分类优化
+
+- 增强全局 rerank 观测日志：
+  - 无全局 rerank client 或只有单候选时输出 `global_rerank_skipped`。
+  - 全局 rerank 成功时输出 `global_rerank_done`，包含 model、候选数、结果数、top ids、raw scores 和 normalized scores。
+- 优化 `DomainClassifier`：
+  - 保持核心优先级为 `event_type hard rule -> LLM -> keyword fallback`，不再用 project_decision 关键词硬规则抢占 LLM 分类。
+  - 强化 LLM prompt 的 domain 边界，明确上线、灰度、回滚、hotfix、预算、负责人分工、迁移、API 网关和限流阈值属于 project_decision。
+  - 明确“默认限流阈值/默认发布策略”等项目默认值不是 personal_preference。
+  - 明确包含脚本/命令但同时包含结论、上线、灰度、回滚、负责人分工等决策信号时，LLM 应优先判 project_decision 而不是 cli_workflow。
+  - 扩充 project_decision keyword fallback，避免 LLM 不可用时 benchmark 查询被零匹配 fallback 到 team_retention。
+  - 增加分类观测日志：`classify_llm_start`、`classify_llm_done`、`classify_*_llm_failed`、`classify_keyword_fallback_done`。
+- 更新测试：
+  - 覆盖 project_decision benchmark 查询的 primary domain 判断。
+  - 覆盖有 LLM 时“上线脚本 + 结论 + 灰度发布”仍先走 LLM，不被 keyword fallback 抢占。
+  - 覆盖 LLM 不可用时“上线脚本 + 结论 + 灰度发布”通过 keyword fallback 进入 project_decision。
+  - 覆盖 LLM prompt 中包含 project_decision 边界说明。
+  - 覆盖全局 rerank 成功日志中包含 raw scores 和 top ids。
+- 验证：`uv run pytest tests/unit/core/test_domain_classifier.py -q`，37 passed。
+- 验证：`uv run pytest tests/unit/core/test_service.py -q`，27 passed。
+
+## 2026-05-05 DomainClassifier LLM 分类契约修复
+
+- 修复 domain 分类 LLM 空输出导致总是 fallback 的问题：
+  - `DomainClassifier._llm_classify()` 优先调用 `ajson()`，要求返回 `primary/confidence/reason` 结构化结果。
+  - `ajson()` 不可用或真实调用失败时，兼容回退到旧的 `atext()` label 解析。
+  - `ajson()` 返回非法 domain、非对象 payload，或 `atext()` 返回空字符串/非法 label 时，不再打异常栈刷屏，而是记录清晰 fallback 日志并进入 keyword fallback。
+  - 新增日志：`classify_llm_invalid_json`、`classify_llm_invalid_output`、`classify_llm_empty_output`、`classify_*_llm_rejected`。
+- 更新 `tests/unit/core/test_domain_classifier.py`：
+  - 覆盖 `ajson()` 结构化分类优先于 `atext()`。
+  - 覆盖非法 JSON domain 进入 keyword fallback。
+  - 覆盖空文本输出进入 keyword fallback 且不输出 traceback。
+- 验证：`uv run pytest tests/unit/core/test_domain_classifier.py -q`，40 passed。
+- 验证：`uv run pytest tests/unit/core/test_service.py -q`，27 passed。
+- 后续修正：
+  - 将分类 JSON 的 `max_tokens` 从 96 提高到 192，避免 `reason` 字段被截断导致 `JSONDecodeError`。
+  - 向 `ajson()` 传入严格 schema，并限制 `reason` 长度，降低模型输出冗长 JSON 的概率。
+  - 单独捕获 `LLMJSONDecodeError`，记录 `classify_llm_json_decode_failed` 简洁日志后回退 `atext()`，不在 `domain_classifier` 再输出 traceback。
+- 验证：`uv run pytest tests/unit/core/test_domain_classifier.py -q`，41 passed。
+- 验证：`uv run pytest tests/unit/core/test_service.py -q`，28 passed。
+
+## 2026-05-05 Rerank Provider 解析与全零分数兜底
+
+- 增强 `HttpRerankProvider`：
+  - 支持更多 rerank 响应格式：顶层 list、`results`、`data`、`scores`。
+  - 支持 score 字段优先级：`score`、`relevance_score`、`similarity`、`logit`。
+  - 响应中包含 `error` 时抛出明确异常，避免 provider 错误被解析成空结果。
+  - 增加 `http_rerank_response_received` 观测日志，仅记录响应 keys、结果数量和前三条的 index/score 类字段，不打印 document 全文。
+- 增强 `MemoryService._rerank_candidates()`：
+  - 全局 rerank 返回结果但所有 raw score 都是 `0.0` 时，记录 `global_rerank_zero_scores`。
+  - 全零分数不再把最终 `final_score` 全部归零，改为回退本地多因子 reranker。
+- 更新测试：
+  - 覆盖 vLLM 常见 `relevance_score` 响应。
+  - 覆盖 `similarity` 和 `logit` 字段解析。
+  - 覆盖 provider error 响应抛异常。
+  - 覆盖全局 rerank 全 0 分数时回退本地 reranker。
+- 验证：`uv run pytest tests/unit/llm/test_http_rerank_provider.py tests/unit/llm/test_rerank_client.py tests/unit/core/test_service.py -q`，37 passed。
+- 验证：`uv run pytest tests/unit/app/test_dependencies.py -q`，22 passed。
