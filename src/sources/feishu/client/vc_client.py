@@ -1,114 +1,128 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any, Protocol
 
-from src.sources.feishu.events.meeting_models import MeetingChapter, MeetingNotesData, MeetingTodo
+from src.sources.feishu.events.meeting_models import MeetingNotesData
 
 logger = logging.getLogger(__name__)
+
+_MINUTE_TOKEN_RE = re.compile(r"/minutes/([a-zA-Z0-9]+)")
 
 
 class FeishuVcClientProtocol(Protocol):
     """VC API 调用协议，方便测试时 mock。"""
 
     def get_recording(self, meeting_id: str) -> str:
-        """获取会议录制中的 minute_token。"""
+        """获取会议录制中的 minute_token（从 recording.url 解析）。"""
         ...
 
-    def get_notes(self, minute_token: str) -> MeetingNotesData:
-        """获取妙记 AI 产物（总结/待办/章节/逐字稿）。"""
+    def get_meeting_notes(self, minute_token: str) -> MeetingNotesData:
+        """获取妙记产物：文字记录（逐字稿）。"""
         ...
 
 
 class FeishuVcClient:
-    """基于 lark-oapi SDK 的 VC API 客户端。"""
+    """基于 lark-oapi SDK 的 VC / 妙记 API 客户端。"""
 
     def __init__(self, api_client: Any) -> None:
         self._client = api_client
 
-    def get_recording(self, meeting_id: str) -> str:
-        """调用 vc/v1/meetings/{meeting_id}/recording，返回 minute_token。"""
-        from lark_oapi.api.vc.v1 import GetMeetingRecordingRequest  # type: ignore[import-not-found]
+    # ---- 录制 ----
 
-        request = GetMeetingRecordingRequest.builder().meeting_id(meeting_id).build()
-        response = self._client.vc.v1.meeting_recording.get(request)
+    def get_recording(self, meeting_id: str) -> str:
+        """GET /vc/v1/meetings/{meeting_id}/recording，从 recording.url 解析 minute_token。
+
+        lark-oapi 1.5.5 的 GetMeetingRecordingRequestBuilder 仅有 build()，
+        无法设置 meeting_id，使用底层 raw request 调用。
+        """
+        import lark_oapi as lark  # type: ignore[import-not-found]
+
+        req = (
+            lark.BaseRequest.builder()
+            .http_method(lark.HttpMethod.GET)
+            .uri(f"/open-apis/vc/v1/meetings/{meeting_id}/recording")
+            .token_types({lark.AccessTokenType.TENANT})
+            .build()
+        )
+        response = self._client.request(req)
         if not response.success():
             raise RuntimeError(
                 f"Failed to get recording for meeting {meeting_id}: "
                 f"code={response.code} msg={response.msg}"
             )
-        recording = getattr(response.data, "recording", None)
-        if recording is None:
+        body = _body_json(response)
+        recording = body.get("data", {}).get("recording", {})
+        if not recording:
             raise RuntimeError(f"No recording found for meeting {meeting_id}")
-        minute_token = getattr(recording, "minute_token", None)
-        if not minute_token:
-            raise RuntimeError(f"No minute_token in recording for meeting {meeting_id}")
-        return str(minute_token)
+        url = recording.get("url", "")
+        if not url:
+            raise RuntimeError(f"No recording.url for meeting {meeting_id}")
+        m = _MINUTE_TOKEN_RE.search(str(url))
+        if not m:
+            raise RuntimeError(
+                f"Cannot parse minute_token from recording.url: {url}"
+            )
+        minute_token = m.group(1)
+        logger.info("action=parsed_minute_token meeting_id=%s token=%s", meeting_id, minute_token)
+        return minute_token
 
-    def get_notes(self, minute_token: str) -> MeetingNotesData:
-        """调用 vc/v1/minutes/{minute_token}/notes，返回 AI 产物。"""
-        from lark_oapi.api.vc.v1 import GetMinuteNotesRequest  # type: ignore[import-not-found]
+    # ---- 逐字稿 ----
 
-        request = GetMinuteNotesRequest.builder().minute_token(minute_token).build()
-        response = self._client.vc.v1.minutes.notes.get(request)
+    def get_minute_transcript(self, minute_token: str) -> str:
+        """GET /minutes/v1/minutes/{minute_token}/transcript，返回逐字稿文本。
+
+        该接口返回导出文件内容（非 JSON），直接按 UTF-8 文本读取。
+        """
+        import lark_oapi as lark  # type: ignore[import-not-found]
+
+        req = (
+            lark.BaseRequest.builder()
+            .http_method(lark.HttpMethod.GET)
+            .uri(f"/open-apis/minutes/v1/minutes/{minute_token}/transcript")
+            .token_types({lark.AccessTokenType.TENANT})
+            .build()
+        )
+        response = self._client.request(req)
         if not response.success():
             raise RuntimeError(
-                f"Failed to get notes for minute {minute_token}: "
+                f"Failed to get transcript for minute {minute_token}: "
                 f"code={response.code} msg={response.msg}"
             )
+        if response.raw and hasattr(response.raw, "content"):
+            try:
+                return response.raw.content.decode("utf-8")
+            except UnicodeDecodeError:
+                return str(response.raw.content) if response.raw.content else ""
+        return ""
 
-        data = response.data
-        summary = getattr(data, "summary", "") or ""
+    # ---- 妙记产物 ----
 
-        todos: list[MeetingTodo] = []
-        raw_todos = getattr(data, "todo_list", None) or []
-        if isinstance(raw_todos, list):
-            for t in raw_todos:
-                assignee_ids: list[str] = []
-                raw_assignees = getattr(t, "assignees", None) or []
-                if isinstance(raw_assignees, list):
-                    for a in raw_assignees:
-                        a_id = getattr(a, "id", None) or getattr(a, "open_id", None)
-                        if a_id:
-                            assignee_ids.append(str(a_id))
-                todos.append(MeetingTodo(
-                    title=getattr(t, "title", "") or "",
-                    content=getattr(t, "content", "") or "",
-                    due_time=_ts_attr_str(t, "due_time"),
-                    assignee_ids=assignee_ids,
-                ))
+    def get_meeting_notes(self, minute_token: str) -> MeetingNotesData:
+        """获取妙记产物：逐字稿文本。
 
-        chapters: list[MeetingChapter] = []
-        raw_chapters = getattr(data, "chapter_list", None) or []
-        if isinstance(raw_chapters, list):
-            for c in raw_chapters:
-                chapters.append(MeetingChapter(
-                    title=getattr(c, "title", "") or "",
-                    start_time_ms=int(getattr(c, "start_time", 0) or 0),
-                ))
-
-        verbatim_text = getattr(data, "transcript", "") or ""
-
+        AI 总结/待办/章节以独立文档形式存储在妙记 artifacts 列表中
+        （每项包含 artifact_type + doc_token），需单独调用文档 API 读取内容。
+        当前只拉取逐字稿进入记忆引擎，AI 产物作为后续增强项。
+        """
+        verbatim_text = self.get_minute_transcript(minute_token)
         return MeetingNotesData(
-            summary=summary,
-            todos=todos,
-            chapters=chapters,
+            summary="",
+            todos=[],
+            chapters=[],
             verbatim_text=verbatim_text,
             minute_token=minute_token,
         )
 
 
-def _ts_attr_str(obj: Any, name: str) -> str | None:
-    value = getattr(obj, name, None)
-    if value is None:
-        return None
-    if hasattr(value, "timestamp"):
-        ts = getattr(value, "timestamp")
-        if ts:
-            from datetime import datetime, timezone
-            try:
-                return datetime.fromtimestamp(int(str(ts)), tz=timezone.utc).isoformat()
-            except (TypeError, ValueError, OSError):
-                pass
-    s = str(value)
-    return s or None
+def _body_json(response: Any) -> dict[str, Any]:
+    import json
+    if response.raw and hasattr(response.raw, "content") and response.raw.content:
+        try:
+            parsed = json.loads(response.raw.content)
+            if isinstance(parsed, dict):
+                return parsed
+        except (json.JSONDecodeError, TypeError):
+            pass
+    return {}

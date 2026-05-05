@@ -86,8 +86,16 @@ def build_event_handler(
         if doc is None:
             logger.info("function=src.sources.feishu.client.listener.on_doc_changed action=skip_empty")
             return
+        if doc.file_type != "docx":
+            logger.info(
+                "function=src.sources.feishu.client.listener.on_doc_changed action=skip_unsupported_type file_type=%s",
+                doc.file_type,
+            )
+            return
         if doc_processor is not None:
-            doc_processor.process_doc_changed_async(doc.doc_token, doc.title)
+            doc_processor.process_doc_changed_async(doc.file_token)
+        else:
+            dispatcher.dispatch_normalized_event(_doc_changed_fallback_event(doc))
 
     def on_card_action(data: Any) -> Any:
         raw_action = _card_action_from_lark(data)
@@ -105,13 +113,13 @@ def build_event_handler(
         )
         .register_p2_im_message_receive_v1(on_message)
         .register_p2_card_action_trigger(on_card_action)
-        .register_p2_calendar_event_changed_v4(on_calendar_event)
-        .register_p2_task_updated_v2(on_task_event)
+        .register_p2_calendar_calendar_event_changed_v4(on_calendar_event)
+        .register_p2_task_task_updated_v1(on_task_event)
     )
     if meeting_processor is not None:
-        handler_builder = handler_builder.register_p2_vc_meeting_ended_v1(on_meeting_ended)
+        handler_builder = handler_builder.register_p2_vc_meeting_meeting_ended_v1(on_meeting_ended)
     if doc_processor is not None:
-        handler_builder = handler_builder.register_p2_doc_updated_v1(on_doc_changed)
+        handler_builder = handler_builder.register_p2_drive_file_edit_v1(on_doc_changed)
     return handler_builder.build()
 
 
@@ -120,7 +128,25 @@ def main() -> None:
     settings = load_feishu_settings()
     if not settings.enable_ws:
         raise RuntimeError("Feishu WebSocket listener is disabled; set LARKMEMORY_FEISHU_ENABLE_WS=true")
-    client = build_ws_client(settings, build_event_handler(settings=settings))
+
+    from src.sources.feishu.client.vc_client import FeishuVcClient
+    from src.sources.feishu.client.doc_client import FeishuDocClient
+    from src.storage.source_state_store import SourceStateStore
+    from .sdk import build_api_client
+
+    api_client = build_api_client(settings)
+    source_state_store = SourceStateStore()
+    source_state_store.create_table()
+
+    client = build_ws_client(
+        settings,
+        build_event_handler(
+            settings=settings,
+            source_state_store=source_state_store,
+            vc_client=FeishuVcClient(api_client),
+            doc_client=FeishuDocClient(api_client),
+        ),
+    )
     client.start()
 
 
@@ -162,32 +188,29 @@ def _calendar_event_from_lark(data: Any) -> FeishuCalendarEvent | None:
     event = getattr(data, "event", None)
     if event is None:
         return None
-    calendar_event_id = getattr(event, "event_id", None)
-    summary = getattr(event, "summary", "") or ""
-    if not calendar_event_id or not summary:
+
+    # 官方事件仅保证 calendar_id / user_id_list；calendar_event_id / summary / 详情为灰度字段
+    calendar_id = getattr(event, "calendar_id", None)
+    if not calendar_id:
         return None
 
-    attendee_ids: list[str] = []
-    raw_attendees = getattr(event, "attendees", None)
-    if isinstance(raw_attendees, list):
-        for a in raw_attendees:
-            a_id = getattr(a, "id", None) if not isinstance(a, str) else a
-            if a_id:
-                attendee_ids.append(str(a_id))
+    user_id_list = getattr(event, "user_id_list", None)
+    user_id = None
+    if isinstance(user_id_list, list) and len(user_id_list) > 0:
+        uid = user_id_list[0]
+        user_id = str(getattr(uid, "open_id", uid) if isinstance(uid, object) and not isinstance(uid, str) else uid)
 
-    organizer_id = None
-    organizer = getattr(event, "organizer", None)
-    if organizer is not None:
-        organizer_id = getattr(organizer, "id", None)
+    calendar_event_id = _attr_str(event, "calendar_event_id") or f"cal:{calendar_id}"
+    summary = _attr_str(event, "summary") or str(calendar_event_id)
 
     return FeishuCalendarEvent(
         calendar_event_id=str(calendar_event_id),
-        summary=str(summary),
+        summary=summary,
         description=str(getattr(event, "description", "") or ""),
         start_time=_nested_attr_str(event, "start_time", "date_time"),
         end_time=_nested_attr_str(event, "end_time", "date_time"),
-        organizer_id=organizer_id,
-        attendee_ids=attendee_ids,
+        organizer_id=user_id,
+        attendee_ids=[user_id] if user_id else [],
         location=_nested_attr_str(event, "location", "name"),
         recurrence=_attr_str(event, "recurrence"),
         status=_attr_str(event, "status") or "confirmed",
@@ -199,18 +222,17 @@ def _doc_changed_from_lark(data: Any) -> FeishuDocChangedEvent | None:
     event = getattr(data, "event", None)
     if event is None:
         return None
-    doc_token = getattr(event, "doc_token", None)
-    if not doc_token:
+    file_token = getattr(event, "file_token", None)
+    if not file_token:
         return None
+    file_type = _attr_str(event, "file_type") or "docx"
     user_id = None
-    operator = getattr(event, "operator", None)
-    if operator is not None:
-        user_id = getattr(operator, "id", None)
+    operator_list = getattr(event, "operator_id_list", None)
+    if isinstance(operator_list, list) and len(operator_list) > 0:
+        user_id = getattr(operator_list[0], "open_id", None)
     return FeishuDocChangedEvent(
-        doc_token=str(doc_token),
-        doc_type=_attr_str(event, "doc_type") or "docx",
-        title=_attr_str(event, "title"),
-        change_type=_attr_str(event, "change_type") or "",
+        file_token=str(file_token),
+        file_type=file_type,
         user_id=user_id,
         raw_payload=_safe_payload(data),
     )
@@ -220,13 +242,16 @@ def _meeting_ended_from_lark(data: Any) -> FeishuMeetingEndedEvent | None:
     event = getattr(data, "event", None)
     if event is None:
         return None
-    meeting_id = getattr(event, "meeting_id", None)
+    meeting_obj = getattr(event, "meeting", None)
+    if meeting_obj is None:
+        return None
+    meeting_id = getattr(meeting_obj, "id", None)
     if not meeting_id:
         return None
-    topic = getattr(event, "topic", "") or getattr(event, "name", "") or "未命名会议"
+    topic = getattr(meeting_obj, "topic", "") or "未命名会议"
 
     participant_ids: list[str] = []
-    raw_participants = getattr(event, "participants", None)
+    raw_participants = getattr(meeting_obj, "participants", None)
     if isinstance(raw_participants, list):
         for p in raw_participants:
             p_id = getattr(p, "id", None) if not isinstance(p, str) else p
@@ -234,15 +259,17 @@ def _meeting_ended_from_lark(data: Any) -> FeishuMeetingEndedEvent | None:
                 participant_ids.append(str(p_id))
 
     organizer_id = None
-    organizer = getattr(event, "organizer", None)
-    if organizer is not None:
-        organizer_id = getattr(organizer, "id", None)
+    host_user = getattr(meeting_obj, "host_user", None)
+    if host_user is not None:
+        user_id_obj = getattr(host_user, "id", None)
+        if user_id_obj is not None:
+            organizer_id = getattr(user_id_obj, "open_id", None) or str(user_id_obj)
 
     return FeishuMeetingEndedEvent(
         meeting_id=str(meeting_id),
         topic=str(topic),
-        start_time=_attr_str(event, "start_time"),
-        end_time=_attr_str(event, "end_time"),
+        start_time=_attr_str(meeting_obj, "start_time"),
+        end_time=_attr_str(meeting_obj, "end_time"),
         organizer_id=organizer_id,
         participant_ids=participant_ids,
         raw_payload=_safe_payload(data),
@@ -254,9 +281,19 @@ def _task_event_from_lark(data: Any) -> FeishuTaskEvent | None:
     if event is None:
         return None
     task_id = getattr(event, "task_id", None)
-    task_name = getattr(event, "name", "") or getattr(event, "summary", "") or ""
-    if not task_id or not task_name:
+    if not task_id:
         return None
+    obj_type = _attr_str(event, "obj_type") or ""
+    task_name = getattr(event, "name", "") or getattr(event, "summary", "") or str(task_id)
+
+    # obj_type 映射 status：task_completed / task_updated 等
+    status = ""
+    if obj_type:
+        obj_lower = obj_type.lower()
+        if "complete" in obj_lower:
+            status = "completed"
+        elif "delete" in obj_lower or "remove" in obj_lower:
+            status = "deleted"
 
     assignee_ids: list[str] = []
     raw_assignees = getattr(event, "assignees", None)
@@ -288,7 +325,7 @@ def _task_event_from_lark(data: Any) -> FeishuTaskEvent | None:
         task_id=str(task_id),
         task_name=str(task_name),
         description=str(getattr(event, "description", "") or ""),
-        status=_attr_str(event, "status") or "",
+        status=status or _attr_str(event, "status") or "",
         start_time=_nested_attr_str(event, "start_time", "date_time"),
         due_time=_nested_attr_str(event, "due_time", "date_time"),
         creator_id=creator_id,
@@ -318,6 +355,28 @@ def _nested_attr_str(obj: Any, outer: str, inner: str) -> str | None:
         return None
     s = str(inner_val)
     return s or None
+
+
+def _doc_changed_fallback_event(doc: FeishuDocChangedEvent) -> Any:
+    """当 doc_processor 不可用时，生成一条最小的 doc_changed 事件作为最低限度记录。"""
+    from src.schemas import EventContext, NormalizedEvent
+    from src.utils.time import utc_now_iso
+
+    return NormalizedEvent(
+        event_id=f"feishu:doc:changed:{doc.file_token}",
+        event_type="doc_changed",  # type: ignore[arg-type]
+        source_type="feishu_doc",  # type: ignore[arg-type]
+        occurred_at=utc_now_iso(),
+        context=EventContext(user_id=doc.user_id, scope="project"),
+        title=f"文档编辑: {doc.file_type}",
+        content_text=f"文档 {doc.file_token} 发生了编辑",
+        payload={
+            "file_token": doc.file_token,
+            "file_type": doc.file_type,
+            "user_id": doc.user_id,
+        },
+        tags=["doc", "changed", "feishu", "fallback"],
+    )
 
 
 def _safe_payload(data: Any) -> dict[str, Any]:

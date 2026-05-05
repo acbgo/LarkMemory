@@ -785,6 +785,41 @@
 - 验证：`python -m compileall src tests`，通过。
 - 验证：`python -m pytest tests -q`，567 passed, 6 subtests passed。
 
+## 2026-05-05 多信息源审查修复（5 项问题）
+
+- 修复 event_id 使用位置索引而非内容哈希（严重缺陷）：
+  - `doc_section_to_event()` 新增 `chunk_id` 参数，event_id 改为 `feishu:doc:{doc_token}:{chunk_id}`，相同内容去重、不同内容更新。
+  - `meeting_chapter_to_event()` 新增 `chunk_id` 参数，event_id 改为 `feishu:meeting:chapter:{meeting_id}:{chunk_id}`。
+  - `doc_processor.py`、`meeting_processor.py`、`meeting_scanner.py` 传入 `chunk.chunk_id` 替代 `section.index`/`chunk.index`。
+- 修复 DocProcessor 空文档不记录状态：`fetch_doc_content` 返回空时，upsert SourceStateStore 记录空 hash 和 section_count=0，避免旧 hash 残留。
+- 提取 `_ingest_notes` 重复代码：新增 `meeting_normalizer.ingest_notes_to_events()` 公用函数，`MeetingProcessor` 和 `MeetingScanner` 的 35 行重复逻辑替换为调用该函数 + `_dispatch_events()` 分发。
+- MeetingScanner 增加重试机制：`_try_process` 对 `get_notes` 最多重试 3 次（间隔 2 min），避免 AI 产物未就绪时直接 mark_error。测试中 monkeypatch `RETRY_INTERVAL_SECONDS=0` 避免阻塞。
+- 修复 `main()` 未注入 processor 依赖 + on_doc_changed 无 fallback：
+  - `main()` 创建 `SourceStateStore`、`FeishuVcClient`、`FeishuDocClient` 并传入 `build_event_handler`，使生产入口可正确处理会议和文档事件。
+  - `on_doc_changed` 在 `doc_processor` 为 None 时调用 `_doc_changed_fallback_event()` 至少 dispatch 一条 `doc_changed` 类型事件。
+- 测试同步更新：
+  - `test_doc_events.py`：`doc_section_to_event` 增加 chunk_id 参数，event_id 断言改为哈希前缀匹配，空文档测试断言 SourceStateStore 状态。
+  - `test_meeting_events.py`：`meeting_chapter_to_event` 增加 chunk_id 参数及断言，chunker 集成测试断言 chunk_id 进入 event_id。
+  - `test_meeting_scanner.py`：setUp 补充 `self.dispatcher`，monkeypatch `RETRY_INTERVAL_SECONDS=0`。
+- 验证：`python -m pytest tests/unit/sources/feishu/test_*.py tests/unit/sources/feishu/test_listener.py -q`，35 passed。
+- 验证：`python -m pytest tests -q`，570 passed, 6 subtests passed，零回退。
+
+## 2026-05-05 接口返回结构与事件 payload 解析修复（6 项）
+
+- 修复 `get_recording` 读错字段：官方 `GET /vc/v1/meetings/{id}/recording` 返回 `recording.url` 和 `recording.duration`，不是 `recording.minute_token`。改为从 `recording.url` 中用正则 `/minutes/([a-zA-Z0-9]+)` 解析 minute_token。
+- 修复纪要 API 调用方式：
+  - 新增 `get_minute_transcript()` 调用 `GET /minutes/v1/minutes/{token}/transcript` 获取逐字稿。
+  - `get_meeting_notes()` 重构为三步：`GET /minutes/v1/minutes/{token}` 获取 `note_id` → `GET /vc/v1/notes/{note_id}`（user_access_token）获取 AI 产物 → `get_minute_transcript()` 获取逐字稿。
+  - 纪要 API 响应解析改为 `data.note.artifacts.{summary,todo_list,chapter_list}` 和 `data.note.references` 结构。
+  - 方法重命名 `get_notes` → `get_meeting_notes`（protocol、processor、scanner 全部同步）。
+- 修复会议结束事件解析层级：SDK 中 `vc.meeting.meeting_ended_v1` 结构为 `event.meeting.{id,topic,start_time,end_time,host_user}`，不是 `event.meeting_id`。`_meeting_ended_from_lark()` 改为从 `event.meeting.id` 取 meeting_id、从 `event.meeting.host_user.id` 取 organizer_id。
+- 修复日历事件按完整详情解析：官方 `calendar.calendar.event.changed_v4` 仅保证 `calendar_id`/`user_id_list`，`calendar_event_id`/`summary`/详情为灰度字段。`_calendar_event_from_lark()` 改为要求 `calendar_id` 存在即可，summary 缺失时用 `calendar_event_id` 或 `cal:{calendar_id}` fallback 生成标题。
+- 修复任务事件要求完整字段：官方 `task.task.updated_v1` 仅 `task_id`/`obj_type`。`_task_event_from_lark()` 改为仅要求 `task_id`，task_name 缺失时用 `obj_type` 或 `task_id` fallback。
+- 修复文档事件缺少 `file_type` 过滤：`drive.file.edit_v1` 覆盖 doc/docx/sheet/bitable，但 `raw_content` API 仅适用于 docx。`on_doc_changed` 增加 `doc.file_type != "docx"` 过滤，非 docx 类型跳过并记录日志。
+- 测试同步更新：calendar 提取测试增加 `calendar_id` 字段和轻量事件用例、task 提取测试增加无 name 用例、meeting 提取测试改为 `event.meeting.{id,...}` 层级、scanner/processor mock 改为 `get_meeting_notes`。
+- 验证：`python -m pytest tests/unit/sources/feishu/test_*.py tests/unit/sources/feishu/test_listener.py -q`，68 passed。
+- 验证：`python -m pytest tests -q`，571 passed, 6 subtests passed，零回退。
+
 ## 2026-05-04 阶段 18：Embedding HTTP 兼容与降级
 
 - 已定位 embedding 日志中的 502：普通 HTTP 请求 `POST /v1/embeddings` 可成功，但 OpenAI Python SDK 调同一服务返回 502，说明当前 embedding 服务与 SDK 请求细节不完全兼容。

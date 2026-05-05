@@ -181,20 +181,19 @@ class TestCalendarEventFromLark(unittest.TestCase):
     def test_extracts_basic_fields(self) -> None:
         data = SimpleNamespace(
             event=SimpleNamespace(
-                event_id="evt_lark_001",
+                calendar_id="cal_001",
+                calendar_event_id="evt_lark_001",
                 summary="项目同步会",
                 description="同步本周项目进展",
+                user_id_list=[
+                    SimpleNamespace(open_id="ou_org"),
+                ],
                 start_time=SimpleNamespace(
                     date_time="2026-05-05T10:00:00+08:00",
                 ),
                 end_time=SimpleNamespace(
                     date_time="2026-05-05T11:00:00+08:00",
                 ),
-                organizer=SimpleNamespace(id="ou_org"),
-                attendees=[
-                    SimpleNamespace(id="ou_a"),
-                    SimpleNamespace(id="ou_b"),
-                ],
                 location=SimpleNamespace(name="3F-会议室A"),
                 recurrence="FREQ=WEEKLY",
                 status="confirmed",
@@ -207,32 +206,41 @@ class TestCalendarEventFromLark(unittest.TestCase):
         self.assertEqual(event.calendar_event_id, "evt_lark_001")
         self.assertEqual(event.summary, "项目同步会")
         self.assertEqual(event.organizer_id, "ou_org")
-        self.assertEqual(event.attendee_ids, ["ou_a", "ou_b"])
         self.assertEqual(event.start_time, "2026-05-05T10:00:00+08:00")
         self.assertEqual(event.end_time, "2026-05-05T11:00:00+08:00")
         self.assertEqual(event.location, "3F-会议室A")
         self.assertEqual(event.recurrence, "FREQ=WEEKLY")
         self.assertEqual(event.status, "confirmed")
 
+    def test_extracts_minimal_event_without_summary(self) -> None:
+        data = SimpleNamespace(
+            event=SimpleNamespace(
+                calendar_id="cal_minimal",
+                calendar_event_id=None,
+                summary=None,
+                user_id_list=["ou_001"],
+            ),
+        )
+        event = _calendar_event_from_lark(data)
+        self.assertIsNotNone(event)
+        assert event is not None
+        self.assertEqual(event.calendar_event_id, "cal:cal_minimal")
+
     def test_returns_none_when_no_event(self) -> None:
         data = SimpleNamespace(event=None)
         self.assertIsNone(_calendar_event_from_lark(data))
 
-    def test_returns_none_when_missing_id_or_summary(self) -> None:
-        data_no_id = SimpleNamespace(
-            event=SimpleNamespace(event_id=None, summary="test")
+    def test_returns_none_when_no_calendar_id(self) -> None:
+        data = SimpleNamespace(
+            event=SimpleNamespace(calendar_id=None, summary="test")
         )
-        self.assertIsNone(_calendar_event_from_lark(data_no_id))
-
-        data_no_summary = SimpleNamespace(
-            event=SimpleNamespace(event_id="evt_1", summary=None)
-        )
-        self.assertIsNone(_calendar_event_from_lark(data_no_summary))
+        self.assertIsNone(_calendar_event_from_lark(data))
 
     def test_empty_attendees_list(self) -> None:
         data = SimpleNamespace(
             event=SimpleNamespace(
-                event_id="evt_no_attendees",
+                calendar_id="cal_empty_att",
+                calendar_event_id="evt_no_attendees",
                 summary="单人会议",
                 attendees=None,
             ),
@@ -245,9 +253,10 @@ class TestCalendarEventFromLark(unittest.TestCase):
     def test_extracts_organizer_without_id(self) -> None:
         data = SimpleNamespace(
             event=SimpleNamespace(
-                event_id="evt_no_org_id",
+                calendar_id="cal_no_org",
+                calendar_event_id="evt_no_org_id",
                 summary="无组织者会议",
-                organizer=SimpleNamespace(id=None),
+                user_id_list=None,
             ),
         )
         event = _calendar_event_from_lark(data)
@@ -258,7 +267,8 @@ class TestCalendarEventFromLark(unittest.TestCase):
     def test_nested_fields_none_when_outer_is_none(self) -> None:
         data = SimpleNamespace(
             event=SimpleNamespace(
-                event_id="evt_no_nested",
+                calendar_id="cal_nested",
+                calendar_event_id="evt_no_nested",
                 summary="无嵌套字段",
                 start_time=None,
                 end_time=None,
@@ -275,7 +285,8 @@ class TestCalendarEventFromLark(unittest.TestCase):
     def test_nested_fields_none_when_inner_is_none(self) -> None:
         data = SimpleNamespace(
             event=SimpleNamespace(
-                event_id="evt_nested_none_inner",
+                calendar_id="cal_nested_inner",
+                calendar_event_id="evt_nested_none_inner",
                 summary="嵌套内字段为空",
                 start_time=SimpleNamespace(date_time=None),
                 location=SimpleNamespace(name=None),

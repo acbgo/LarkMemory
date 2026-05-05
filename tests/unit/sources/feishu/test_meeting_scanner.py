@@ -41,6 +41,16 @@ class TestMeetingScanner(unittest.TestCase):
         self.state_store.create_table()
         self.dispatcher = FeishuEventDispatcher(self.service)
 
+        # 归零重试延迟以加速测试
+        import src.sources.feishu.scanner.meeting_scanner as ms_mod
+        self._orig_retry = ms_mod.RETRY_INTERVAL_SECONDS
+        ms_mod.RETRY_INTERVAL_SECONDS = 0
+
+    def tearDown(self) -> None:
+        import src.sources.feishu.scanner.meeting_scanner as ms_mod
+        ms_mod.RETRY_INTERVAL_SECONDS = self._orig_retry
+        self.dispatcher = FeishuEventDispatcher(self.service)
+
     def _make_notes(self) -> MeetingNotesData:
         return MeetingNotesData(
             summary="补处理的会议总结。",
@@ -58,7 +68,7 @@ class TestMeetingScanner(unittest.TestCase):
         def get_recording(self, meeting_id: str) -> str:
             return "min_scanner_001"
 
-        def get_notes(self, minute_token: str) -> MeetingNotesData:
+        def get_meeting_notes(self, minute_token: str) -> MeetingNotesData:
             self.notes_calls.append(minute_token)
             return self.notes
 
