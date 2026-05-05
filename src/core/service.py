@@ -146,12 +146,27 @@ class MemoryService:
         admission = self.admission.evaluate_memory(memory)
         if not admission.admitted:
             raise ValueError(f"memory rejected: {admission.reason}")
+        if memory.overwrite_of:
+            logger.info(
+                "action=dedup_skipped reason=overwrite_of memory_id=%s overwrite_of=%s",
+                memory.memory_id,
+                memory.overwrite_of,
+            )
+            return self.memory_store.insert_memory_core(memory)
         existing = [
             *self.memory_store.search_memory_candidates(domain=memory.domain, status="active"),
             *self.memory_store.search_memory_candidates(domain=memory.domain, status="candidate"),
         ]
-        duplicate = self.dedup.find_duplicate(memory, existing)
+        scoped_existing = self._filter_dedup_candidates_by_scope(memory, existing)
+        duplicate = self.dedup.find_duplicate(memory, scoped_existing)
         if duplicate.duplicate_found and duplicate.matched_memory_id:
+            logger.info(
+                "action=dedup_matched memory_id=%s matched_memory_id=%s score=%s reason=%s",
+                memory.memory_id,
+                duplicate.matched_memory_id,
+                duplicate.score,
+                duplicate.reason,
+            )
             return duplicate.matched_memory_id
         return self.memory_store.insert_memory_core(memory)
 
@@ -422,6 +437,42 @@ class MemoryService:
         context["rewritten_text"] = rewritten.rewritten_text
         context["query_variants"] = list(rewritten.query_variants or [query.query_text])
         return replace(query, session_context=context)
+
+    def _filter_dedup_candidates_by_scope(
+        self,
+        memory: MemoryCore,
+        rows: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """按 MemoryCore entities 中的 scope 标记过滤去重候选，避免跨项目/团队误去重。"""
+        scope = self._memory_scope_markers(memory)
+        if not scope:
+            return rows
+        result: list[dict[str, Any]] = []
+        for row in rows:
+            row_scope = self._row_scope_markers(row)
+            if all(row_scope.get(key) == value for key, value in scope.items()):
+                result.append(row)
+        return result
+
+    def _memory_scope_markers(self, memory: MemoryCore) -> dict[str, str]:
+        """从 MemoryCore entities 中提取 project/team/workspace/user 维度的去重 scope。"""
+        return self._scope_markers_from_entities(memory.entities)
+
+    def _row_scope_markers(self, row: dict[str, Any]) -> dict[str, str]:
+        """从 store 行的 entities 字段中提取去重 scope。"""
+        return self._scope_markers_from_entities(list(row.get("entities") or row.get("entities_json") or []))
+
+    def _scope_markers_from_entities(self, entities: list[str]) -> dict[str, str]:
+        """解析 `key:value` 形式的 scope 标记，只保留去重相关维度。"""
+        allowed = {"project_id", "team_id", "workspace_id", "user_id"}
+        result: dict[str, str] = {}
+        for entity in entities:
+            if not isinstance(entity, str) or ":" not in entity:
+                continue
+            key, value = entity.split(":", 1)
+            if key in allowed and value:
+                result[key] = value
+        return result
 
     def _row_has_scope(self, terms: list[str], key: str, value: str) -> bool:
         return value in terms or f"{key}:{value}" in terms

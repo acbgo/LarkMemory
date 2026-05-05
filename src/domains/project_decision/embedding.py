@@ -78,6 +78,39 @@ class ProjectDecisionEmbeddingIndexer:
                 exc_info=True,
             )
 
+    def query_similar(
+        self,
+        decision: ProjectDecision,
+        *,
+        top_k: int = 10,
+    ) -> list[dict[str, Any]]:
+        """按 project_decision 索引文本查询语义近邻，用于 duplicate/supersede 候选补充。"""
+        if self.embedding_store is None:
+            return []
+        filters: dict[str, Any] = {}
+        if decision.project_id:
+            filters["project_id"] = decision.project_id
+        if decision.team_id:
+            filters["team_id"] = decision.team_id
+        if decision.workspace_id:
+            filters["workspace_id"] = decision.workspace_id
+        if decision.stage:
+            filters["stage"] = decision.stage
+        text = self.build_text(decision)
+        if self.embedding_client is not None:
+            return self.embedding_store.query_by_embedding(
+                self.embedding_client.embed_text(text),
+                domain="project_decision",
+                top_k=top_k,
+                filters=filters or None,
+            )
+        return self.embedding_store.query_similar(
+            text,
+            domain="project_decision",
+            top_k=top_k,
+            filters=filters or None,
+        )
+
     def build_text(self, decision: ProjectDecision) -> str:
         """构造稳定的语义索引文本，覆盖决策主题、结论、依据和范围。"""
         return "\n".join(

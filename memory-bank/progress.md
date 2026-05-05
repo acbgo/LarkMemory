@@ -816,3 +816,69 @@
 - 验证：`python -m pytest tests\unit\api\test_ingest_api.py tests\unit\api\test_retrieve_api.py tests\unit\core\test_service.py -q -p no:cacheprovider`，27 passed。
 - 验证：`python -m pytest tests\unit\domains\project_decision tests\unit\retrieval tests\unit\storage\test_embedding_store.py -q -p no:cacheprovider`，54 passed, 1 skipped。
 - 验证：`python -m compileall src tests`，通过。
+
+## 2026-05-04 去重阶段一：Core Scope 边界修正
+
+- `MemoryService.add_memory()` 的通用去重增加 scope 过滤：从 `MemoryCore.entities` 中解析 `project_id`、`team_id`、`workspace_id`、`user_id` 标记，只在同 domain、同 MemoryCore scope 且同业务 scope 下比较重复。
+- 当候选 memory 已带 `overwrite_of` 时跳过 core duplicate check，直接插入新版本，避免领域 version manager 判定的 supersede 被通用去重吞掉。
+- 新增去重日志：`dedup_skipped` 和 `dedup_matched`，便于观察 duplicate/supersede 分支。
+- 补充 `MemoryService.add_memory()` 单测，覆盖同 project 去重、跨 project 不去重、`overwrite_of` 跳过去重、candidate 参与同 scope 去重。
+- 验证：`python -m pytest tests\unit\core\test_service.py -q -p no:cacheprovider -k "add_memory"`，4 passed。
+- 验证：`python -m pytest tests\unit\core\test_service.py tests\unit\core\test_dedup_merge.py tests\unit\domains\project_decision tests\unit\api\test_ingest_api.py tests\unit\api\test_retrieve_api.py -q -p no:cacheprovider`，71 passed。
+- 验证：`python -m compileall src tests`，通过。
+
+## 2026-05-05 去重阶段二三四：ProjectDecision 语义候选与可观测性
+
+- 只在 `project_decision` 内继续推进去重链路；`team_retention` 和 `cli_workflow` 本轮未改实现。
+- `ProjectDecisionEmbeddingIndexer` 新增 `query_similar()`，按决策索引文本和 project/team/workspace/stage filters 查询语义近邻，用于 duplicate/supersede 候选补充。
+- `ProjectDecisionDomainHandler` 新增 semantic candidate 预检查：
+  - 先尝试从 embedding 索引加载同 scope 的语义候选；
+  - 若 semantic 候选已足够判定 duplicate 或 supersede，则直接采用；
+  - 若 semantic 为空或不足以判定，则回退到原有规则扫描，不改变原 correctness。
+- `ProjectDecisionVersionManager.detect_update()` 新增 `detection_source`，明确一次 duplicate/supersede 判定来自 `semantic` 还是 `rule`。
+- `ProjectDecisionDomainHandler.ingest_event()` 新增结构化去重日志：
+  - `action=semantic_candidates_loaded`
+  - `action=semantic_candidates_failed`
+  - `action=duplicate_detected`
+  - `action=supersede_detected`
+  - `action=stored ... dedup_action=inserted|supersede_inserted`
+- duplicate 现在会显式记录 `matched_memory_id`、`reason`、`confidence`、`source`；这样即使复用旧 memory_id，也能直接从日志观测到判重原因。
+- 补充 `project_decision` 单测，覆盖 duplicate 观测日志、semantic candidate 命中日志、semantic 失败回退到规则扫描。
+- 验证：`python -m pytest tests\unit\domains\project_decision\test_handler.py tests\unit\domains\project_decision\test_versioning.py -q -p no:cacheprovider`，14 passed。
+- 验证：`python -m pytest tests\unit\domains\project_decision tests\unit\core\test_service.py tests\unit\api\test_ingest_api.py tests\unit\api\test_retrieve_api.py -q -p no:cacheprovider`，73 passed。
+- 验证：`python -m compileall src tests`，通过。
+
+## 2026-05-05 ProjectDecision LLM 三分类版本判定
+
+- 只在 `project_decision` 内新增 LLM 版本判定，不修改其他 domain 的 ingest/retrieve 逻辑。
+- `ProjectDecisionVersionManager` 现在支持注入 `llm_client`，在规则先完成 scope 与 topic 过滤后，对同 scope 且同 topic 的旧/新结论做三分类判断：
+  - `duplicate`
+  - `supersede`
+  - `new`
+- LLM 高置信度返回 `duplicate` 时，直接复用旧 memory；高置信度返回 `supersede` 时，继续走覆盖链路；高置信度返回 `new` 时，不再被旧规则错误改判成 supersede。
+- 当 LLM 不可用、调用失败或置信度不足时，自动回退到既有规则判定，保持原有可用性。
+- `ProjectDecisionDomainHandler` 默认把同一个 `llm_client` 注入 `ProjectDecisionVersionManager`，不新增额外 provider 依赖。
+- 补充单测，覆盖：
+  - LLM 判定语义重复但字符串不同的 duplicate
+  - LLM 判定 supersede
+  - LLM 判定 new
+  - LLM 失败时回退规则
+  - handler 端到端复用旧 memory
+- 验证：`python -m pytest tests\unit\domains\project_decision\test_versioning.py tests\unit\domains\project_decision\test_handler.py -q -p no:cacheprovider`，19 passed。
+- 验证：`python -m pytest tests\unit\domains\project_decision tests\unit\core\test_service.py tests\unit\api\test_ingest_api.py tests\unit\api\test_retrieve_api.py -q -p no:cacheprovider`，78 passed。
+- 验证：`python -m compileall src tests`，通过。
+
+## 2026-05-05 ProjectDecision 去掉 LLM 前的 topic 硬门槛
+
+- 调整 `ProjectDecisionVersionManager.detect_update()` 的候选流程：
+  - 对显式传入的 semantic candidates，不再先用 `topic_similarity >= 0.55` 过滤后才进入 LLM。
+  - 只要 `scope` 一致且 `stage` 不冲突，semantic candidate 就可以进入 LLM 做 `duplicate/supersede/new` 三分类。
+- 旧的 topic 阈值保留在规则 supersede fallback 上，避免 topic 漂移时扩大规则误判面。
+- 新增 exact duplicate fallback：即使 topic 不同，只要结论规范化后完全相同，LLM 失败时仍可按 `same_scope_decision_and_same_decision` 复用旧 memory。
+- 补充单测，覆盖：
+  - semantic candidate topic 不同但 LLM 判 duplicate
+  - topic 不同且 LLM 失败时，完全相同结论仍能 fallback duplicate
+  - handler 端到端在 topic 漂移下仍复用旧 memory
+- 验证：`python -m pytest tests\unit\domains\project_decision\test_versioning.py tests\unit\domains\project_decision\test_handler.py -q -p no:cacheprovider`，22 passed。
+- 验证：`python -m pytest tests\unit\domains\project_decision tests\unit\core\test_service.py tests\unit\api\test_ingest_api.py tests\unit\api\test_retrieve_api.py -q -p no:cacheprovider`，81 passed。
+- 验证：`python -m compileall src tests`，通过。

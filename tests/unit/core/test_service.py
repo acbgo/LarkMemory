@@ -268,6 +268,7 @@ class TestService(unittest.TestCase):
             source_type="feishu_chat",
             source_ref="event-1",
             content_text="Use SQLite",
+            entities=["project_id:project-1"],
             importance=0.9,
             confidence=0.9,
             status="active",
@@ -280,6 +281,7 @@ class TestService(unittest.TestCase):
             source_type="feishu_chat",
             source_ref="event-2",
             content_text="Use SQLite",
+            entities=["project_id:project-1"],
             importance=0.9,
             confidence=0.9,
             status="active",
@@ -287,6 +289,90 @@ class TestService(unittest.TestCase):
 
         self.assertEqual(self.service.add_memory(memory), "mem-1")
         self.assertEqual(self.service.add_memory(duplicate), "mem-1")
+
+    def test_add_memory_does_not_deduplicate_across_project_scope(self) -> None:
+        first = create_memory_core(
+            memory_id="mem-project-1",
+            domain="project_decision",
+            memory_type="decision",
+            scope="project",
+            source_type="feishu_chat",
+            source_ref="event-project-1",
+            content_text="Use SQLite",
+            entities=["project_id:project-1"],
+            status="active",
+        )
+        second = create_memory_core(
+            memory_id="mem-project-2",
+            domain="project_decision",
+            memory_type="decision",
+            scope="project",
+            source_type="feishu_chat",
+            source_ref="event-project-2",
+            content_text="Use SQLite",
+            entities=["project_id:project-2"],
+            status="active",
+        )
+
+        self.assertEqual(self.service.add_memory(first), "mem-project-1")
+        self.assertEqual(self.service.add_memory(second), "mem-project-2")
+        self.assertIsNotNone(self.memory_store.get_memory("mem-project-2"))
+
+    def test_add_memory_overwrite_of_skips_duplicate_check(self) -> None:
+        old = create_memory_core(
+            memory_id="mem-old-version",
+            domain="project_decision",
+            memory_type="decision",
+            scope="project",
+            source_type="feishu_chat",
+            source_ref="event-old-version",
+            content_text="Use SQLite",
+            entities=["project_id:project-1"],
+            status="active",
+        )
+        new = create_memory_core(
+            memory_id="mem-new-version",
+            domain="project_decision",
+            memory_type="decision",
+            scope="project",
+            source_type="feishu_chat",
+            source_ref="event-new-version",
+            content_text="Use SQLite",
+            entities=["project_id:project-1"],
+            status="active",
+        )
+        new.overwrite_of = "mem-old-version"
+
+        self.assertEqual(self.service.add_memory(old), "mem-old-version")
+        self.assertEqual(self.service.add_memory(new), "mem-new-version")
+        self.assertEqual(self.memory_store.get_memory("mem-new-version")["overwrite_of"], "mem-old-version")
+
+    def test_add_memory_candidate_participates_in_scoped_duplicate_check(self) -> None:
+        candidate = create_memory_core(
+            memory_id="mem-candidate",
+            domain="project_decision",
+            memory_type="decision",
+            scope="project",
+            source_type="feishu_chat",
+            source_ref="event-candidate",
+            content_text="Use SQLite",
+            entities=["workspace_id:workspace-1"],
+            status="candidate",
+        )
+        duplicate = create_memory_core(
+            memory_id="mem-candidate-duplicate",
+            domain="project_decision",
+            memory_type="decision",
+            scope="project",
+            source_type="feishu_chat",
+            source_ref="event-candidate-duplicate",
+            content_text="Use SQLite",
+            entities=["workspace_id:workspace-1"],
+            status="active",
+        )
+
+        self.assertEqual(self.service.add_memory(candidate), "mem-candidate")
+        self.assertEqual(self.service.add_memory(duplicate), "mem-candidate")
 
     def test_retrieve_empty_and_with_memory(self) -> None:
         empty = self.service.retrieve(RetrievalQuery("sqlite"), include_trace=True)
