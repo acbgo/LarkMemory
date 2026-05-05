@@ -7,7 +7,7 @@ import uuid
 from pathlib import Path
 from unittest.mock import patch
 
-from src.app.config import _env_bool, _env_float, _env_int, load_settings
+from src.app.config import _env_bool, _env_float, _env_int, build_llm_extra_body, load_settings
 
 
 class TestConfig(unittest.TestCase):
@@ -34,6 +34,8 @@ class TestConfig(unittest.TestCase):
         self.assertFalse(settings.debug)
         self.assertEqual(settings.sqlite_path, ".larkmemory/larkmemory.db")
         self.assertFalse(settings.enable_llm)
+        self.assertEqual(settings.llm_thinking_type, "disabled")
+        self.assertEqual(build_llm_extra_body(settings), {"thinking": {"type": "disabled"}})
         self.assertFalse(settings.enable_embedding)
         self.assertFalse(settings.enable_vector_store)
         self.assertEqual(settings.log_dir, "logs")
@@ -58,6 +60,20 @@ class TestConfig(unittest.TestCase):
         self.assertEqual(settings.sqlite_path, ".tmp-tests/app.db")
         self.assertEqual(settings.log_dir, ".tmp-tests/logs")
         self.assertEqual(settings.log_file, "service.log")
+
+    def test_llm_thinking_type_can_be_disabled_or_omitted(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "LARKMEMORY_CONFIG_FILE": str(self._temp_dir() / "missing.env"),
+                "LARKMEMORY_LLM_THINKING_TYPE": "",
+            },
+            clear=True,
+        ):
+            settings = load_settings()
+
+        self.assertIsNone(settings.llm_thinking_type)
+        self.assertEqual(build_llm_extra_body(settings), {})
 
     def test_load_settings_reads_env_file_from_config_path(self) -> None:
         config_path = self._temp_dir() / "larkmemory.env"

@@ -1,0 +1,1268 @@
+{
+  "run_id": "larkmemory-v0",
+  "suite_name": "all",
+  "overall_score": 37.5,
+  "rating": "待改进",
+  "summary": {
+    "total_cases": 49,
+    "passed_cases": 8,
+    "failed_cases": 41,
+    "error_cases": 0,
+    "pass_rate": 16.3,
+    "run_duration_seconds": 4.31
+  },
+  "by_test_type": [
+    {
+      "test_type": "retrieval_recall",
+      "label": "基础召回",
+      "case_count": 15,
+      "passed_count": 3,
+      "pass_rate": 20.0,
+      "score": 33.3,
+      "metric_averages": {
+        "top1_hit": 0.0,
+        "command_exact_match": 0.0,
+        "recall_at_3": 0.2727,
+        "keyword_match": 0.4,
+        "decision_match": 0.6667,
+        "reason_match": 0.6667,
+        "rejected_option_match": 1.0,
+        "evidence_match": 0.5,
+        "latest_value_accuracy": 0.0,
+        "expired_memory_suppression": 1.0,
+        "preference_match": 0.0,
+        "condition_match": 0.0
+      }
+    },
+    {
+      "test_type": "anti_interference",
+      "label": "抗干扰",
+      "case_count": 8,
+      "passed_count": 0,
+      "pass_rate": 0.0,
+      "score": 23.1,
+      "metric_averages": {
+        "top1_hit": 0.0,
+        "noise_robustness": 0.375,
+        "recall_at_3": 0.2857,
+        "keyword_match": 0.25,
+        "evidence_match": 0.0,
+        "old_value_suppression": 0.0,
+        "preference_match": 0.0
+      }
+    },
+    {
+      "test_type": "contradiction_update",
+      "label": "矛盾更新",
+      "case_count": 7,
+      "passed_count": 1,
+      "pass_rate": 14.3,
+      "score": 50.0,
+      "metric_averages": {
+        "latest_value_accuracy": 0.4286,
+        "old_value_suppression": 0.8571,
+        "evidence_match": 0.1667,
+        "expired_memory_suppression": 1.0,
+        "preference_match": 0.0
+      }
+    },
+    {
+      "test_type": "efficiency",
+      "label": "效能验证",
+      "case_count": 7,
+      "passed_count": 0,
+      "pass_rate": 0.0,
+      "score": 35.7,
+      "metric_averages": {
+        "top1_hit": 0.0,
+        "char_saving_rate": 0.6,
+        "recall_at_3": 0.5,
+        "keyword_match": 0.0,
+        "preference_match": 0.0,
+        "step_saving_rate": 1.0
+      }
+    },
+    {
+      "test_type": "long_term_retention",
+      "label": "长时序记忆",
+      "case_count": 3,
+      "passed_count": 1,
+      "pass_rate": 33.3,
+      "score": 33.3,
+      "metric_averages": {
+        "recall_at_3": 0.3333,
+        "long_term_recall": 0.3333,
+        "keyword_match": 0.3333,
+        "evidence_match": 0.3333
+      }
+    },
+    {
+      "test_type": "abstention",
+      "label": "拒答/防幻觉",
+      "case_count": 5,
+      "passed_count": 3,
+      "pass_rate": 60.0,
+      "score": 75.0,
+      "metric_averages": {
+        "abstention_accuracy": 0.8,
+        "hallucination_rate": 1.0,
+        "noise_robustness": 0.0
+      }
+    },
+    {
+      "test_type": "cross_project",
+      "label": "跨项目隔离",
+      "case_count": 4,
+      "passed_count": 0,
+      "pass_rate": 0.0,
+      "score": 50.0,
+      "metric_averages": {
+        "scope_accuracy": 0.75,
+        "cross_project_leakage_rate": 0.75,
+        "evidence_match": 0.0
+      }
+    }
+  ],
+  "by_direction": [
+    {
+      "direction": "command_memory",
+      "label": "A: CLI命令记忆",
+      "weight": 0.15,
+      "case_count": 11,
+      "passed_count": 1,
+      "score": 38.5,
+      "metric_averages": {
+        "top1_hit": 0.0,
+        "noise_robustness": 1.0,
+        "recall_at_3": 0.6,
+        "scope_accuracy": 0.0,
+        "cross_project_leakage_rate": 0.0,
+        "evidence_match": 0.0,
+        "char_saving_rate": 1.0,
+        "command_exact_match": 0.0,
+        "keyword_match": 1.0
+      }
+    },
+    {
+      "direction": "decision_memory",
+      "label": "B: 飞书决策记忆",
+      "weight": 0.3,
+      "case_count": 16,
+      "passed_count": 4,
+      "score": 52.9,
+      "metric_averages": {
+        "abstention_accuracy": 0.5,
+        "hallucination_rate": 1.0,
+        "noise_robustness": 0.3333,
+        "recall_at_3": 0.5,
+        "keyword_match": 0.3333,
+        "evidence_match": 0.3,
+        "old_value_suppression": 0.5,
+        "latest_value_accuracy": 0.6667,
+        "scope_accuracy": 1.0,
+        "cross_project_leakage_rate": 1.0,
+        "char_saving_rate": 0.0,
+        "long_term_recall": 1.0,
+        "decision_match": 0.6667,
+        "reason_match": 0.6667,
+        "rejected_option_match": 1.0
+      }
+    },
+    {
+      "direction": "preference_memory",
+      "label": "C: 个人偏好记忆",
+      "weight": 0.25,
+      "case_count": 13,
+      "passed_count": 1,
+      "score": 27.3,
+      "metric_averages": {
+        "abstention_accuracy": 1.0,
+        "hallucination_rate": 1.0,
+        "noise_robustness": 0.0,
+        "recall_at_3": 0.0,
+        "preference_match": 0.0,
+        "latest_value_accuracy": 0.0,
+        "old_value_suppression": 1.0,
+        "evidence_match": 0.0,
+        "scope_accuracy": 1.0,
+        "cross_project_leakage_rate": 1.0,
+        "char_saving_rate": 0.0,
+        "step_saving_rate": 1.0,
+        "condition_match": 0.0,
+        "keyword_match": 0.0
+      }
+    },
+    {
+      "direction": "knowledge_health",
+      "label": "D: 团队知识健康",
+      "weight": 0.3,
+      "case_count": 9,
+      "passed_count": 2,
+      "score": 30.0,
+      "metric_averages": {
+        "abstention_accuracy": 1.0,
+        "hallucination_rate": 1.0,
+        "recall_at_3": 0.0,
+        "keyword_match": 0.0,
+        "noise_robustness": 0.0,
+        "evidence_match": 0.1667,
+        "latest_value_accuracy": 0.25,
+        "old_value_suppression": 1.0,
+        "expired_memory_suppression": 1.0,
+        "long_term_recall": 0.0
+      }
+    }
+  ],
+  "cases": [
+    {
+      "case_id": "cmd_ret_001",
+      "category": "command_memory",
+      "test_type": "retrieval_recall",
+      "difficulty": "easy",
+      "passed": false,
+      "error": null,
+      "metrics": {
+        "top1_hit": {
+          "value": 0.0,
+          "passed": false
+        },
+        "command_exact_match": {
+          "value": 0.0,
+          "passed": false
+        },
+        "recall_at_3": {
+          "value": 0.0,
+          "passed": false
+        }
+      }
+    },
+    {
+      "case_id": "cmd_ret_002",
+      "category": "command_memory",
+      "test_type": "retrieval_recall",
+      "difficulty": "easy",
+      "passed": false,
+      "error": null,
+      "metrics": {
+        "top1_hit": {
+          "value": 0.0,
+          "passed": false
+        },
+        "command_exact_match": {
+          "value": 0.0,
+          "passed": false
+        }
+      }
+    },
+    {
+      "case_id": "cmd_ret_003",
+      "category": "command_memory",
+      "test_type": "retrieval_recall",
+      "difficulty": "medium",
+      "passed": false,
+      "error": null,
+      "metrics": {
+        "top1_hit": {
+          "value": 0.0,
+          "passed": false
+        },
+        "recall_at_3": {
+          "value": 1.0,
+          "passed": true
+        }
+      }
+    },
+    {
+      "case_id": "cmd_ret_004",
+      "category": "command_memory",
+      "test_type": "retrieval_recall",
+      "difficulty": "medium",
+      "passed": true,
+      "error": null,
+      "metrics": {
+        "recall_at_3": {
+          "value": 1.0,
+          "passed": true
+        },
+        "keyword_match": {
+          "value": 1.0,
+          "passed": true
+        }
+      }
+    },
+    {
+      "case_id": "cmd_ret_005",
+      "category": "command_memory",
+      "test_type": "retrieval_recall",
+      "difficulty": "hard",
+      "passed": false,
+      "error": null,
+      "metrics": {
+        "top1_hit": {
+          "value": 0.0,
+          "passed": false
+        },
+        "recall_at_3": {
+          "value": 0.0,
+          "passed": false
+        },
+        "keyword_match": {
+          "value": 1.0,
+          "passed": true
+        }
+      }
+    },
+    {
+      "case_id": "dec_ret_001",
+      "category": "decision_memory",
+      "test_type": "retrieval_recall",
+      "difficulty": "easy",
+      "passed": true,
+      "error": null,
+      "metrics": {
+        "decision_match": {
+          "value": 1.0,
+          "passed": true
+        },
+        "reason_match": {
+          "value": 1.0,
+          "passed": true
+        },
+        "rejected_option_match": {
+          "value": 1.0,
+          "passed": true
+        },
+        "evidence_match": {
+          "value": 1.0,
+          "passed": true
+        }
+      }
+    },
+    {
+      "case_id": "dec_ret_002",
+      "category": "decision_memory",
+      "test_type": "retrieval_recall",
+      "difficulty": "easy",
+      "passed": false,
+      "error": null,
+      "metrics": {
+        "recall_at_3": {
+          "value": 0.0,
+          "passed": false
+        },
+        "keyword_match": {
+          "value": 0.0,
+          "passed": false
+        },
+        "evidence_match": {
+          "value": 0.0,
+          "passed": false
+        }
+      }
+    },
+    {
+      "case_id": "dec_ret_003",
+      "category": "decision_memory",
+      "test_type": "retrieval_recall",
+      "difficulty": "medium",
+      "passed": false,
+      "error": null,
+      "metrics": {
+        "recall_at_3": {
+          "value": 0.0,
+          "passed": false
+        },
+        "keyword_match": {
+          "value": 0.0,
+          "passed": false
+        },
+        "decision_match": {
+          "value": 0.0,
+          "passed": false
+        },
+        "reason_match": {
+          "value": 0.0,
+          "passed": false
+        }
+      }
+    },
+    {
+      "case_id": "dec_ret_004",
+      "category": "decision_memory",
+      "test_type": "retrieval_recall",
+      "difficulty": "medium",
+      "passed": true,
+      "error": null,
+      "metrics": {
+        "decision_match": {
+          "value": 1.0,
+          "passed": true
+        },
+        "reason_match": {
+          "value": 1.0,
+          "passed": true
+        },
+        "recall_at_3": {
+          "value": 1.0,
+          "passed": true
+        },
+        "evidence_match": {
+          "value": 1.0,
+          "passed": true
+        }
+      }
+    },
+    {
+      "case_id": "kh_ret_001",
+      "category": "knowledge_health",
+      "test_type": "retrieval_recall",
+      "difficulty": "medium",
+      "passed": false,
+      "error": null,
+      "metrics": {
+        "latest_value_accuracy": {
+          "value": 0.0,
+          "passed": false
+        },
+        "expired_memory_suppression": {
+          "value": 1.0,
+          "passed": true
+        },
+        "evidence_match": {
+          "value": 0.0,
+          "passed": false
+        }
+      }
+    },
+    {
+      "case_id": "kh_ret_002",
+      "category": "knowledge_health",
+      "test_type": "retrieval_recall",
+      "difficulty": "medium",
+      "passed": false,
+      "error": null,
+      "metrics": {
+        "latest_value_accuracy": {
+          "value": 0.0,
+          "passed": false
+        },
+        "recall_at_3": {
+          "value": 0.0,
+          "passed": false
+        },
+        "expired_memory_suppression": {
+          "value": 1.0,
+          "passed": true
+        }
+      }
+    },
+    {
+      "case_id": "pref_ret_001",
+      "category": "preference_memory",
+      "test_type": "retrieval_recall",
+      "difficulty": "easy",
+      "passed": false,
+      "error": null,
+      "metrics": {
+        "preference_match": {
+          "value": 0.0,
+          "passed": false
+        },
+        "condition_match": {
+          "value": 0.0,
+          "passed": false
+        }
+      }
+    },
+    {
+      "case_id": "pref_ret_002",
+      "category": "preference_memory",
+      "test_type": "retrieval_recall",
+      "difficulty": "medium",
+      "passed": false,
+      "error": null,
+      "metrics": {
+        "preference_match": {
+          "value": 0.0,
+          "passed": false
+        },
+        "recall_at_3": {
+          "value": 0.0,
+          "passed": false
+        }
+      }
+    },
+    {
+      "case_id": "pref_ret_003",
+      "category": "preference_memory",
+      "test_type": "retrieval_recall",
+      "difficulty": "medium",
+      "passed": false,
+      "error": null,
+      "metrics": {
+        "preference_match": {
+          "value": 0.0,
+          "passed": false
+        },
+        "recall_at_3": {
+          "value": 0.0,
+          "passed": false
+        }
+      }
+    },
+    {
+      "case_id": "pref_ret_004",
+      "category": "preference_memory",
+      "test_type": "retrieval_recall",
+      "difficulty": "hard",
+      "passed": false,
+      "error": null,
+      "metrics": {
+        "preference_match": {
+          "value": 0.0,
+          "passed": false
+        },
+        "keyword_match": {
+          "value": 0.0,
+          "passed": false
+        },
+        "recall_at_3": {
+          "value": 0.0,
+          "passed": false
+        }
+      }
+    },
+    {
+      "case_id": "cmd_anti_001",
+      "category": "command_memory",
+      "test_type": "anti_interference",
+      "difficulty": "medium",
+      "passed": false,
+      "error": null,
+      "metrics": {
+        "top1_hit": {
+          "value": 0.0,
+          "passed": false
+        },
+        "noise_robustness": {
+          "value": 1.0,
+          "passed": true
+        },
+        "recall_at_3": {
+          "value": 1.0,
+          "passed": true
+        }
+      }
+    },
+    {
+      "case_id": "cmd_anti_002",
+      "category": "command_memory",
+      "test_type": "anti_interference",
+      "difficulty": "hard",
+      "passed": false,
+      "error": null,
+      "metrics": {
+        "top1_hit": {
+          "value": 0.0,
+          "passed": false
+        },
+        "noise_robustness": {
+          "value": 1.0,
+          "passed": true
+        }
+      }
+    },
+    {
+      "case_id": "dec_anti_001",
+      "category": "decision_memory",
+      "test_type": "anti_interference",
+      "difficulty": "medium",
+      "passed": false,
+      "error": null,
+      "metrics": {
+        "recall_at_3": {
+          "value": 0.0,
+          "passed": false
+        },
+        "keyword_match": {
+          "value": 0.0,
+          "passed": false
+        },
+        "noise_robustness": {
+          "value": 0.0,
+          "passed": false
+        },
+        "evidence_match": {
+          "value": 0.0,
+          "passed": false
+        }
+      }
+    },
+    {
+      "case_id": "dec_anti_002",
+      "category": "decision_memory",
+      "test_type": "anti_interference",
+      "difficulty": "hard",
+      "passed": false,
+      "error": null,
+      "metrics": {
+        "recall_at_3": {
+          "value": 1.0,
+          "passed": true
+        },
+        "keyword_match": {
+          "value": 1.0,
+          "passed": true
+        },
+        "noise_robustness": {
+          "value": 1.0,
+          "passed": true
+        },
+        "old_value_suppression": {
+          "value": 0.0,
+          "passed": false
+        }
+      }
+    },
+    {
+      "case_id": "kh_anti_001",
+      "category": "knowledge_health",
+      "test_type": "anti_interference",
+      "difficulty": "medium",
+      "passed": false,
+      "error": null,
+      "metrics": {
+        "recall_at_3": {
+          "value": 0.0,
+          "passed": false
+        },
+        "keyword_match": {
+          "value": 0.0,
+          "passed": false
+        },
+        "noise_robustness": {
+          "value": 0.0,
+          "passed": false
+        },
+        "evidence_match": {
+          "value": 0.0,
+          "passed": false
+        }
+      }
+    },
+    {
+      "case_id": "kh_anti_002",
+      "category": "knowledge_health",
+      "test_type": "anti_interference",
+      "difficulty": "hard",
+      "passed": false,
+      "error": null,
+      "metrics": {
+        "recall_at_3": {
+          "value": 0.0,
+          "passed": false
+        },
+        "keyword_match": {
+          "value": 0.0,
+          "passed": false
+        },
+        "noise_robustness": {
+          "value": 0.0,
+          "passed": false
+        }
+      }
+    },
+    {
+      "case_id": "pref_anti_001",
+      "category": "preference_memory",
+      "test_type": "anti_interference",
+      "difficulty": "medium",
+      "passed": false,
+      "error": null,
+      "metrics": {
+        "recall_at_3": {
+          "value": 0.0,
+          "passed": false
+        },
+        "preference_match": {
+          "value": 0.0,
+          "passed": false
+        },
+        "noise_robustness": {
+          "value": 0.0,
+          "passed": false
+        }
+      }
+    },
+    {
+      "case_id": "pref_anti_002",
+      "category": "preference_memory",
+      "test_type": "anti_interference",
+      "difficulty": "hard",
+      "passed": false,
+      "error": null,
+      "metrics": {
+        "preference_match": {
+          "value": 0.0,
+          "passed": false
+        },
+        "noise_robustness": {
+          "value": 0.0,
+          "passed": false
+        },
+        "recall_at_3": {
+          "value": 0.0,
+          "passed": false
+        }
+      }
+    },
+    {
+      "case_id": "dec_contra_001",
+      "category": "decision_memory",
+      "test_type": "contradiction_update",
+      "difficulty": "medium",
+      "passed": false,
+      "error": null,
+      "metrics": {
+        "latest_value_accuracy": {
+          "value": 1.0,
+          "passed": true
+        },
+        "old_value_suppression": {
+          "value": 0.0,
+          "passed": false
+        },
+        "evidence_match": {
+          "value": 0.0,
+          "passed": false
+        }
+      }
+    },
+    {
+      "case_id": "dec_contra_002",
+      "category": "decision_memory",
+      "test_type": "contradiction_update",
+      "difficulty": "hard",
+      "passed": false,
+      "error": null,
+      "metrics": {
+        "latest_value_accuracy": {
+          "value": 0.0,
+          "passed": false
+        },
+        "old_value_suppression": {
+          "value": 1.0,
+          "passed": true
+        },
+        "evidence_match": {
+          "value": 0.0,
+          "passed": false
+        }
+      }
+    },
+    {
+      "case_id": "dec_contra_003",
+      "category": "decision_memory",
+      "test_type": "contradiction_update",
+      "difficulty": "hard",
+      "passed": false,
+      "error": null,
+      "metrics": {
+        "latest_value_accuracy": {
+          "value": 1.0,
+          "passed": true
+        },
+        "old_value_suppression": {
+          "value": 1.0,
+          "passed": true
+        },
+        "evidence_match": {
+          "value": 0.0,
+          "passed": false
+        }
+      }
+    },
+    {
+      "case_id": "kh_contra_001",
+      "category": "knowledge_health",
+      "test_type": "contradiction_update",
+      "difficulty": "medium",
+      "passed": false,
+      "error": null,
+      "metrics": {
+        "latest_value_accuracy": {
+          "value": 0.0,
+          "passed": false
+        },
+        "old_value_suppression": {
+          "value": 1.0,
+          "passed": true
+        },
+        "expired_memory_suppression": {
+          "value": 1.0,
+          "passed": true
+        },
+        "evidence_match": {
+          "value": 0.0,
+          "passed": false
+        }
+      }
+    },
+    {
+      "case_id": "kh_contra_002",
+      "category": "knowledge_health",
+      "test_type": "contradiction_update",
+      "difficulty": "hard",
+      "passed": true,
+      "error": null,
+      "metrics": {
+        "latest_value_accuracy": {
+          "value": 1.0,
+          "passed": true
+        },
+        "old_value_suppression": {
+          "value": 1.0,
+          "passed": true
+        },
+        "evidence_match": {
+          "value": 1.0,
+          "passed": true
+        }
+      }
+    },
+    {
+      "case_id": "pref_contra_001",
+      "category": "preference_memory",
+      "test_type": "contradiction_update",
+      "difficulty": "medium",
+      "passed": false,
+      "error": null,
+      "metrics": {
+        "latest_value_accuracy": {
+          "value": 0.0,
+          "passed": false
+        },
+        "old_value_suppression": {
+          "value": 1.0,
+          "passed": true
+        },
+        "evidence_match": {
+          "value": 0.0,
+          "passed": false
+        }
+      }
+    },
+    {
+      "case_id": "pref_contra_002",
+      "category": "preference_memory",
+      "test_type": "contradiction_update",
+      "difficulty": "hard",
+      "passed": false,
+      "error": null,
+      "metrics": {
+        "latest_value_accuracy": {
+          "value": 0.0,
+          "passed": false
+        },
+        "old_value_suppression": {
+          "value": 1.0,
+          "passed": true
+        },
+        "preference_match": {
+          "value": 0.0,
+          "passed": false
+        }
+      }
+    },
+    {
+      "case_id": "cmd_eff_001",
+      "category": "command_memory",
+      "test_type": "efficiency",
+      "difficulty": "easy",
+      "passed": false,
+      "error": null,
+      "metrics": {
+        "top1_hit": {
+          "value": 0.0,
+          "passed": false
+        },
+        "char_saving_rate": {
+          "value": 1.0,
+          "passed": true
+        }
+      }
+    },
+    {
+      "case_id": "cmd_eff_002",
+      "category": "command_memory",
+      "test_type": "efficiency",
+      "difficulty": "medium",
+      "passed": false,
+      "error": null,
+      "metrics": {
+        "top1_hit": {
+          "value": 0.0,
+          "passed": false
+        },
+        "char_saving_rate": {
+          "value": 1.0,
+          "passed": true
+        }
+      }
+    },
+    {
+      "case_id": "cmd_eff_003",
+      "category": "command_memory",
+      "test_type": "efficiency",
+      "difficulty": "hard",
+      "passed": false,
+      "error": null,
+      "metrics": {
+        "top1_hit": {
+          "value": 0.0,
+          "passed": false
+        },
+        "char_saving_rate": {
+          "value": 1.0,
+          "passed": true
+        }
+      }
+    },
+    {
+      "case_id": "dec_eff_002",
+      "category": "decision_memory",
+      "test_type": "efficiency",
+      "difficulty": "easy",
+      "passed": false,
+      "error": null,
+      "metrics": {
+        "recall_at_3": {
+          "value": 0.0,
+          "passed": false
+        },
+        "keyword_match": {
+          "value": 0.0,
+          "passed": false
+        }
+      }
+    },
+    {
+      "case_id": "dec_eff_001",
+      "category": "decision_memory",
+      "test_type": "efficiency",
+      "difficulty": "medium",
+      "passed": false,
+      "error": null,
+      "metrics": {
+        "recall_at_3": {
+          "value": 1.0,
+          "passed": true
+        },
+        "char_saving_rate": {
+          "value": 0.0,
+          "passed": false
+        }
+      }
+    },
+    {
+      "case_id": "pref_eff_001",
+      "category": "preference_memory",
+      "test_type": "efficiency",
+      "difficulty": "easy",
+      "passed": false,
+      "error": null,
+      "metrics": {
+        "preference_match": {
+          "value": 0.0,
+          "passed": false
+        },
+        "char_saving_rate": {
+          "value": 0.0,
+          "passed": false
+        }
+      }
+    },
+    {
+      "case_id": "pref_eff_002",
+      "category": "preference_memory",
+      "test_type": "efficiency",
+      "difficulty": "medium",
+      "passed": false,
+      "error": null,
+      "metrics": {
+        "preference_match": {
+          "value": 0.0,
+          "passed": false
+        },
+        "step_saving_rate": {
+          "value": 1.0,
+          "passed": true
+        }
+      }
+    },
+    {
+      "case_id": "dec_long_001",
+      "category": "decision_memory",
+      "test_type": "long_term_retention",
+      "difficulty": "hard",
+      "passed": true,
+      "error": null,
+      "metrics": {
+        "recall_at_3": {
+          "value": 1.0,
+          "passed": true
+        },
+        "long_term_recall": {
+          "value": 1.0,
+          "passed": true
+        },
+        "keyword_match": {
+          "value": 1.0,
+          "passed": true
+        },
+        "evidence_match": {
+          "value": 1.0,
+          "passed": true
+        }
+      }
+    },
+    {
+      "case_id": "kh_long_001",
+      "category": "knowledge_health",
+      "test_type": "long_term_retention",
+      "difficulty": "hard",
+      "passed": false,
+      "error": null,
+      "metrics": {
+        "recall_at_3": {
+          "value": 0.0,
+          "passed": false
+        },
+        "long_term_recall": {
+          "value": 0.0,
+          "passed": false
+        },
+        "keyword_match": {
+          "value": 0.0,
+          "passed": false
+        },
+        "evidence_match": {
+          "value": 0.0,
+          "passed": false
+        }
+      }
+    },
+    {
+      "case_id": "kh_long_002",
+      "category": "knowledge_health",
+      "test_type": "long_term_retention",
+      "difficulty": "hard",
+      "passed": false,
+      "error": null,
+      "metrics": {
+        "recall_at_3": {
+          "value": 0.0,
+          "passed": false
+        },
+        "long_term_recall": {
+          "value": 0.0,
+          "passed": false
+        },
+        "keyword_match": {
+          "value": 0.0,
+          "passed": false
+        },
+        "evidence_match": {
+          "value": 0.0,
+          "passed": false
+        }
+      }
+    },
+    {
+      "case_id": "dec_abs_001",
+      "category": "decision_memory",
+      "test_type": "abstention",
+      "difficulty": "medium",
+      "passed": true,
+      "error": null,
+      "metrics": {
+        "abstention_accuracy": {
+          "value": 1.0,
+          "passed": true
+        },
+        "hallucination_rate": {
+          "value": 1.0,
+          "passed": true
+        }
+      }
+    },
+    {
+      "case_id": "dec_abs_002",
+      "category": "decision_memory",
+      "test_type": "abstention",
+      "difficulty": "hard",
+      "passed": false,
+      "error": null,
+      "metrics": {
+        "abstention_accuracy": {
+          "value": 0.0,
+          "passed": false
+        },
+        "hallucination_rate": {
+          "value": 1.0,
+          "passed": true
+        },
+        "noise_robustness": {
+          "value": 0.0,
+          "passed": false
+        }
+      }
+    },
+    {
+      "case_id": "kh_abs_001",
+      "category": "knowledge_health",
+      "test_type": "abstention",
+      "difficulty": "medium",
+      "passed": true,
+      "error": null,
+      "metrics": {
+        "abstention_accuracy": {
+          "value": 1.0,
+          "passed": true
+        },
+        "hallucination_rate": {
+          "value": 1.0,
+          "passed": true
+        }
+      }
+    },
+    {
+      "case_id": "pref_abs_001",
+      "category": "preference_memory",
+      "test_type": "abstention",
+      "difficulty": "medium",
+      "passed": true,
+      "error": null,
+      "metrics": {
+        "abstention_accuracy": {
+          "value": 1.0,
+          "passed": true
+        },
+        "hallucination_rate": {
+          "value": 1.0,
+          "passed": true
+        }
+      }
+    },
+    {
+      "case_id": "pref_abs_002",
+      "category": "preference_memory",
+      "test_type": "abstention",
+      "difficulty": "hard",
+      "passed": false,
+      "error": null,
+      "metrics": {
+        "abstention_accuracy": {
+          "value": 1.0,
+          "passed": true
+        },
+        "hallucination_rate": {
+          "value": 1.0,
+          "passed": true
+        },
+        "noise_robustness": {
+          "value": 0.0,
+          "passed": false
+        }
+      }
+    },
+    {
+      "case_id": "cmd_xproj_001",
+      "category": "command_memory",
+      "test_type": "cross_project",
+      "difficulty": "medium",
+      "passed": false,
+      "error": null,
+      "metrics": {
+        "scope_accuracy": {
+          "value": 0.0,
+          "passed": false
+        },
+        "cross_project_leakage_rate": {
+          "value": 0.0,
+          "passed": false
+        },
+        "evidence_match": {
+          "value": 0.0,
+          "passed": false
+        }
+      }
+    },
+    {
+      "case_id": "dec_xproj_001",
+      "category": "decision_memory",
+      "test_type": "cross_project",
+      "difficulty": "medium",
+      "passed": false,
+      "error": null,
+      "metrics": {
+        "scope_accuracy": {
+          "value": 1.0,
+          "passed": true
+        },
+        "cross_project_leakage_rate": {
+          "value": 1.0,
+          "passed": true
+        },
+        "evidence_match": {
+          "value": 0.0,
+          "passed": false
+        }
+      }
+    },
+    {
+      "case_id": "dec_xproj_002",
+      "category": "decision_memory",
+      "test_type": "cross_project",
+      "difficulty": "hard",
+      "passed": false,
+      "error": null,
+      "metrics": {
+        "scope_accuracy": {
+          "value": 1.0,
+          "passed": true
+        },
+        "cross_project_leakage_rate": {
+          "value": 1.0,
+          "passed": true
+        },
+        "evidence_match": {
+          "value": 0.0,
+          "passed": false
+        }
+      }
+    },
+    {
+      "case_id": "pref_xproj_001",
+      "category": "preference_memory",
+      "test_type": "cross_project",
+      "difficulty": "medium",
+      "passed": false,
+      "error": null,
+      "metrics": {
+        "scope_accuracy": {
+          "value": 1.0,
+          "passed": true
+        },
+        "cross_project_leakage_rate": {
+          "value": 1.0,
+          "passed": true
+        },
+        "evidence_match": {
+          "value": 0.0,
+          "passed": false
+        }
+      }
+    }
+  ]
+}

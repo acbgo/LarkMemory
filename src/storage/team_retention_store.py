@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import math
+from dataclasses import dataclass, field
 from datetime import timedelta
 from typing import Any
 
@@ -9,6 +11,42 @@ from src.utils.ids import new_id
 from src.utils.time import format_iso, parse_iso, utc_now_iso
 
 from .base import SQLiteStore
+
+
+@dataclass(slots=True)
+class EbbinghausScheduler:
+    """Parameterized Ebbinghaus forgetting curve scheduler.
+
+    Formula: interval = S * ln(1 / desired_retention) * risk_mult
+    where S = base_stability * (ease_factor ** review_count)
+    """
+
+    base_stability: float = 1.0
+    ease_factor: float = 2.5
+    desired_retention: float = 0.9
+    min_interval: float = 1.0
+    max_interval: float = 90.0
+    risk_multipliers: dict[str, float] = field(default_factory=lambda: {
+        "high": 0.5,
+        "medium": 1.0,
+        "low": 2.0,
+    })
+
+    def stability(self, review_count: int) -> float:
+        return self.base_stability * (self.ease_factor ** max(review_count, 0))
+
+    def next_interval(self, review_count: int, risk_level: str) -> float:
+        s = self.stability(review_count)
+        risk_mult = self.risk_multipliers.get(risk_level, 1.0)
+        raw_days = s * math.log(1.0 / self.desired_retention)
+        return max(self.min_interval, min(self.max_interval, raw_days * risk_mult))
+
+    def next_review_time(self, reference_time: str, review_count: int, risk_level: str) -> str:
+        days = self.next_interval(review_count, risk_level)
+        return format_iso(parse_iso(reference_time) + timedelta(days=days))
+
+
+_default_scheduler = EbbinghausScheduler()
 
 
 class TeamRetentionStore(SQLiteStore):
@@ -391,19 +429,11 @@ class TeamRetentionStore(SQLiteStore):
         risk_level: str,
         review_policy: str,
     ) -> str:
-        """根据参考时间、复习次数、风险等级和策略计算下次复习时间。"""
         if review_policy == "none":
             return reference_time
         if review_policy == "fixed":
-            days = 7
-        else:
-            intervals = {
-                "high": [1, 2, 4, 7, 14, 30],
-                "medium": [1, 3, 7, 14, 30],
-                "low": [3, 7, 14, 30],
-            }.get(risk_level, [1, 3, 7, 14, 30])
-            days = intervals[min(max(review_count, 0), len(intervals) - 1)]
-        return format_iso(parse_iso(reference_time) + timedelta(days=days))
+            return format_iso(parse_iso(reference_time) + timedelta(days=7))
+        return _default_scheduler.next_review_time(reference_time, review_count, risk_level)
 
     def _row_to_memory(self, row: dict[str, Any] | None) -> TeamRetentionMemory | None:
         """将数据库行转换为 TeamRetentionMemory，输入 None 时返回 None。"""

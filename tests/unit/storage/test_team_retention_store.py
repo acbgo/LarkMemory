@@ -65,7 +65,7 @@ def test_review_schedule_due_review_and_mark_reviewed() -> None:
 
         assert len(due) == 1
         assert due[0].memory_id == "mem-team-1"
-        assert next_review_at == "2026-04-30T00:00:00Z"
+        assert next_review_at == "2026-04-29T00:00:00Z"  # ebbinghaus: stability=1.0, risk_mult=0.5, min_interval=1 day
         assert store.get_review_schedule("mem-team-1").review_count == 1
     finally:
         _cleanup(store)

@@ -8,6 +8,7 @@ import pytest
 from src.domains.cli_workflow.models import CLIWorkflowMemory, ParameterBinding
 from src.domains.cli_workflow.retriever import CLIWorkflowRetriever, CLIWorkflowSearchResult
 from src.retrieval import MemoryItem, RetrievalQuery, memory_item_from_core
+from src.storage.cli_workflow_store import CLIWorkflowStore
 from src.storage.memory_core_store import MemoryCoreStore
 
 
@@ -154,3 +155,146 @@ class TestCLIWorkflowRetriever:
         results = retriever.retrieve(query, limit=10)
         assert len(results) >= 2
         assert results[0].score >= results[1].score
+
+    def test_natural_language_query_does_not_filter_by_first_word(self, memory_store_with_data):
+        memory = CLIWorkflowMemory(
+            workflow_id="mem-pytest",
+            user_id="u_1",
+            command_template="pytest tests/test_cli.py -q",
+            command_name="pytest tests/test_cli.py",
+            command_category="test",
+            project_id="backend",
+            execution_count=3,
+            success_count=3,
+        )
+        memory_store_with_data.insert_memory_core(memory.to_memory_core())
+        retriever = CLIWorkflowRetriever(memory_store_with_data)
+
+        results = retriever.retrieve(
+            RetrievalQuery(query_text="最近常用的 CLI 测试命令", user_id="u_1", project_id="backend"),
+            limit=10,
+        )
+
+        assert any(result.memory.workflow_id == "mem-pytest" for result in results)
+
+    def test_prefix_query_ranks_matching_command_first(self, memory_store_with_data):
+        memory = CLIWorkflowMemory(
+            workflow_id="mem-python",
+            user_id="u_1",
+            command_template="python scripts/train.py --epochs {epochs}",
+            command_name="python scripts/train.py",
+            command_category="script",
+            project_id="backend",
+            parameter_bindings=[ParameterBinding(param_name="epochs", param_value="3")],
+            execution_count=1,
+            success_count=1,
+        )
+        memory_store_with_data.insert_memory_core(memory.to_memory_core())
+        retriever = CLIWorkflowRetriever(memory_store_with_data)
+
+        results = retriever.retrieve(
+            RetrievalQuery(query_text="py 前缀补全", user_id="u_1", project_id="backend"),
+            limit=10,
+        )
+
+        assert results[0].memory.workflow_id == "mem-python"
+
+    def test_taught_command_pattern_ranks_above_observed_frequency(self, temp_dir):
+        db_path = str(temp_dir / "test_taught_pattern.db")
+        memory_store = MemoryCoreStore(db_path)
+        memory_store.create_table()
+        cli_store = CLIWorkflowStore(db_path)
+        cli_store.create_table()
+
+        observed = CLIWorkflowMemory(
+            workflow_id="mem-observed",
+            user_id="u_1",
+            command_template="python scripts/deploy.py --env {env} --canary {canary}",
+            command_name="python scripts/deploy.py",
+            command_category="deploy",
+            project_id="backend",
+            parameter_bindings=[
+                ParameterBinding(param_name="env", param_value="prod", frequency=80),
+                ParameterBinding(param_name="canary", param_value="5", frequency=80),
+            ],
+            execution_count=80,
+            success_count=80,
+            source_type="shell",
+        )
+        taught = CLIWorkflowMemory(
+            workflow_id="mem-taught",
+            user_id="u_1",
+            command_template="python scripts/release.py --tenant {tenant} --env {env} --canary {canary}",
+            command_name="python scripts/release.py",
+            command_category="deploy",
+            project_id="backend",
+            parameter_bindings=[
+                ParameterBinding(param_name="tenant", param_value="demo-a", frequency=1),
+                ParameterBinding(param_name="env", param_value="staging", frequency=1),
+                ParameterBinding(param_name="canary", param_value="10", frequency=1),
+            ],
+            execution_count=1,
+            success_count=1,
+            source_type="openclaw",
+        )
+        memory_store.insert_memory_core(observed.to_memory_core())
+        memory_store.insert_memory_core(taught.to_memory_core())
+        cli_store.upsert_pattern(observed, memory_id_value=observed.workflow_id)
+        cli_store.upsert_pattern(
+            taught,
+            memory_id_value=taught.workflow_id,
+            semantic_description="部署 demo-a 租户使用 staging 环境和 10 灰度",
+        )
+
+        retriever = CLIWorkflowRetriever(memory_store, cli_store=cli_store)
+        results = retriever.retrieve(
+            RetrievalQuery(query_text="部署 demo-a 租户", user_id="u_1", project_id="backend"),
+            limit=5,
+        )
+
+        assert results[0].memory.workflow_id == "mem-taught"
+        assert "taught_command" in results[0].matched_fields
+
+    def test_taught_parameter_policy_overrides_observed_binding(self, temp_dir):
+        db_path = str(temp_dir / "test_taught_policy.db")
+        memory_store = MemoryCoreStore(db_path)
+        memory_store.create_table()
+        cli_store = CLIWorkflowStore(db_path)
+        cli_store.create_table()
+
+        observed = CLIWorkflowMemory(
+            workflow_id="mem-deploy",
+            user_id="u_1",
+            command_template="python scripts/deploy.py --env {env} --tenant {tenant}",
+            command_name="python scripts/deploy.py",
+            command_category="deploy",
+            project_id="backend",
+            parameter_bindings=[
+                ParameterBinding(param_name="env", param_value="prod", frequency=60),
+                ParameterBinding(param_name="tenant", param_value="demo-a", frequency=60),
+            ],
+            execution_count=60,
+            success_count=60,
+            source_type="shell",
+        )
+        memory_store.insert_memory_core(observed.to_memory_core())
+        cli_store.upsert_pattern(observed, memory_id_value=observed.workflow_id)
+        cli_store.upsert_parameter_policy(
+            scenario_text="记住部署 demo-a 的时候参数 env 设置为 staging",
+            semantic_description="部署 demo-a 的时候 env 使用 staging",
+            param_name="env",
+            param_value="staging",
+            user_id="u_1",
+            project_id="backend",
+        )
+
+        retriever = CLIWorkflowRetriever(memory_store, cli_store=cli_store)
+        results = retriever.retrieve(
+            RetrievalQuery(query_text="部署 demo-a", user_id="u_1", project_id="backend"),
+            limit=5,
+        )
+        suggestion = results[0].to_suggestion()
+
+        assert suggestion["parameter_bindings"][0]["param_name"] == "env"
+        assert suggestion["parameter_bindings"][0]["param_value"] == "staging"
+        assert "taught_param:env" in results[0].matched_fields

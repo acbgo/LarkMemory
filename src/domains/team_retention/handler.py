@@ -1,22 +1,26 @@
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from src.core.domain_handler import DomainIngestResult, DomainRuntime, DomainUpdateResult
+
+logger = logging.getLogger(__name__)
 from src.llm import EmbeddingClient
 from src.retrieval import RankedMemory, RetrievalQuery
 from src.schemas import NormalizedEvent
 from src.storage import EmbeddingStore, MemoryCoreStore, TeamRetentionStore
 from src.utils.ids import new_id
 
-from .admission import TeamRetentionAdmissionDecider
+from .admission import TeamRetentionAdmissionDecision, TeamRetentionAdmissionDecider
 from .embedding import TeamRetentionEmbeddingIndexer
 from .extractor import TeamRetentionExtractor
-from .lifecycle import TeamRetentionLifecycleResolver
+from .lifecycle import TeamRetentionArbitrator
 from .llm_extractor import TeamRetentionLLMExtraction, TeamRetentionLLMExtractor
 from .models import TeamRetentionMemory
 from .preprocessor import TeamRetentionRulePreprocessor
 from .retriever import TeamRetentionRetriever
+from .scoring import calculate_confidence, calculate_importance
 from .versioning import TeamRetentionVersionManager
 
 
@@ -34,6 +38,7 @@ class TeamRetentionDomainHandler:
         extractor: TeamRetentionExtractor | None = None,
         retriever: TeamRetentionRetriever | None = None,
         version_manager: TeamRetentionVersionManager | None = None,
+        arbitrator: Any | None = None,
     ) -> None:
         self.memory_store = memory_store
         self.team_retention_store = team_retention_store
@@ -48,90 +53,172 @@ class TeamRetentionDomainHandler:
         self.llm_client = llm_client
         self.preprocessor = TeamRetentionRulePreprocessor()
         self.admission_decider = TeamRetentionAdmissionDecider()
+        embedding_indexer = TeamRetentionEmbeddingIndexer(embedding_store, embedding_client)
+        if arbitrator is not None:
+            self.arbitrator = arbitrator
+        elif llm_client is not None:
+            self.arbitrator = TeamRetentionArbitrator(llm_client, embedding_indexer)
+        else:
+            self.arbitrator = None
+        self.embedding_indexer = embedding_indexer
 
     def ingest_event(self, event: NormalizedEvent, runtime: DomainRuntime) -> DomainIngestResult:
         if self.llm_client is not None:
             return self._ingest_event_with_llm(event, runtime)
         return self._ingest_event_with_rules(event, runtime)
 
+    # ------------------------------------------------------------------
+    # LLM path: two-stage pipeline
+    # ------------------------------------------------------------------
+
     def _ingest_event_with_llm(self, event: NormalizedEvent, runtime: DomainRuntime) -> DomainIngestResult:
+        logger.info("action=ingest_llm_start event_id=%s", event.event_id)
         preprocess = self.preprocessor.preprocess(event)
+
         extraction = TeamRetentionLLMExtractor(self.llm_client).extract(event, preprocess)
         if extraction is None:
+            logger.info("action=llm_extraction_failed event_id=%s fallback=rule_based", event.event_id)
             return self._ingest_event_with_rules(event, runtime)
-        admission = self.admission_decider.decide(
-            extraction,
-            event=event,
-            preprocess=preprocess,
-            sensitive_unmasked=preprocess.features.sensitive_detected and not preprocess.features.sensitive_masked,
+
+        confidence = calculate_confidence(extraction)
+        importance = calculate_importance(extraction)
+
+        logger.info(
+            "action=stage1_extraction event_id=%s is_team_retention=%s fact_type=%s fact_value=%s "
+            "certainty=%s evidence_quality=%s fact_specificity=%s risk_level=%s "
+            "time_sensitivity=%s scope_impact=%s irreversibility=%s "
+            "confidence=%.2f importance=%.2f",
+            event.event_id,
+            extraction.is_team_retention,
+            extraction.fact_type,
+            extraction.fact_value[:120] if extraction.fact_value else "",
+            extraction.certainty,
+            extraction.evidence_quality,
+            extraction.fact_specificity,
+            extraction.risk_level,
+            extraction.time_sensitivity,
+            extraction.scope_impact,
+            extraction.irreversibility,
+            confidence,
+            importance,
+        )
+
+        admission = self.admission_decider.decide(extraction, confidence=confidence, importance=importance)
+        logger.info(
+            "action=admission event_id=%s status=%s confidence=%.2f importance=%.2f reason=%s",
+            event.event_id,
+            admission.status,
+            confidence,
+            importance,
+            admission.reason,
         )
         if admission.status == "reject":
             return DomainIngestResult(candidate_count=0, message=f"team_retention rejected: {admission.reason}")
 
-        memory = self._memory_from_llm(event, extraction, admission.status)
-        memory.confidence = admission.confidence
-        memory.importance = admission.importance
+        memory = self._memory_from_llm(event, extraction)
+        memory.confidence = confidence
+        memory.importance = importance
         memory.metadata.update(
             {
                 "final_decision": admission.status,
-                "final_score": admission.score,
-                "score_breakdown": dict(admission.breakdown or {}),
-                "admission_blockers": list(admission.blockers or []),
-                "needs_confirmation": extraction.needs_confirmation or admission.status == "candidate",
+                "admission_reason": admission.reason,
+                "needs_confirmation": admission.status == "candidate",
                 "primary_entity": dict(extraction.primary_entity),
                 "topic_key": extraction.topic_key,
                 "evidence_text": extraction.evidence_text,
-                "rule_features": preprocess.features.to_dict(),
             }
         )
 
-        embedding_indexer = TeamRetentionEmbeddingIndexer(runtime.embedding_store, runtime.embedding_client)
-        lifecycle = TeamRetentionLifecycleResolver(self.memory_store, self.team_retention_store, embedding_indexer).resolve(
-            memory,
-            admission_status=admission.status,
-            update_intent=extraction.update_intent,
-            update_signal_text=extraction.update_signal_text,
-            needs_confirmation=extraction.needs_confirmation or admission.status == "candidate",
-            evidence_text=extraction.evidence_text or extraction.reason,
-            source_text=preprocess.sanitized_text,
-        )
-        final_status = lifecycle.status or admission.status
-        if lifecycle.action == "conflict" and lifecycle.matched_memory_id:
-            final_status = "candidate"
-            memory.metadata["conflict_with"] = lifecycle.matched_memory_id
-            memory.metadata["needs_confirmation"] = True
-        if lifecycle.action == "supersede" and lifecycle.matched_memory_id:
-            memory.overwrite_of = lifecycle.matched_memory_id
-        if lifecycle.action == "reinforce" and lifecycle.matched_memory_id:
-            self._reinforce_existing(lifecycle.matched_memory_id, observed_at=event.occurred_at)
-            old = self.team_retention_store.get_memory(lifecycle.matched_memory_id)
-            if old is not None:
-                embedding_indexer.upsert(old, status=final_status)
-            return DomainIngestResult(
-                memory_ids=[lifecycle.matched_memory_id],
-                candidate_count=1,
-                message="team_retention reinforced",
+        if self.arbitrator is not None and admission.status == "active":
+            pass  # arbitration path below
+        else:
+            logger.info(
+                "action=stage2_skipped event_id=%s reason=%s",
+                event.event_id,
+                "arbitrator_unavailable" if self.arbitrator is None else f"admission_{admission.status}",
             )
 
+        if self.arbitrator is not None and admission.status == "active":
+            old_memories = self.arbitrator.load_old_memories(
+                memory,
+                get_memory_fn=self.team_retention_store.get_memory,
+                top_k=3,
+            )
+            logger.info(
+                "action=stage2_candidates event_id=%s old_count=%s old_ids=%s",
+                event.event_id,
+                len(old_memories),
+                [m.retention_id for m in old_memories],
+            )
+            arbitration = self.arbitrator.arbitrate(memory, old_memories=old_memories)
+            logger.info(
+                "action=stage2_arbitration event_id=%s action=%s target_memory_id=%s reason=%s",
+                event.event_id,
+                arbitration.action,
+                arbitration.target_memory_id,
+                arbitration.reason,
+            )
+
+            if arbitration.action == "strengthen" and arbitration.target_memory_id:
+                logger.info(
+                    "action=final_decision event_id=%s decision=strengthen target=%s reason=%s",
+                    event.event_id, arbitration.target_memory_id, arbitration.reason,
+                )
+                self._reinforce_existing(arbitration.target_memory_id, observed_at=event.occurred_at)
+                self.embedding_indexer.upsert(memory, status="active")
+                return DomainIngestResult(
+                    memory_ids=[arbitration.target_memory_id],
+                    candidate_count=1,
+                    message=f"team_retention strengthened: {arbitration.reason}",
+                )
+
+            if arbitration.action == "update" and arbitration.target_memory_id:
+                logger.info(
+                    "action=final_decision event_id=%s decision=update target=%s reason=%s",
+                    event.event_id, arbitration.target_memory_id, arbitration.reason,
+                )
+                memory.overwrite_of = arbitration.target_memory_id
+            elif arbitration.action == "candidate":
+                logger.info(
+                    "action=final_decision event_id=%s decision=candidate reason=%s",
+                    event.event_id, arbitration.reason,
+                )
+                admission = TeamRetentionAdmissionDecision("candidate", confidence, importance, arbitration.reason)
+            else:
+                logger.info(
+                    "action=final_decision event_id=%s decision=add reason=%s",
+                    event.event_id, arbitration.reason,
+                )
+
+        final_status = admission.status
+
         memory_core = memory.to_memory_core()
-        memory_core.status = final_status  # type: ignore[assignment]
+        memory_core.status = final_status
         memory_id = runtime.add_memory(memory_core)
+
         if memory_id != memory.retention_id:
             self._reinforce_existing(memory_id, observed_at=event.occurred_at)
             return DomainIngestResult(memory_ids=[memory_id], candidate_count=1, message="team_retention reinforced")
 
         self.team_retention_store.insert_memory(memory)
-        if lifecycle.action == "supersede" and lifecycle.matched_memory_id:
-            self.version_manager.apply_supersede(lifecycle.matched_memory_id, memory_id)
+
+        if memory.overwrite_of:
+            self.version_manager.apply_supersede(memory.overwrite_of, memory_id)
+
         if final_status == "active":
             self.team_retention_store.create_review_schedule(memory)
-            memory = self.team_retention_store.get_memory(memory.retention_id) or memory
-        embedding_indexer.upsert(memory, status=final_status)
+
+        self.embedding_indexer.upsert(memory, status=final_status)
+
         return DomainIngestResult(
             memory_ids=[memory_id],
             candidate_count=1,
-            message=f"team_retention {final_status}",
+            message=f"team_retention {final_status}: {admission.reason}",
         )
+
+    # ------------------------------------------------------------------
+    # Rule fallback path
+    # ------------------------------------------------------------------
 
     def _ingest_event_with_rules(self, event: NormalizedEvent, runtime: DomainRuntime) -> DomainIngestResult:
         candidates = self.extractor.extract(event)
@@ -166,31 +253,33 @@ class TeamRetentionDomainHandler:
             message="team_retention rule fallback" if candidates else None,
         )
 
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
     def _memory_from_llm(
         self,
         event: NormalizedEvent,
         extraction: TeamRetentionLLMExtraction,
-        status: str,
     ) -> TeamRetentionMemory:
-        version_group = self._version_group(event, extraction)
         return TeamRetentionMemory(
             team_id=event.context.team_id,
             project_id=event.context.project_id,
             workspace_id=event.context.workspace_id,
             thread_id=event.context.thread_id,
-            fact_type=extraction.fact_type,  # type: ignore[arg-type]
+            fact_type=extraction.fact_type,
             fact_value=extraction.fact_value,
-            risk_level=extraction.risk_level,  # type: ignore[arg-type]
+            risk_level=extraction.risk_level,
             owner=extraction.owner,
             remember_reason=extraction.reason,
-            review_policy=extraction.review_policy,  # type: ignore[arg-type]
+            review_policy=extraction.review_policy,
             expiry_time=extraction.valid_to,
-            version_group=version_group,
+            version_group=self._version_group(event, extraction),
             source_event_id=event.event_id,
             source_type=event.source_type,
             source_ref=event.context.thread_id or event.event_id,
             valid_from=extraction.valid_from or event.occurred_at,
-            tags=[f"llm_status:{status}"],
+            tags=[],
             confidence=0.0,
             importance=0.0,
             created_at=event.occurred_at,
@@ -214,6 +303,28 @@ class TeamRetentionDomainHandler:
         if observed_at is not None:
             metadata["last_reinforced_at"] = observed_at
         self.team_retention_store.update_memory_metadata(memory_id, metadata)
+
+    def _find_duplicate(self, memory: TeamRetentionMemory) -> str | None:
+        if not memory.version_group:
+            return None
+        existing = self.team_retention_store.list_memories(
+            team_id=memory.team_id,
+            project_id=memory.project_id,
+            workspace_id=memory.workspace_id,
+            fact_type=memory.fact_type,
+            version_group=memory.version_group,
+            limit=20,
+        )
+        for item in existing:
+            if item.fact_value.strip() == memory.fact_value.strip():
+                row = self.memory_store.get_memory(item.retention_id)
+                if row is not None and row.get("status") == "active":
+                    return item.retention_id
+        return None
+
+    # ------------------------------------------------------------------
+    # Retrieval, update, proactive
+    # ------------------------------------------------------------------
 
     def retrieve(self, query: RetrievalQuery, *, top_k: int) -> list[RankedMemory]:
         results = self.retriever.retrieve(query, limit=top_k)
@@ -298,21 +409,3 @@ class TeamRetentionDomainHandler:
 
     def scan_review_due(self, **kwargs: Any) -> list[dict[str, Any]]:
         return self.proactive_suggestions(**kwargs)
-
-    def _find_duplicate(self, memory: TeamRetentionMemory) -> str | None:
-        if not memory.version_group:
-            return None
-        existing = self.team_retention_store.list_memories(
-            team_id=memory.team_id,
-            project_id=memory.project_id,
-            workspace_id=memory.workspace_id,
-            fact_type=memory.fact_type,
-            version_group=memory.version_group,
-            limit=20,
-        )
-        for item in existing:
-            if item.fact_value.strip() == memory.fact_value.strip():
-                row = self.memory_store.get_memory(item.retention_id)
-                if row is not None and row.get("status") == "active":
-                    return item.retention_id
-        return None

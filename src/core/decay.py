@@ -6,7 +6,9 @@ from typing import Any
 
 from src.core.dedup_merge import memory_from_row
 from src.schemas import MemoryCore
-from src.storage import MemoryCoreStore
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from src.storage import MemoryCoreStore
 from src.utils.time import days_between, parse_iso, utc_now_iso
 
 

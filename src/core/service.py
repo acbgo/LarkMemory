@@ -26,7 +26,7 @@ from src.retrieval import (
 )
 from src.schemas import MemoryCore, NormalizedEvent
 from src.storage import EmbeddingStore, EventStore, MemoryCoreStore
-from src.llm import EmbeddingClient
+from src.llm import EmbeddingClient, RerankClient
 from src.utils.ids import query_id as new_query_id
 
 
@@ -66,6 +66,7 @@ class MemoryService:
         memory_store: MemoryCoreStore,
         embedding_store: EmbeddingStore | None = None,
         embedding_client: EmbeddingClient | None = None,
+        rerank_client: RerankClient | None = None,
         llm_client: Any | None = None,
         router: DomainRouter | None = None,
         admission: AdmissionController | None = None,
@@ -80,6 +81,7 @@ class MemoryService:
         self.memory_store = memory_store
         self.embedding_store = embedding_store
         self.embedding_client = embedding_client
+        self.rerank_client = rerank_client
         self.llm_client = llm_client
         self.classifier = DomainClassifier(llm_client=llm_client)
         self.router = router or DomainRouter(classifier=self.classifier)
@@ -260,7 +262,11 @@ class MemoryService:
                 )
                 for index, (_domain, ranked) in enumerate(domain_ranked)
             ]
-            ranked = await Reranker(llm_client=None).rerank(candidates, rewritten, top_k=top_k)
+            ranked = await Reranker(rerank_client=self.rerank_client).rerank(
+                candidates,
+                rewritten,
+                top_k=top_k,
+            )
             for result in ranked:
                 self.access_tracker.record_access(result.item.memory_id, query_id=query_id)
             trace = None
@@ -296,7 +302,11 @@ class MemoryService:
             )
             for index, row in enumerate(rows)
         ]
-        ranked = await Reranker(llm_client=None).rerank(candidates, rewritten, top_k=top_k)
+        ranked = await Reranker(rerank_client=self.rerank_client).rerank(
+            candidates,
+            rewritten,
+            top_k=top_k,
+        )
         for result in ranked:
             self.access_tracker.record_access(result.item.memory_id, query_id=query_id)
         trace = None

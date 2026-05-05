@@ -10,6 +10,7 @@ from src.domains.cli_workflow.handler import CLIWorkflowDomainHandler
 from src.domains.cli_workflow.models import CLIWorkflowMemory
 from src.schemas.event import EventContext, NormalizedEvent
 from src.storage.event_store import EventStore
+from src.storage.cli_workflow_store import CLIWorkflowStore
 from src.storage.memory_core_store import MemoryCoreStore
 from src.utils.ids import event_id
 from src.utils.time import utc_now_iso
@@ -72,8 +73,8 @@ class TestHandlerIngest:
         assert core["domain"] == "cli_workflow"
         assert core["scope"] == "user"
 
-    def test_is_admissible_filters_candidate(self, stores):
-        """No params + execution_count=1 → is_admissible() returns False, memory not stored."""
+    def test_known_toolchain_command_without_params_is_stored(self, stores):
+        """Known toolchain commands without flags are useful command patterns."""
         _, memory_store = stores
         handler = CLIWorkflowDomainHandler(memory_store)
         event = make_shell_event("git pull", project_id="backend")
@@ -82,7 +83,7 @@ class TestHandlerIngest:
             add_memory=_add_memory(memory_store),
         )
         result = handler.ingest_event(event, runtime)
-        assert len(result.memory_ids) == 0
+        assert len(result.memory_ids) == 1
 
     def test_ingest_trivial_command_returns_no_candidates(self, stores):
         _, memory_store = stores
@@ -156,6 +157,43 @@ class TestHandlerIngest:
         old_core = memory_store.get_memory(result_shell.memory_ids[0])
         assert old_core["status"] == "superseded"
         assert old_core["superseded_by"] == result_oc.memory_ids[0]
+
+    def test_ingest_syncs_structured_cli_tables(self, temp_dir):
+        db_path = str(temp_dir / "test_structured_cli.db")
+        memory_store = MemoryCoreStore(db_path)
+        memory_store.create_table()
+        cli_store = CLIWorkflowStore(db_path)
+        cli_store.create_table()
+        handler = CLIWorkflowDomainHandler(memory_store, cli_store=cli_store)
+        add = _add_memory(memory_store)
+
+        shell_event = make_shell_event("lark project deploy --env prod", project_id="backend")
+        shell_result = handler.ingest_event(
+            shell_event,
+            DomainRuntime(memory_store=memory_store, add_memory=add),
+        )
+        patterns = cli_store.list_patterns(user_id="u_1", project_id="backend")
+        assert shell_result.memory_ids[0] == patterns[0]["memory_id"]
+        assert patterns[0]["memory_origin"] == "observed"
+
+        oc_event = NormalizedEvent(
+            event_id=event_id(),
+            event_type="memory_feedback",
+            source_type="openclaw",
+            occurred_at=utc_now_iso(),
+            context=EventContext(user_id="u_1", project_id="backend", scope="user"),
+            content_text="记住部署 demo-a 的时候参数 env 设置为 staging",
+            payload={"intent": "teach_command"},
+        )
+        policy_result = handler.ingest_event(
+            oc_event,
+            DomainRuntime(memory_store=memory_store, add_memory=add),
+        )
+        policies = cli_store.list_parameter_policies(user_id="u_1", project_id="backend")
+
+        assert policy_result.candidate_count == 1
+        assert policies[0]["param_name"] == "env"
+        assert policies[0]["param_value"] == "staging"
 
 
 class TestHandlerRetrieve:

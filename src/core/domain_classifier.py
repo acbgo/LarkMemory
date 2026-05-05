@@ -113,9 +113,9 @@ class DomainClassifier:
         *,
         event_type: str | None = None,
     ) -> ClassifyResult:
-        hard = self._hard_rule(text, event_type)
-        if hard is not None:
-            return hard
+        kw_result = self._keyword_classify(text)
+        if kw_result.confidence >= 0.5 and len(kw_result.keywords) >= 2:
+            return kw_result
 
         if self.llm_client is not None:
             try:
@@ -125,7 +125,7 @@ class DomainClassifier:
                     "action=classify_sync_llm_failed fallback=keyword_rule"
                 )
 
-        return self._keyword_classify(text)
+        return kw_result
 
     # ------------------------------------------------------------------
     # async entry (for IntentAnalyzer)
@@ -137,9 +137,9 @@ class DomainClassifier:
         *,
         event_type: str | None = None,
     ) -> ClassifyResult:
-        hard = self._hard_rule(text, event_type)
-        if hard is not None:
-            return hard
+        kw_result = self._keyword_classify(text)
+        if kw_result.confidence >= 0.5 and len(kw_result.keywords) >= 2:
+            return kw_result
 
         if self.llm_client is not None:
             try:
@@ -149,7 +149,7 @@ class DomainClassifier:
                     "action=classify_llm_failed fallback=keyword_rule"
                 )
 
-        return self._keyword_classify(text)
+        return kw_result
 
     # ------------------------------------------------------------------
     # internal

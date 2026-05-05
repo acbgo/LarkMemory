@@ -21,7 +21,7 @@ from ._types import (
 )
 
 if TYPE_CHECKING:
-    from src.llm import LLMClient
+    from src.llm import LLMClient, RerankClient
 
 logger = logging.getLogger(__name__)
 
@@ -189,11 +189,13 @@ class Reranker:
         self,
         llm_client: "LLMClient | None" = None,
         *,
+        rerank_client: "RerankClient | None" = None,
         factor_weights: dict[str, float] | None = None,
         use_llm_rerank: bool = False,
     ) -> None:
         """初始化重排器，输入可选 LLMClient、因子权重和是否启用 LLM 重排。"""
         self._llm = llm_client
+        self._rerank_client = rerank_client
         self._weights = factor_weights or dict(DEFAULT_FACTOR_WEIGHTS)
         self._use_llm_rerank = use_llm_rerank and llm_client is not None
 
@@ -219,6 +221,16 @@ class Reranker:
             self._use_llm_rerank,
         )
         scored = self._multi_factor_score(candidates, query)
+
+        if self._rerank_client is not None:
+            try:
+                scored.sort(key=lambda r: r.final_score, reverse=True)
+                scored = self._external_rerank(scored, query, top_k=top_k)
+            except Exception:
+                logger.warning(
+                    "External reranking failed, using multi-factor scores only",
+                    exc_info=True,
+                )
 
         if self._use_llm_rerank and self._llm is not None:
             try:
@@ -339,6 +351,54 @@ class Reranker:
                 rm.final_score += bonus * llm_bonus_weight
 
         return scored
+
+    def _external_rerank(
+        self,
+        scored: list[RankedMemory],
+        query: RewrittenQuery,
+        *,
+        top_k: int,
+    ) -> list[RankedMemory]:
+        """用外部 rerank 服务重排候选，并保留多因子分作为兜底信号。"""
+        from src.llm.rerank_base import RerankDocument
+
+        if self._rerank_client is None or len(scored) <= 1:
+            return scored
+
+        window = scored[:_LLM_RERANK_WINDOW]
+        documents = [
+            RerankDocument(
+                id=rm.item.memory_id,
+                text=rm.item.summary_text or rm.item.content_text,
+                metadata={
+                    "domain": rm.item.domain.value,
+                    "rank": rm.rank,
+                    "score": rm.final_score,
+                },
+            )
+            for rm in window
+        ]
+        response = self._rerank_client.rerank(
+            query.rewritten_text or query.original.query_text,
+            documents,
+            top_k=min(top_k, len(documents)),
+        )
+        by_id = {rm.item.memory_id: rm for rm in scored}
+        reranked: list[RankedMemory] = []
+        for result in response.results:
+            rm = by_id.get(result.id)
+            if rm is None:
+                continue
+            rm.score_breakdown["external_rerank"] = float(result.score)
+            rm.score_breakdown["pre_rerank_score"] = rm.final_score
+            rm.final_score = float(result.score)
+            rm.item.extra["rerank_score"] = float(result.score)
+            rm.item.extra["rerank_model"] = response.model
+            reranked.append(rm)
+
+        returned_ids = {rm.item.memory_id for rm in reranked}
+        tail = [rm for rm in scored if rm.item.memory_id not in returned_ids]
+        return [*reranked, *tail]
 
     @staticmethod
     def _build_rerank_prompt(

@@ -7,9 +7,17 @@ from .proactive_store import ProactiveStore
 from .source_state_store import SourceStateStore
 from .team_retention_store import TeamRetentionStore
 
+# Lazy import to avoid circular dependency via cli_workflow -> core -> storage
+def __getattr__(name):
+    if name == "CLIWorkflowStore":
+        from .cli_workflow_store import CLIWorkflowStore as _CLIWorkflowStore
+        return _CLIWorkflowStore
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 __all__ = [
     "EmbeddingStore",
     "EventStore",
+    "CLIWorkflowStore",
     "MemoryCoreStore",
     "Neo4jGraphConfig",
     "Neo4jGraphStore",

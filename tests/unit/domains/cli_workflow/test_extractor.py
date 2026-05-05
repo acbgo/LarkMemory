@@ -164,6 +164,14 @@ class TestShellExtraction:
         candidates = extractor.extract(event)
         assert len(candidates) == 0
 
+    def test_extract_known_toolchain_command_without_flags(self):
+        extractor = CLIWorkflowExtractor()
+        event = make_shell_event("npm run test:e2e")
+        candidates = extractor.extract(event)
+        assert len(candidates) == 1
+        assert candidates[0].is_admissible() is True
+        assert candidates[0].memory.command_name == "npm run test:e2e"
+
     def test_empty_command(self):
         extractor = CLIWorkflowExtractor()
         event = make_shell_event("")

@@ -51,7 +51,7 @@ def test_openai_provider_sends_chat_completion_request(monkeypatch: pytest.Monke
             model="memory-model",
             base_url="https://example.test/v1",
             default_headers={"x-test": "1"},
-            extra_body={"seed": 42},
+            extra_body={"seed": 42, "thinking": {"type": "disabled"}},
         )
     )
 
@@ -86,6 +86,7 @@ def test_openai_provider_sends_chat_completion_request(monkeypatch: pytest.Monke
     assert request["max_tokens"] == 64
     assert request["response_format"] == {"type": "json_object"}
     assert request["seed"] == 42
+    assert request["thinking"] == {"type": "disabled"}
 
 
 def test_openai_provider_extracts_choice_message_content() -> None:

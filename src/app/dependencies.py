@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from functools import lru_cache
 
-from src.app.config import AppSettings, load_settings
+from src.app.config import AppSettings, build_llm_extra_body, load_settings
 from src.core import MemoryService
 from src.domains.project_decision import ProjectDecisionDomainHandler
 from src.domains.team_retention.handler import TeamRetentionDomainHandler
@@ -23,7 +23,7 @@ from src.proactive import (
 from src.sources.feishu.client.config import load_feishu_settings
 from src.sources.feishu.client.sdk import build_api_client
 from src.sources.feishu.proactive import FeishuNotifier
-from src.storage import EmbeddingStore, EventStore, MemoryCoreStore, TeamRetentionStore
+from src.storage import CLIWorkflowStore, EmbeddingStore, EventStore, MemoryCoreStore, TeamRetentionStore
 from src.storage import ProactiveStore
 
 
@@ -65,6 +65,14 @@ def get_memory_core_store() -> MemoryCoreStore:
 def get_team_retention_store() -> TeamRetentionStore:
     """返回缓存的团队留存存储实例，使用当前配置中的 SQLite 路径。"""
     store = TeamRetentionStore(get_settings().sqlite_path)
+    store.create_table()
+    return store
+
+
+@lru_cache(maxsize=1)
+def get_cli_workflow_store() -> CLIWorkflowStore:
+    """返回缓存的 CLI 工作流结构化存储实例，使用当前配置中的 SQLite 路径。"""
+    store = CLIWorkflowStore(get_settings().sqlite_path)
     store.create_table()
     return store
 
@@ -172,6 +180,7 @@ def get_llm_client() -> LLMClient | None:
         base_url=settings.llm_base_url,
         timeout=settings.llm_timeout,
         max_retries=settings.llm_max_retries,
+        extra_body=build_llm_extra_body(settings),
     )
 
 
@@ -232,6 +241,7 @@ def get_memory_service() -> MemoryService:
     )
     cli_handler = CLIWorkflowDomainHandler(
         get_memory_core_store(),
+        cli_store=get_cli_workflow_store(),
         llm_client=get_llm_client(),
     )
     proactive_engine = get_proactive_engine()
@@ -243,6 +253,7 @@ def get_memory_service() -> MemoryService:
         memory_store=get_memory_core_store(),
         embedding_store=get_embedding_store(),
         embedding_client=get_embedding_client(),
+        rerank_client=get_rerank_client(),
         llm_client=get_llm_client(),
         domain_handlers=handlers,
         proactive_engine=proactive_engine,
@@ -255,6 +266,7 @@ def reset_dependency_cache() -> None:
     get_event_store.cache_clear()
     get_memory_core_store.cache_clear()
     get_team_retention_store.cache_clear()
+    get_cli_workflow_store.cache_clear()
     get_embedding_store.cache_clear()
     get_embedding_client.cache_clear()
     get_rerank_client.cache_clear()

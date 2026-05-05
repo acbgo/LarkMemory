@@ -22,6 +22,7 @@ class AppSettings:
     llm_base_url: str | None = None
     llm_timeout: float = 60.0
     llm_max_retries: int = 2
+    llm_thinking_type: str | None = "disabled"
     enable_llm: bool = False
     enable_embedding: bool = False
     enable_vector_store: bool = False
@@ -139,6 +140,7 @@ def load_settings() -> AppSettings:
         llm_base_url=_env_str("LARKMEMORY_LLM_BASE_URL", None, file_values),
         llm_timeout=_env_float("LARKMEMORY_LLM_TIMEOUT", 60.0, file_values),
         llm_max_retries=_env_int("LARKMEMORY_LLM_MAX_RETRIES", 2, file_values),
+        llm_thinking_type=_env_str("LARKMEMORY_LLM_THINKING_TYPE", "disabled", file_values),
         enable_llm=_env_bool("LARKMEMORY_ENABLE_LLM", False, file_values),
         enable_embedding=_env_bool("LARKMEMORY_ENABLE_EMBEDDING", False, file_values),
         enable_vector_store=_env_bool("LARKMEMORY_ENABLE_VECTOR_STORE", False, file_values),
@@ -177,3 +179,11 @@ def load_settings() -> AppSettings:
         ),
         proactive_related_top_k=_env_int("LARKMEMORY_PROACTIVE_RELATED_TOP_K", 3, file_values),
     )
+
+
+def build_llm_extra_body(settings: AppSettings) -> dict[str, object]:
+    """构建 OpenAI-compatible LLM 请求附加体，用于模型厂商扩展参数。"""
+    extra_body: dict[str, object] = {}
+    if settings.llm_thinking_type:
+        extra_body["thinking"] = {"type": settings.llm_thinking_type}
+    return extra_body

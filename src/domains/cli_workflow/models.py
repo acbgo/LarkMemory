@@ -307,6 +307,10 @@ class CLIWorkflowCandidate:
     def is_admissible(self, min_confidence: float = 0.3) -> bool:
         if not clean_text(self.memory.command_template):
             return False
-        if len(self.memory.parameter_bindings) == 0 and self.memory.execution_count < 2:
+        if (
+            len(self.memory.parameter_bindings) == 0
+            and self.memory.execution_count < 2
+            and "known_toolchain" not in self.signals
+        ):
             return False
         return True

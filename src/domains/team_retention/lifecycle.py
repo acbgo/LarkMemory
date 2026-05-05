@@ -1,187 +1,168 @@
 from __future__ import annotations
 
+import asyncio
+import json
 from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any
 
-from src.storage import MemoryCoreStore, TeamRetentionStore
+if TYPE_CHECKING:
+    from .embedding import TeamRetentionEmbeddingIndexer
 
-from .embedding import TeamRetentionEmbeddingIndexer
 from .models import TeamRetentionMemory
 
 
 @dataclass(slots=True)
-class TeamRetentionLifecycleDecision:
-    action: str = "new"
-    status: str | None = None
-    matched_memory_id: str | None = None
+class TeamRetentionArbitrationResult:
+    action: str  # "strengthen", "update", "candidate", "add"
+    target_memory_id: str | None = None
     reason: str = ""
 
 
-class TeamRetentionLifecycleResolver:
-    """Resolve similar team memories before insert using DB and vector candidates."""
-
+class TeamRetentionArbitrator:
     def __init__(
         self,
-        memory_store: MemoryCoreStore,
-        team_store: TeamRetentionStore,
+        llm_client: Any,
         embedding_indexer: TeamRetentionEmbeddingIndexer,
     ) -> None:
-        self.memory_store = memory_store
-        self.team_store = team_store
+        self.llm_client = llm_client
         self.embedding_indexer = embedding_indexer
 
-    def resolve(
+    def arbitrate(
         self,
-        memory: TeamRetentionMemory,
+        new_memory: TeamRetentionMemory,
         *,
-        admission_status: str = "candidate",
-        update_intent: str = "none",
-        update_signal_text: str | None = None,
-        needs_confirmation: bool = False,
-        evidence_text: str | None = None,
-        source_text: str | None = None,
-    ) -> TeamRetentionLifecycleDecision:
-        """Return lifecycle action for a newly extracted memory."""
-        candidates = self._candidate_ids_from_db(memory)
-        candidates.extend(self._candidate_ids_from_vector(memory))
+        old_memories: list[TeamRetentionMemory],
+    ) -> TeamRetentionArbitrationResult:
+        if not old_memories:
+            return TeamRetentionArbitrationResult(action="add", reason="no_similar_existing")
+
+        try:
+            verdict = _run_async(self._llm_arbitrate(new_memory, old_memories))
+        except Exception:
+            return TeamRetentionArbitrationResult(
+                action="candidate",
+                reason="arbitration_llm_failed",
+            )
+
+        action = verdict.get("action", "add")
+        if action not in {"strengthen", "update", "candidate", "add"}:
+            action = "add"
+
+        target = verdict.get("target_memory_id")
+        if not isinstance(target, str) or not target:
+            target = None
+
+        if action in {"strengthen", "update"} and target is None and old_memories:
+            target = old_memories[0].retention_id
+
+        return TeamRetentionArbitrationResult(
+            action=action,
+            target_memory_id=target,
+            reason=str(verdict.get("reason", "")),
+        )
+
+    def load_old_memories(
+        self,
+        new_memory: TeamRetentionMemory,
+        get_memory_fn: Any,
+        *,
+        top_k: int = 3,
+    ) -> list[TeamRetentionMemory]:
+        hits = self.embedding_indexer.query_similar(new_memory, top_k=top_k)
+        if not hits:
+            return []
         seen: set[str] = set()
-        for memory_id in candidates:
+        result: list[TeamRetentionMemory] = []
+        for hit in hits:
+            memory_id = hit.get("memory_id") or hit.get("id")
+            if not isinstance(memory_id, str) or memory_id == new_memory.retention_id:
+                continue
             if memory_id in seen:
                 continue
             seen.add(memory_id)
-            old = self.team_store.get_memory(memory_id)
-            row = self.memory_store.get_memory(memory_id)
-            if old is None or row is None:
-                continue
-            if row.get("status") not in {"active", "candidate"}:
-                continue
-            if not self._same_scope(old, memory):
-                continue
-            if old.fact_type != memory.fact_type:
-                continue
-            if old.fact_value.strip() == memory.fact_value.strip():
-                return TeamRetentionLifecycleDecision(
-                    action="reinforce",
-                    status=row.get("status") or "candidate",
-                    matched_memory_id=memory_id,
-                    reason="same_fact_value",
-                )
-            can_supersede = (
-                admission_status == "active"
-                and not needs_confirmation
-                and update_intent in {"none", "conflict", "supersede"}
-                and self._same_version_group(old, memory)
-                and (
-                    (update_intent == "supersede" and bool(update_signal_text))
-                    or self._has_supersede_signal(
-                        memory.fact_value,
-                        evidence_text=evidence_text,
-                        source_text=source_text,
-                        update_signal_text=update_signal_text,
-                    )
-                )
-            )
-            if can_supersede:
-                return TeamRetentionLifecycleDecision(
-                    action="supersede",
-                    status=admission_status,
-                    matched_memory_id=memory_id,
-                    reason="explicit_update_signal",
-                )
-            return TeamRetentionLifecycleDecision(
-                action="conflict",
-                status="candidate",
-                matched_memory_id=memory_id,
-                reason="similar_changed_fact_needs_confirmation",
-            )
-        return TeamRetentionLifecycleDecision(action="new")
-
-    def _candidate_ids_from_db(self, memory: TeamRetentionMemory) -> list[str]:
-        if not memory.version_group:
-            return []
-        return [
-            item.retention_id
-            for item in self.team_store.list_memories(
-                team_id=memory.team_id,
-                project_id=memory.project_id,
-                workspace_id=memory.workspace_id,
-                fact_type=memory.fact_type,
-                version_group=memory.version_group,
-                limit=20,
-            )
-        ]
-
-    def _candidate_ids_from_vector(self, memory: TeamRetentionMemory) -> list[str]:
-        hits = self.embedding_indexer.query_similar(memory, top_k=10)
-        result: list[str] = []
-        for hit in hits:
-            memory_id = hit.get("memory_id") or hit.get("id")
-            if not isinstance(memory_id, str):
-                continue
-            distance = hit.get("distance")
-            if isinstance(distance, (int, float)) and float(distance) > 0.35:
-                continue
-            result.append(memory_id)
+            old = get_memory_fn(memory_id)
+            if old is not None:
+                result.append(old)
         return result
 
-    def _same_scope(self, left: TeamRetentionMemory, right: TeamRetentionMemory) -> bool:
-        for field in ("team_id", "project_id", "workspace_id"):
-            left_value = getattr(left, field)
-            right_value = getattr(right, field)
-            if left_value or right_value:
-                if left_value != right_value:
-                    return False
-        return bool(left.team_id or left.project_id or left.workspace_id or right.team_id or right.project_id or right.workspace_id)
-
-    def _same_version_group(self, left: TeamRetentionMemory, right: TeamRetentionMemory) -> bool:
-        """Require exact group or same entity plus same fact slot before supersede."""
-        if not left.version_group or not right.version_group:
-            return False
-        if left.version_group == right.version_group:
-            return True
-        left_entity, left_slot = self._entity_and_slot(left)
-        right_entity, right_slot = self._entity_and_slot(right)
-        return bool(
-            left_entity
-            and right_entity
-            and left_entity == right_entity
-            and left_slot
-            and right_slot
-            and left_slot == right_slot
-        )
-
-    def _entity_and_slot(self, memory: TeamRetentionMemory) -> tuple[str | None, str | None]:
-        """Parse handler-created version groups into entity and fact-slot parts."""
-        if not memory.version_group:
-            return None, None
-        parts = [part for part in memory.version_group.split(":") if part]
-        if len(parts) < 4:
-            return None, None
-        entity = parts[-2]
-        slot = parts[-1]
-        if entity == "unknown" or slot == "unknown":
-            return None, None
-        return entity, slot
-
-    def _has_supersede_signal(
+    async def _llm_arbitrate(
         self,
-        text: str,
-        *,
-        update_signal_text: str | None = None,
-        evidence_text: str | None = None,
-        source_text: str | None = None,
-    ) -> bool:
-        combined = " ".join(part for part in (text, update_signal_text, evidence_text, source_text) if part)
-        return any(
-            marker in text
-            or marker in combined
-            for marker in (
-                "现在",
-                "改为",
-                "更新为",
-                "替换",
-                "不再",
-                "旧",
-                "不用",
-                "以后按",
-            )
+        new_memory: TeamRetentionMemory,
+        old_memories: list[TeamRetentionMemory],
+    ) -> dict[str, Any]:
+        return await self.llm_client.ajson(
+            _ARBITRATION_SYSTEM_PROMPT,
+            _arbitration_user_prompt(new_memory, old_memories),
+            schema=_ARBITRATION_SCHEMA,
+            temperature=0,
+            max_tokens=400,
         )
+
+
+_ARBITRATION_SYSTEM_PROMPT = (
+    "你是团队记忆仲裁器。给定一条新记忆和多条语义相似的旧记忆，判断它们的关系。\n\n"
+    "Actions:\n"
+    "- strengthen: 新旧指向同一个事实（措辞不同但语义相同），不需要创建新记忆，只需强化旧记忆\n"
+    "- update: 新事实明确替代某条旧记忆（信息更新、置信度更高、或明确纠正）\n"
+    "- candidate: 新旧可能存在冲突但证据不足以确定替代关系，新记忆存为candidate待人工确认\n"
+    "- add: 新事实与所有旧记忆无关，是全新知识\n\n"
+    "判断标准:\n"
+    "1. 比较 fact_type 是否相关\n"
+    "2. 比较 fact_value 的主体、属性、约束条件\n"
+    "3. 比较 confidence —— 谁的确定性更高\n"
+    "4. 区分「同一事实的不同表述」和「不同但相关的事实」\n"
+    "5. 区分「信息更新（update）」和「相关但独立的新事实（add）」\n"
+    "只返回 JSON，不要输出其他文字。"
+)
+
+
+def _arbitration_user_prompt(
+    new_memory: TeamRetentionMemory,
+    old_memories: list[TeamRetentionMemory],
+) -> str:
+    old_blocks: list[str] = []
+    for i, old in enumerate(old_memories, start=1):
+        block = (
+            f"EXISTING #{i} [id: {old.retention_id}]\n"
+            f"  fact_type: {old.fact_type}\n"
+            f"  fact_value: {old.fact_value}\n"
+            f"  confidence: {old.confidence:.2f}\n"
+            f"  risk_level: {old.risk_level}\n"
+        )
+        old_blocks.append(block)
+
+    new_block = (
+        f"NEW MEMORY\n"
+        f"  fact_type: {new_memory.fact_type}\n"
+        f"  fact_value: {new_memory.fact_value}\n"
+        f"  confidence: {new_memory.confidence:.2f}\n"
+        f"  risk_level: {new_memory.risk_level}\n"
+    )
+
+    return json.dumps(
+        {
+            "new": new_block,
+            "existing": "\n".join(old_blocks),
+            "task": "判断新记忆与每条已有记忆的关系，返回 action 和 reason。",
+        },
+        ensure_ascii=False,
+    )
+
+
+_ARBITRATION_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "action": {"type": "string", "enum": ["strengthen", "update", "candidate", "add"]},
+        "target_memory_id": {"type": ["string", "null"]},
+        "reason": {"type": "string"},
+    },
+    "required": ["action", "target_memory_id", "reason"],
+}
+
+
+def _run_async(awaitable: Any) -> Any:
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(awaitable)
+    raise RuntimeError("TeamRetentionArbitrator cannot run inside an active event loop")
