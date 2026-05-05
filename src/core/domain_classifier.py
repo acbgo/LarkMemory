@@ -164,22 +164,9 @@ class DomainClassifier:
         *,
         event_type: str | None = None,
     ) -> ClassifyResult:
-<<<<<<< HEAD
         kw_result = self._keyword_classify(text)
         if kw_result.confidence >= 0.5 and len(kw_result.keywords) >= 2:
             return kw_result
-=======
-        hard = self._hard_rule(text, event_type)
-        if hard is not None:
-            logger.info(
-                "action=classify_hard_rule method=%s primary=%s secondary=%s confidence=%s",
-                hard.method,
-                hard.primary,
-                hard.secondary,
-                hard.confidence,
-            )
-            return hard
->>>>>>> f887be784d9c5f28340da7fbad9b3edbfd9f9db6
 
         if self.llm_client is not None:
             try:
@@ -210,22 +197,9 @@ class DomainClassifier:
         *,
         event_type: str | None = None,
     ) -> ClassifyResult:
-<<<<<<< HEAD
         kw_result = self._keyword_classify(text)
         if kw_result.confidence >= 0.5 and len(kw_result.keywords) >= 2:
             return kw_result
-=======
-        hard = self._hard_rule(text, event_type)
-        if hard is not None:
-            logger.info(
-                "action=classify_hard_rule method=%s primary=%s secondary=%s confidence=%s",
-                hard.method,
-                hard.primary,
-                hard.secondary,
-                hard.confidence,
-            )
-            return hard
->>>>>>> f887be784d9c5f28340da7fbad9b3edbfd9f9db6
 
         if self.llm_client is not None:
             try:
