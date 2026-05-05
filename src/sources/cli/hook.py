@@ -56,6 +56,17 @@ else
 fi
 
 complete -D -F _lark_memory_complete -o default 2>/dev/null || true
+
+# Ctrl+X Ctrl+L: 插入 LarkMemory 参数补全建议（不冲突 Tab 路径补全）
+_lark_memory_insert_completion() {
+    local result
+    result=$(lark-memory complete -- "$READLINE_LINE" "" 2>/dev/null | head -1)
+    if [ -n "$result" ]; then
+        READLINE_LINE="$READLINE_LINE$result"
+        READLINE_POINT=${#READLINE_LINE}
+    fi
+}
+bind -x '"\C-x\C-l": _lark_memory_insert_completion' 2>/dev/null || true
 # <<< LarkMemory hook <<<
 """
 

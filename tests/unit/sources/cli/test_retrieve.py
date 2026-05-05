@@ -61,7 +61,8 @@ class TestFormatSuggest:
         }]
         output = _format_suggest(results)
         assert "lark project deploy" in output
-        assert "backend" in output
+        assert "--env prod" in output
+        assert "42" in output  # execution count
 
 
 class TestRunSuggest:

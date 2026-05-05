@@ -33,31 +33,35 @@ def _format_suggest(results: list[dict[str, Any]]) -> str:
     if not results:
         return "未找到匹配的命令记忆。"
 
-    lines: list[str] = []
-    for i, result in enumerate(results):
+    workflows: list[dict[str, Any]] = []
+    for result in results:
         wf = _hit_to_workflow(result)
-        if not wf:
-            continue
-        lines.append("")
-        lines.append(f"  [{i+1}] {wf.get('command_name', '?')}")
-        lines.append(f"  分类: {wf.get('command_category', 'general')}")
-        if wf.get("project_id"):
-            lines.append(f"  项目: {wf['project_id']}")
-        lines.append(f"  模板: {wf.get('command_template', '?')}")
+        if wf:
+            workflows.append(wf)
+    if not workflows:
+        return "未找到匹配的命令记忆。"
+
+    # 按执行频率降序
+    workflows.sort(key=lambda w: -(w.get("execution_count", 0)))
+
+    lines: list[str] = []
+    for i, wf in enumerate(workflows[:3]):
+        count = wf.get("execution_count", 0)
+        rate = wf.get("success_rate", 0)
+        template = wf.get("command_template", wf.get("command_name", "?"))
+
+        lines.append(f"\n  [{i+1}] {wf.get('command_name', '?')}  ({count}次, {rate:.0%}成功)")
+        lines.append(f"  模板: {template}")
 
         bindings = wf.get("parameter_bindings") or []
         if bindings:
-            lines.append("  常用参数:")
-            for pb in sorted(bindings, key=lambda b: -b.get("frequency", 0)):
-                lines.append(
-                    f"    --{pb['param_name']} {pb['param_value']}"
-                    f"  ({pb.get('frequency', 0)}次)"
-                )
+            top_bindings = sorted(bindings, key=lambda b: -b.get("frequency", 0))[:5]
+            params = "  ".join(
+                f"--{pb['param_name']} {pb['param_value']}"
+                for pb in top_bindings
+            )
+            lines.append(f"  常用参数: {params}")
 
-        count = wf.get("execution_count", 0)
-        last = wf.get("last_executed_at", "?")
-        rate = wf.get("success_rate", 0)
-        lines.append(f"  执行: {count}次 | 成功率: {rate:.0%} | 最近: {last}")
     return "\n".join(lines)
 
 

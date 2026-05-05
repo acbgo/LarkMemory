@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "larkmemory"
+version = "0.1.0"
+description = "LarkMemory — 企业级长程协作 Memory 系统"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi",
+    "chromadb",
+    "neo4j",
+    "lark-oapi",
+    "openai",
+    "sentence-transformers",
+    "uvicorn",
+]
+
+[project.scripts]
+lark-memory = "sources.cli.main:main"

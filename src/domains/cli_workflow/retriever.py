@@ -70,11 +70,25 @@ class CLIWorkflowRetriever:
         if not query.user_id:
             return []
 
+        base_command = self._extract_base_command(query.query_text)
+
         rows = self._load_candidates(limit=limit)
-        filtered = self._filter_candidates(rows, query)
+        filtered = self._filter_candidates(rows, query, base_command=base_command)
         scored = self._score_matches(filtered, query)
-        scored.sort(key=lambda r: -r.score)
+        scored.sort(key=lambda r: (-r.score, -(r.memory.execution_count or 0)))
         return scored[:limit]
+
+    def _extract_base_command(self, query_text: str) -> str | None:
+        """从查询文本中提取基础命令名（第一个非选项 token）。"""
+        import shlex
+        try:
+            tokens = shlex.split(query_text.strip())
+        except ValueError:
+            tokens = query_text.strip().split()
+        for token in tokens:
+            if not token.startswith("-"):
+                return token.lower()
+        return None
 
     def _load_candidates(self, *, limit: int) -> list[dict[str, Any]]:
         active_rows = self.memory_store.search_memory_candidates(
@@ -88,6 +102,8 @@ class CLIWorkflowRetriever:
         self,
         rows: list[dict[str, Any]],
         query: RetrievalQuery,
+        *,
+        base_command: str | None = None,
     ) -> list[dict[str, Any]]:
         result: list[dict[str, Any]] = []
         for row in rows:
@@ -104,6 +120,15 @@ class CLIWorkflowRetriever:
             # 如果 query 指定了 project_id，优先匹配
             if query.project_id and row_project and query.project_id != row_project:
                 continue
+
+            # 按基础命令名过滤：查询 "pytest" 不返回 "complete" 等无关命令
+            if base_command:
+                row_cmd_name = self._entity_value(entities, "command_name")
+                if row_cmd_name:
+                    row_base = row_cmd_name.split()[0].lower() if row_cmd_name.split() else ""
+                    # base_command 必须是 command_name 的第一个单词或完整包含在其中
+                    if base_command != row_base and base_command not in row_cmd_name.lower():
+                        continue
 
             result.append(row)
         return result
