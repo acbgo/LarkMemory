@@ -404,25 +404,37 @@ def test_rule_recall_is_fallback_when_bm25_and_vector_are_empty() -> None:
         _cleanup(store)
 
 
-def test_rerank_client_reorders_rrf_candidates() -> None:
+def test_rerank_client_blends_with_position_aware_weights() -> None:
     store = _store()
     try:
         _insert(store, "mem-a", topic="SQLite A", decision="Use SQLite option A")
         _insert(store, "mem-b", topic="SQLite B", decision="Use SQLite option B")
+        _insert(store, "mem-c", topic="SQLite C", decision="Use SQLite option C")
         store.search_bm25 = lambda *args, **kwargs: [  # type: ignore[method-assign]
             {"memory_id": "mem-a", "bm25_score": 1.0},
-            {"memory_id": "mem-b", "bm25_score": 0.5},
+            {"memory_id": "mem-b", "bm25_score": 0.6},
+            {"memory_id": "mem-c", "bm25_score": 0.5},
         ]
-        rerank_client = FakeRerankClient(["mem-b", "mem-a"])
+        # Reranker reverses: mem-c best, mem-a worst
+        rerank_client = FakeRerankClient(["mem-c", "mem-b", "mem-a"])
 
         results = ProjectDecisionRetriever(
             store,
             rerank_client=rerank_client,  # type: ignore[arg-type]
-        ).retrieve(ProjectDecisionQuery(query_text="SQLite", project_id="project-1"), limit=2)
+        ).retrieve(ProjectDecisionQuery(query_text="SQLite", project_id="project-1"), limit=3)
 
-        assert [result.decision.decision_id for result in results] == ["mem-b", "mem-a"]
-        assert rerank_client.calls[0]["top_k"] == 2
-        assert results[0].memory_item.extra["rerank_score"] == 1.0
+        # With top-rank bonus and weight=2.0, mem-a (RRF rank 1) is strongly protected
+        # Position-aware blend: rank 1=75% RRF, rank 2=75% RRF, rank 3=75% RRF
+        # mem-c benefits from reranker but starts from RRF rank 3
+        ids = [result.decision.decision_id for result in results]
+        assert "mem-a" in ids
+        assert "mem-c" in ids
+        assert rerank_client.calls[0]["top_k"] == 3
+        for result in results:
+            assert "rrf_weight" in result.memory_item.extra
+            assert "rerank_score" in result.memory_item.extra
+            assert "rerank_score_norm" in result.memory_item.extra
+            assert "time_decay" in result.memory_item.extra
     finally:
         _cleanup(store)
 

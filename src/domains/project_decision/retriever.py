@@ -141,13 +141,40 @@ class ProjectDecisionRetriever:
             effective_limit,
         )
         candidate_limit = max(effective_limit * 5, 30)
-        bm25_hits = self._bm25_recall(domain_query, limit=candidate_limit)
-        vector_hits = self._vector_recall(domain_query, limit=candidate_limit)
-        recall_lists = [hits for hits in (bm25_hits, vector_hits) if hits]
-        if not recall_lists:
+        variants = domain_query.query_variants or [domain_query.query_text]
+        filters: dict[str, Any] = {}
+        if domain_query.project_id:
+            filters["project_id"] = domain_query.project_id
+        if domain_query.team_id:
+            filters["team_id"] = domain_query.team_id
+        if domain_query.workspace_id:
+            filters["workspace_id"] = domain_query.workspace_id
+        if domain_query.stage:
+            filters["stage"] = domain_query.stage
+
+        all_recall_lists: list[list[ProjectDecisionRecallHit]] = []
+        for i, variant in enumerate(variants):
+            weight = 2.0 if i == 0 else 1.0
+            bm25 = self._bm25_recall(
+                variant,
+                limit=candidate_limit,
+                weight=weight,
+                include_superseded=domain_query.include_superseded,
+            )
+            vec = self._vector_recall(
+                variant,
+                limit=candidate_limit,
+                weight=weight,
+                filters=filters or None,
+            )
+            for hits in (bm25, vec):
+                if hits:
+                    all_recall_lists.append(hits)
+
+        if not all_recall_lists:
             rule_hits = self._rule_recall(domain_query, limit=candidate_limit)
-            recall_lists = [rule_hits] if rule_hits else []
-        fused_hits = self._rrf_fuse(recall_lists, limit=candidate_limit)
+            all_recall_lists = [rule_hits] if rule_hits else []
+        fused_hits = self._rrf_fuse(all_recall_lists, limit=candidate_limit)
         if not fused_hits:
             return []
         hit_by_id = {hit.memory_id: hit for hit in fused_hits}
@@ -174,18 +201,24 @@ class ProjectDecisionRetriever:
         limit: int,
         k: int = 60,
     ) -> list[ProjectDecisionRecallHit]:
-        """使用 RRF 融合多路召回列表，并保留各路证据 metadata。"""
+        """使用 RRF 融合多路召回列表，支持原始查询加权和 top-rank 加分。"""
         if not ranked_lists:
             return []
-        source_weights = {"bm25": 1.0, "vector": 1.0, "rule": 0.5}
         score_by_id: dict[str, float] = {}
         metadata_by_id: dict[str, dict[str, Any]] = {}
+        bonus_by_id: dict[str, set[str]] = {}
         for ranked_list in ranked_lists:
             for hit in ranked_list:
                 source = hit.source
+                variant_weight = float(hit.metadata.get("variant_weight", 1.0))
                 score_by_id[hit.memory_id] = score_by_id.get(hit.memory_id, 0.0) + (
-                    source_weights.get(source, 1.0) / (k + hit.rank)
+                    variant_weight / (k + hit.rank)
                 )
+                # Top-rank bonus: once per document, not per list
+                if hit.rank == 1:
+                    bonus_by_id.setdefault(hit.memory_id, set()).add("top")
+                elif hit.rank in (2, 3):
+                    bonus_by_id.setdefault(hit.memory_id, set()).add("high")
                 metadata = metadata_by_id.setdefault(
                     hit.memory_id,
                     {"recall_sources": [], "matched_fields": []},
@@ -206,6 +239,11 @@ class ProjectDecisionRetriever:
                         metadata[key] = max(float(metadata.get(key, 0.0)), float(value))
                     else:
                         metadata[key] = value
+        for memory_id, tiers in bonus_by_id.items():
+            if "top" in tiers:
+                score_by_id[memory_id] = score_by_id.get(memory_id, 0.0) + 0.05
+            elif "high" in tiers:
+                score_by_id[memory_id] = score_by_id.get(memory_id, 0.0) + 0.02
         ordered = sorted(score_by_id.items(), key=lambda item: (item[1], item[0]), reverse=True)
         max_score = ordered[0][1] if ordered else 1.0
         fused: list[ProjectDecisionRecallHit] = []
@@ -365,111 +403,107 @@ class ProjectDecisionRetriever:
             reranked.append(result)
         return sorted(reranked, key=lambda r: r.score, reverse=True)[:limit]
 
-    def _bm25_recall(self, query: ProjectDecisionQuery, *, limit: int) -> list[ProjectDecisionRecallHit]:
-        """使用 MemoryCore FTS5 BM25 索引返回有序关键词召回列表，多 query variant 合并最佳分。"""
-        variants = query.query_variants or [query.query_text]
-        best_by_id: dict[str, tuple[float, str]] = {}
-        for variant in variants:
-            try:
-                rows = self.memory_store.search_bm25(
-                    variant,
-                    domain="project_decision",
-                    status=None if query.include_superseded else "active",
-                    limit=limit,
-                )
-            except Exception:
-                logger.warning(
-                    "action=bm25_recall_failed domain=project_decision query_text=%s",
-                    variant,
-                    exc_info=True,
-                )
-                continue
-            for row in rows:
-                memory_id = row.get("memory_id")
-                score = row.get("bm25_score")
-                if not isinstance(memory_id, str) or not isinstance(score, (int, float)):
-                    continue
-                old_score = best_by_id.get(memory_id, (0.0, ""))[0]
-                if float(score) > old_score:
-                    best_by_id[memory_id] = (float(score), variant)
-        ordered = sorted(best_by_id.items(), key=lambda item: (item[1][0], item[0]), reverse=True)
+    def _bm25_recall(
+        self,
+        query_text: str,
+        *,
+        limit: int,
+        weight: float = 1.0,
+        include_superseded: bool = False,
+    ) -> list[ProjectDecisionRecallHit]:
+        """单查询 BM25 关键词召回，weight 用于区分原始查询与扩展查询。"""
+        try:
+            rows = self.memory_store.search_bm25(
+                query_text,
+                domain="project_decision",
+                status=None if include_superseded else "active",
+                limit=limit,
+            )
+        except Exception:
+            logger.warning(
+                "action=bm25_recall_failed domain=project_decision query_text=%s",
+                query_text,
+                exc_info=True,
+            )
+            return []
         hits: list[ProjectDecisionRecallHit] = []
-        for rank, (memory_id, (score, _variant)) in enumerate(ordered[:limit], start=1):
+        for rank, row in enumerate(rows, start=1):
+            memory_id = row.get("memory_id")
+            score = row.get("bm25_score")
+            if not isinstance(memory_id, str) or not isinstance(score, (int, float)):
+                continue
             hits.append(
                 ProjectDecisionRecallHit(
                     memory_id=memory_id,
                     source="bm25",
                     rank=rank,
-                    score=score,
-                    metadata={"bm25_score": score, "matched_fields": ["bm25"]},
+                    score=float(score),
+                    metadata={
+                        "bm25_score": float(score),
+                        "matched_fields": ["bm25"],
+                        "variant_weight": weight,
+                    },
                 )
             )
         return hits
 
-    def _vector_recall(self, query: ProjectDecisionQuery, *, limit: int) -> list[ProjectDecisionRecallHit]:
-        """使用向量索引返回有序语义召回列表，单个 query variant 失败不阻断其他路。"""
+    def _vector_recall(
+        self,
+        query_text: str,
+        *,
+        limit: int,
+        weight: float = 1.0,
+        filters: dict[str, Any] | None = None,
+    ) -> list[ProjectDecisionRecallHit]:
+        """单查询向量语义召回，weight 用于区分原始查询与扩展查询。"""
         if self.embedding_store is None:
             return []
-        filters: dict[str, Any] = {}
-        if query.project_id:
-            filters["project_id"] = query.project_id
-        if query.team_id:
-            filters["team_id"] = query.team_id
-        if query.workspace_id:
-            filters["workspace_id"] = query.workspace_id
-        if query.stage:
-            filters["stage"] = query.stage
-        result: dict[str, tuple[float, str]] = {}
-        variants = query.query_variants or [query.query_text]
-        for variant in variants:
-            try:
-                if self.embedding_client is not None:
-                    hits = self.embedding_store.query_by_embedding(
-                        self.embedding_client.embed_text(variant),
-                        domain="project_decision",
-                        top_k=limit,
-                        filters=filters or None,
-                    )
-                else:
-                    hits = self.embedding_store.query_similar(
-                        variant,
-                        domain="project_decision",
-                        top_k=limit,
-                        filters=filters or None,
-                    )
-            except Exception:
-                logger.warning(
-                    "action=vector_recall_failed domain=project_decision query_text=%s",
-                    variant,
-                    exc_info=True,
+        try:
+            if self.embedding_client is not None:
+                hits = self.embedding_store.query_by_embedding(
+                    self.embedding_client.embed_text(query_text),
+                    domain="project_decision",
+                    top_k=limit,
+                    filters=filters,
                 )
-                continue
-            for hit in hits:
-                memory_id = hit.get("memory_id") or hit.get("id")
-                if not isinstance(memory_id, str):
-                    continue
-                distance = hit.get("distance")
-                similarity = 0.0
-                if isinstance(distance, (int, float)):
-                    similarity = max(0.0, min(1.0, 1.0 - float(distance)))
-                old_similarity = result.get(memory_id, (0.0, ""))[0]
-                if similarity >= old_similarity:
-                    result[memory_id] = (similarity, variant)
-        ordered = sorted(result.items(), key=lambda item: (item[1][0], item[0]), reverse=True)
-        return [
-            ProjectDecisionRecallHit(
-                memory_id=memory_id,
-                source="vector",
-                rank=rank,
-                score=similarity,
-                metadata={
-                    "vector_similarity": similarity,
-                    "vector_query": variant,
-                    "matched_fields": ["vector_similarity"],
-                },
+            else:
+                hits = self.embedding_store.query_similar(
+                    query_text,
+                    domain="project_decision",
+                    top_k=limit,
+                    filters=filters,
+                )
+        except Exception:
+            logger.warning(
+                "action=vector_recall_failed domain=project_decision query_text=%s",
+                query_text,
+                exc_info=True,
             )
-            for rank, (memory_id, (similarity, variant)) in enumerate(ordered[:limit], start=1)
-        ]
+            return []
+        result: list[ProjectDecisionRecallHit] = []
+        for rank, hit in enumerate(hits, start=1):
+            memory_id = hit.get("memory_id") or hit.get("id")
+            if not isinstance(memory_id, str):
+                continue
+            distance = hit.get("distance")
+            similarity = 0.0
+            if isinstance(distance, (int, float)):
+                similarity = max(0.0, min(1.0, 1.0 - float(distance)))
+            result.append(
+                ProjectDecisionRecallHit(
+                    memory_id=memory_id,
+                    source="vector",
+                    rank=rank,
+                    score=similarity,
+                    metadata={
+                        "vector_similarity": similarity,
+                        "vector_query": query_text,
+                        "matched_fields": ["vector_similarity"],
+                        "variant_weight": weight,
+                    },
+                )
+            )
+        return result
 
     def _rule_recall(self, query: ProjectDecisionQuery, *, limit: int) -> list[ProjectDecisionRecallHit]:
         """在 BM25 和向量均无命中时，使用原规则匹配作为 fallback 召回。"""
