@@ -37,8 +37,7 @@ class TeamRetentionLLMExtraction:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "TeamRetentionLLMExtraction":
-        candidate_flag = data.get("is_team_retention_candidate")
-        is_team = bool(data.get("is_team_retention") if candidate_flag is None else candidate_flag)
+        is_team = bool(data.get("is_team_retention", True))
         return cls(
             is_team_retention=is_team,
             fact_type=clean_text(str(data.get("fact_type") or "team_fact")),

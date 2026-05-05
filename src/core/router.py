@@ -43,6 +43,12 @@ class DomainRouter:
             text,
             event_type=event.event_type,
         )
+        if result.method != "keyword_rule" and result.confidence < 0.6:
+            return RouteDecision(
+                primary=[],
+                secondary=[],
+                reason=f"llm low confidence ({result.confidence:.2f}): {result.reason}",
+            )
         is_fallback = (
             result.method == "keyword_rule"
             and result.confidence <= 0.3
