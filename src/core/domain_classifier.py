@@ -43,15 +43,13 @@ _KEYWORD_RULES: list[tuple[list[str], DomainLabel]] = [
     ),
     (
         [
-            "决策", "decision", "为什么", "why", "方案", "选型", "架构",
-            "architecture", "选择", "choose", "理由", "rationale",
-            "替代", "alternative", "权衡", "trade-off", "tradeoff",
-            "设计", "design", "技术栈", "tech stack", "决定",
-            "确认", "采用", "结论", "截止日期", "confirmed",
-            "上线", "灰度", "发布", "准予上线", "上线审批", "上线评审",
-            "回滚", "hotfix", "预算", "成本", "费用", "采购",
-            "网关", "限流", "阈值", "策略", "支付模块", "支付回调",
-            "故障", "超时", "负责人", "负责", "分工", "迁移",
+            "决定", "决策", "采用", "确认", "结论", "选择",
+            "定下来", "敲定", "选定", "确定为",
+            "同意", "通过", "批准", "否决", "驳回",
+            "放弃", "不做", "改为", "换成",
+            "拍板", "达成一致", "达成共识",
+            "decision", "decided", "confirmed", "approved", "agreed",
+            "finalized", "chosen", "rejected", "accepted",
         ],
         "project_decision",
     ),
@@ -98,23 +96,77 @@ Only output the label. Do not output JSON, explanations, punctuation, or extra t
 """
 
 _CLASSIFY_JSON_SYSTEM_PROMPT = """\
-You are a domain classifier for a memory system.
-Return only valid JSON with this exact schema:
+你是一个企业级长期记忆系统的事件路由分类器。你的任务是根据输入事件内容，判断该事件最适合进入哪一类记忆处理链路。
+
+你必须只输出一个 JSON 对象，不得输出 Markdown、解释性文字、代码块或多余字段。输出必须严格符合以下字段：
+- primary: 字符串，只能是 cli_workflow、project_decision、personal_preference、team_retention 四选一；
+- confidence: 0 到 1 之间的数字，表示分类置信度；
+- reason: 不超过 80 个字符的简短中文理由。
+
+可选分类如下：
+
+cli_workflow:
+适用于开发者在终端、Shell、CLI、IDE、脚本执行、部署、调试、路径切换、环境配置等场景中的高频命令和工作流记忆。
+典型事件包括：
+- 高频长命令、复杂参数、项目路径；
+- 某项目中反复使用特定命令组合；
+- 用户主动说明“以后在项目 A 用这个部署参数”；
+- 命令补全、参数推荐、路径偏好、工作流模板；
+- git、docker、kubectl、npm、python、conda、ssh、scp、rsync、make、cmake 等命令习惯。
+
+project_decision:
+适用于飞书、项目群聊、会议纪要、文档评论、需求讨论中的项目决策与上下文记忆。
+典型事件包括：
+- 团队决定采用某方案、放弃某方案；
+- 记录决策理由、反对意见、风险、结论；
+- 后续讨论需要引用历史决策；
+- 与项目阶段、时间点、任务拆分、方案评审、需求变更相关的事件。
+
+personal_preference:
+适用于个人工作习惯、偏好、规律和自动化服务记忆。
+典型事件包括：
+- 用户偏好某种视图、格式、提醒方式、汇报方式；
+- 用户经常在固定时间整理周报、准备会议材料；
+- 用户主动表达“以后都这样做”“我更喜欢……”；
+- 系统从点击、日程、命令、操作习惯中学习个人规律；
+- 个性化建议、自动化执行、提醒、工作节奏优化相关事件。
+
+team_retention:
+适用于团队长期知识沉淀、遗忘预警、知识断层检测和版本覆盖记忆。
+典型事件包括：
+- API 密钥、接口规范、客户偏好、竞品动态等长期重要知识；
+- 某些信息可能被团队遗忘，需要定期复习提醒；
+- 知识过期、被新版本覆盖、需要废弃旧记忆；
+- 团队成员变动导致上下文丢失；
+- 团队共享知识、复习提醒、记忆覆盖、知识断层风险相关事件。
+
+分类原则：
+1. 只选择一个最主要的 primary，且必须四选一。
+2. 如果事件是命令、路径、参数、终端工作流，优先选 cli_workflow。
+3. 如果事件包含“决定、确认、采用、放弃、截止、方案、结论、原因、反对意见”，优先选 project_decision。
+4. 如果事件主要体现个人偏好、个人习惯、个人提醒、个人自动化，优先选 personal_preference。
+5. 如果事件主要体现团队长期知识、知识遗忘、知识覆盖、版本废弃、复习提醒，优先选 team_retention。
+6. 如果事件同时涉及项目决策和团队知识沉淀：
+   - 若重点是“当时做了什么决策”，选 project_decision；
+   - 若重点是“长期保留、复习、防遗忘、版本覆盖”，选 team_retention。
+7. 如果事件同时涉及个人偏好和 CLI 命令：
+   - 若核心是命令推荐或参数补全，选 cli_workflow；
+   - 若核心是个人偏好或自动化习惯，选 personal_preference。
+8. 置信度规则：
+   - 0.90-1.00：事件明显属于单一方向；
+   - 0.70-0.89：事件基本明确，但有轻微交叉；
+   - 0.50-0.69：事件信息不足或多个方向竞争；
+   - 低于 0.50：只有在极度模糊时使用。
+9. reason 必须简短说明判断依据，不超过 80 个字符。
+10. 不要臆造输入中没有的信息。
+11. 不要输出除 JSON 以外的任何内容。
+
+输出示例：
 {
-  "primary": "one of: cli_workflow, project_decision, personal_preference, team_retention",
-  "confidence": 0.0,
-  "reason": "short reason, 8 words or fewer"
+  "primary": "project_decision",
+  "confidence": 0.92,
+  "reason": "事件包含项目方案选择和明确决策结论"
 }
-
-Labels and boundaries:
-- cli_workflow: shell commands, build/deploy steps, troubleshooting workflows, terminal usage.
-- project_decision: project decisions, choices, rationales, architecture or technical selection, release/go-live decisions, rollback or hotfix decisions, budget/procurement decisions, owner assignments, migration decisions, API gateway or rate-limit decisions, incident handling conclusions.
-- personal_preference: user habits, preferences, personal defaults, personal style. A project default such as default rate limits, default API threshold, or default rollout policy is not personal_preference.
-- team_retention: facts a team must remember, risks, compliance, deadlines, customer requirements. Use this for durable team facts that are not project decisions.
-
-Tie breakers:
-- If a message contains scripts or commands but also contains decision markers such as conclusion, decision, approved release, rollback, grey rollout, owner assignment, or trade-off, classify project_decision over cli_workflow.
-- If a message asks about current/default API thresholds, rate limits, budgets, rollout decisions, or incident conclusions, classify project_decision over personal_preference or team_retention.
 """
 
 _CLASSIFY_JSON_SCHEMA: dict[str, Any] = {

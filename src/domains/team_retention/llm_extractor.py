@@ -95,21 +95,55 @@ class TeamRetentionLLMExtractor:
 
 def _system_prompt() -> str:
     return (
-        "你是团队长期记忆抽取器。从事件文本中提取需要团队长期记住的关键事实。"
-        "对每条事实，你必须给出以下定性判断（不要输出数值分数）：\n"
-        "- certainty: explicit（明确陈述）/ inferred（可从上下文推断）/ speculative（猜测或传闻）\n"
-        "- evidence_quality: direct_quote（原文直接引用）/ paraphrased（转述原文内容）/ implied（隐含在上下文中）\n"
-        "- fact_specificity: specific（包含具体值或明确指令）/ general（一般性描述）/ vague（模糊提及）\n"
-        "- risk_level: high（安全/合规/法律风险）/ medium（业务影响）/ low（仅供参考）\n"
-        "- time_sensitivity: urgent（需立即处理）/ near_term（近期相关）/ stable（长期不变）\n"
-        "- scope_impact: team_wide（影响全团队）/ project（影响单个项目）/ individual（影响个人）\n"
-        "- irreversibility: irreversible（不可逆操作）/ reversible（可撤销）/ low_cost（低代价）\n\n"
-        "判断标准:\n"
-        "- 如果信息是猜测、传闻或含糊不清 → certainty=speculative, evidence_quality=implied\n"
-        "- 如果信息明确、有具体值且可追溯 → certainty=explicit, evidence_quality=direct_quote\n"
-        "- 如果你不确定是否为团队知识 → is_team_retention=false\n"
-        "- 如果输入包含 [REDACTED]，保留该标记，不要尝试还原\n"
-        "只返回 JSON，不要输出 Markdown、解释文字或额外字段。"
+        """
+你是企业级长期记忆系统的 team_retention 抽取器。
+
+输入事件已被路由到 team_retention。你的任务是从事件中抽取团队需要长期记住的事实，并标注证据质量、风险、影响范围和复习策略。只输出严格 JSON，不输出 Markdown、解释或额外字段。
+
+关注的信息包括：
+- API、接口、配置、鉴权、密钥、token、环境变量；
+- 客户偏好、客户要求、客户禁忌；
+- 竞品动态、市场变化、平台规则变化；
+- 合规要求、安全规范、权限约束；
+- 团队约定、项目背景、流程规范、系统设计约束；
+- 风险、事故经验、故障教训、容易遗忘但会导致返工/错误/延期的信息；
+- 截止时间、上线时间、交付节点；
+- 新规则覆盖旧规则、版本更新、旧信息废弃。
+
+字段填写规则：
+- fact_type：api_key / customer_preference / competitor_update / compliance / deadline / risk / team_fact。
+- fact_value：一句话写清核心事实，要求具体、可检索、不得编造。
+- certainty：explicit 表示明确陈述；inferred 表示合理推断；speculative 表示猜测或未确认。
+- evidence_quality：direct_quote 表示有直接原文；paraphrased 表示可转述；implied 表示主要靠上下文推断。
+- fact_specificity：specific 表示对象/时间/约束/范围明确；general 表示信息较完整但缺细节；vague 表示模糊。
+- risk_level：high / medium / low，表示遗忘后的风险。
+- time_sensitivity：urgent / near_term / stable，表示时间敏感性。
+- scope_impact：team_wide / project / individual，表示影响范围。
+- irreversibility：irreversible / reversible / low_cost，表示遗忘或误用后的恢复成本。
+- review_policy：ebbinghaus / fixed / none。长期易遗忘知识选 ebbinghaus；明确时间节点选 fixed；无需提醒选 none。
+- evidence_text：支持 fact_value 的最小原文证据片段。
+- reason：不超过 80 个中文字符；可为 null。
+- summary：一句话记忆摘要；可为 null。
+- primary_entity：格式为 {"name": string|null, "type": "customer|project|api|system|competitor|policy|team|person|unknown"}。
+- topic_key：用于去重和归并的短字符串，如 payment_api_auth；不明确填 null。
+- owner、valid_from、valid_to、version_group_hint：输入未明确则填 null。
+
+判断优先级：
+1. 密钥、token、鉴权优先归为 api_key。
+2. 合规、安全、政策优先归为 compliance。
+3. 客户要求优先归为 customer_preference。
+4. 竞品或市场变化优先归为 competitor_update。
+5. 明确时间节点优先归为 deadline。
+6. 风险、事故、隐患优先归为 risk。
+7. 其他团队长期事实归为 team_fact。
+
+约束：
+1. 只基于输入事件，不得臆造。
+2. 输入信息较弱时，也要输出 JSON，并用 speculative / implied / vague / low / none 表示低质量。
+3. 所有枚举必须严格使用规定值。
+4. 时间优先用 YYYY-MM-DD；不明确填 null。
+5. 只输出合法 JSON。
+"""
     )
 
 
@@ -132,7 +166,6 @@ def _json_schema() -> dict[str, Any]:
     return {
         "type": "object",
         "properties": {
-            "is_team_retention": {"type": "boolean"},
             "fact_type": {
                 "type": "string",
                 "enum": [
@@ -146,18 +179,63 @@ def _json_schema() -> dict[str, Any]:
                 ],
             },
             "fact_value": {"type": "string"},
-            "certainty": {"type": "string", "enum": ["explicit", "inferred", "speculative"]},
-            "evidence_quality": {"type": "string", "enum": ["direct_quote", "paraphrased", "implied"]},
-            "fact_specificity": {"type": "string", "enum": ["specific", "general", "vague"]},
-            "risk_level": {"type": "string", "enum": ["low", "medium", "high"]},
-            "time_sensitivity": {"type": "string", "enum": ["urgent", "near_term", "stable"]},
-            "scope_impact": {"type": "string", "enum": ["team_wide", "project", "individual"]},
-            "irreversibility": {"type": "string", "enum": ["irreversible", "reversible", "low_cost"]},
-            "review_policy": {"type": "string", "enum": ["ebbinghaus", "fixed", "none"]},
+            "certainty": {
+                "type": "string",
+                "enum": ["explicit", "inferred", "speculative"],
+            },
+            "evidence_quality": {
+                "type": "string",
+                "enum": ["direct_quote", "paraphrased", "implied"],
+            },
+            "fact_specificity": {
+                "type": "string",
+                "enum": ["specific", "general", "vague"],
+            },
+            "risk_level": {
+                "type": "string",
+                "enum": ["low", "medium", "high"],
+            },
+            "time_sensitivity": {
+                "type": "string",
+                "enum": ["urgent", "near_term", "stable"],
+            },
+            "scope_impact": {
+                "type": "string",
+                "enum": ["team_wide", "project", "individual"],
+            },
+            "irreversibility": {
+                "type": "string",
+                "enum": ["irreversible", "reversible", "low_cost"],
+            },
+            "review_policy": {
+                "type": "string",
+                "enum": ["ebbinghaus", "fixed", "none"],
+            },
             "evidence_text": {"type": "string"},
             "reason": {"type": ["string", "null"]},
             "summary": {"type": ["string", "null"]},
-            "primary_entity": {"type": "object"},
+            "primary_entity": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": ["string", "null"]},
+                    "type": {
+                        "type": "string",
+                        "enum": [
+                            "customer",
+                            "project",
+                            "api",
+                            "system",
+                            "competitor",
+                            "policy",
+                            "team",
+                            "person",
+                            "unknown",
+                        ],
+                    },
+                },
+                "required": ["name", "type"],
+                "additionalProperties": False,
+            },
             "topic_key": {"type": ["string", "null"]},
             "owner": {"type": ["string", "null"]},
             "valid_from": {"type": ["string", "null"]},
@@ -165,7 +243,6 @@ def _json_schema() -> dict[str, Any]:
             "version_group_hint": {"type": ["string", "null"]},
         },
         "required": [
-            "is_team_retention",
             "fact_type",
             "fact_value",
             "certainty",
@@ -177,6 +254,7 @@ def _json_schema() -> dict[str, Any]:
             "irreversibility",
             "evidence_text",
         ],
+        "additionalProperties": False,
     }
 
 

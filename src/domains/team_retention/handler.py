@@ -48,6 +48,7 @@ class TeamRetentionDomainHandler:
             team_retention_store,
             embedding_store=embedding_store,
             embedding_client=embedding_client,
+            decay_rate=0.001,
         )
         self.version_manager = version_manager or TeamRetentionVersionManager(memory_store, team_retention_store)
         self.llm_client = llm_client

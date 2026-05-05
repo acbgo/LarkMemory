@@ -182,7 +182,8 @@ class OpenAIProvider(LLMProvider):
         if response_format is not None:
             request_kwargs["response_format"] = response_format
         if self.config.extra_body:
-            request_kwargs.update(self.config.extra_body)
+            request_kwargs.setdefault("extra_body", {})
+            request_kwargs["extra_body"].update(self.config.extra_body)
         request_kwargs.update(kwargs)
 
         try:

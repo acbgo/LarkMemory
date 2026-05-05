@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import importlib
 import logging
+from contextlib import asynccontextmanager
+from typing import Any
 
 from fastapi import FastAPI
 
@@ -20,6 +23,8 @@ ROUTER_MODULES = [
     "src.api.proactive",
 ]
 
+_REMINDER_TASK_ATTR = "_team_reminder_task"
+
 
 def create_app(settings: AppSettings | None = None) -> FastAPI:
     """创建 FastAPI 应用，输入可选 AppSettings，返回已注册中间件和路由的 app。"""
@@ -30,7 +35,17 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
         resolved_settings.log_file,
     )
 
-    app = FastAPI(title=resolved_settings.app_name, debug=resolved_settings.debug)
+    @asynccontextmanager
+    async def lifespan(app: FastAPI) -> Any:
+        _start_reminder_loop(app)
+        yield
+        _stop_reminder_loop(app)
+
+    app = FastAPI(
+        title=resolved_settings.app_name,
+        debug=resolved_settings.debug,
+        lifespan=lifespan,
+    )
     app.state.settings = resolved_settings
 
     if resolved_settings.request_log_enabled:
@@ -38,6 +53,50 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
 
     register_routers(app)
     return app
+
+
+def _start_reminder_loop(app: FastAPI) -> None:
+    logger = logging.getLogger(__name__)
+    try:
+        from src.app.dependencies import (
+            get_feishu_notifier,
+            get_memory_service,
+            get_team_retention_store,
+        )
+        from src.domains.team_retention.reminder_loop import TeamRetentionReminderLoop
+        from src.sources.feishu.client.config import load_feishu_settings
+    except ImportError:
+        return
+
+    feishu = load_feishu_settings()
+    if not feishu.default_chat_id:
+        return
+
+    notifier = get_feishu_notifier()
+    if notifier is None:
+        return
+
+    memory_service = get_memory_service()
+    team_store = get_team_retention_store()
+
+    loop = TeamRetentionReminderLoop(
+        memory_service,
+        notifier,
+        team_store,
+        chat_id=feishu.default_chat_id,
+        interval_seconds=3600,
+    )
+    task = asyncio.create_task(loop.run())
+    setattr(app.state, _REMINDER_TASK_ATTR, task)
+    logger.info("action=reminder_loop_started chat_id=%s", feishu.default_chat_id)
+
+
+def _stop_reminder_loop(app: FastAPI) -> None:
+    logger = logging.getLogger(__name__)
+    task = getattr(app.state, _REMINDER_TASK_ATTR, None)
+    if task is not None:
+        task.cancel()
+        logger.info("action=reminder_loop_stopped")
 
 
 def register_routers(app: FastAPI) -> list[str]:

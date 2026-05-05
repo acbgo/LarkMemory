@@ -257,7 +257,6 @@ def get_memory_service() -> MemoryService:
         llm_client=get_llm_client(),
         domain_handlers=handlers,
         proactive_engine=proactive_engine,
-        rerank_client=get_rerank_client(),
     )
 
 

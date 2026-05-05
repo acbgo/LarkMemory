@@ -27,10 +27,6 @@ from src.retrieval import (
 from src.schemas import MemoryCore, NormalizedEvent
 from src.storage import EmbeddingStore, EventStore, MemoryCoreStore
 from src.llm import EmbeddingClient, RerankClient
-<<<<<<< HEAD
-=======
-from src.llm.rerank_base import RerankDocument
->>>>>>> f887be784d9c5f28340da7fbad9b3edbfd9f9db6
 from src.utils.ids import query_id as new_query_id
 
 
@@ -80,7 +76,6 @@ class MemoryService:
         access_tracker: AccessTracker | None = None,
         domain_handlers: Iterable[MemoryDomainHandler] | None = None,
         proactive_engine: ProactiveEngine | None = None,
-        rerank_client: RerankClient | None = None,
     ) -> None:
         self.event_store = event_store
         self.memory_store = memory_store
@@ -280,15 +275,11 @@ class MemoryService:
                 )
                 for index, (_domain, ranked) in enumerate(domain_ranked)
             ]
-<<<<<<< HEAD
             ranked = await Reranker(rerank_client=self.rerank_client).rerank(
                 candidates,
                 rewritten,
                 top_k=top_k,
             )
-=======
-            ranked = await self._rerank_candidates(candidates, rewritten, top_k=top_k)
->>>>>>> f887be784d9c5f28340da7fbad9b3edbfd9f9db6
             for result in ranked:
                 self.access_tracker.record_access(result.item.memory_id, query_id=query_id)
             trace = None
@@ -324,15 +315,11 @@ class MemoryService:
             )
             for index, row in enumerate(rows)
         ]
-<<<<<<< HEAD
         ranked = await Reranker(rerank_client=self.rerank_client).rerank(
             candidates,
             rewritten,
             top_k=top_k,
         )
-=======
-        ranked = await self._rerank_candidates(candidates, rewritten, top_k=top_k)
->>>>>>> f887be784d9c5f28340da7fbad9b3edbfd9f9db6
         for result in ranked:
             self.access_tracker.record_access(result.item.memory_id, query_id=query_id)
         trace = None
