@@ -7,7 +7,7 @@ from src.core.service import MemoryService
 from ..events.models import FeishuCardActionEvent
 
 
-SUPPORTED_CARD_ACTIONS = {"reviewed", "snooze", "expire", "forget"}
+SUPPORTED_CARD_ACTIONS = {"reviewed", "snooze", "expire", "forget", "acknowledge", "promote_to_active", "dismiss_candidate"}
 
 
 def parse_card_action(raw_action: dict[str, Any]) -> FeishuCardActionEvent:
@@ -59,6 +59,9 @@ def _success_message(action: str) -> str:
         "snooze": "已顺延提醒",
         "expire": "已废弃记忆",
         "forget": "已遗忘记忆",
+        "acknowledge": "已确认",
+        "promote_to_active": "已创建复习提醒",
+        "dismiss_candidate": "已忽略",
     }.get(action, "操作已完成")
 
 

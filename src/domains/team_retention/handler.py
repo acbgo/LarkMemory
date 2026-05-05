@@ -39,6 +39,8 @@ class TeamRetentionDomainHandler:
         retriever: TeamRetentionRetriever | None = None,
         version_manager: TeamRetentionVersionManager | None = None,
         arbitrator: Any | None = None,
+        notifier: Any | None = None,
+        chat_id: str | None = None,
     ) -> None:
         self.memory_store = memory_store
         self.team_retention_store = team_retention_store
@@ -62,6 +64,8 @@ class TeamRetentionDomainHandler:
         else:
             self.arbitrator = None
         self.embedding_indexer = embedding_indexer
+        self.notifier = notifier
+        self.chat_id = chat_id
 
     def ingest_event(self, event: NormalizedEvent, runtime: DomainRuntime) -> DomainIngestResult:
         if self.llm_client is not None:
@@ -211,11 +215,46 @@ class TeamRetentionDomainHandler:
 
         self.embedding_indexer.upsert(memory, status=final_status)
 
+        self._maybe_send_ingest_card(memory, final_status)
+
         return DomainIngestResult(
             memory_ids=[memory_id],
             candidate_count=1,
             message=f"team_retention {final_status}: {admission.reason}",
         )
+
+    def _maybe_send_ingest_card(self, memory: TeamRetentionMemory, status: str) -> None:
+        if self.notifier is None or not self.chat_id:
+            return
+        suggestion = self._build_ingest_suggestion(memory)
+        if not suggestion:
+            return
+        try:
+            if status == "active":
+                self.notifier.send_team_memory_created(self.chat_id, suggestion)
+            elif status == "candidate":
+                self.notifier.send_candidate_confirmation(self.chat_id, suggestion)
+        except Exception:
+            logger.warning(
+                "action=ingest_card_failed memory_id=%s status=%s",
+                memory.retention_id,
+                status,
+                exc_info=True,
+            )
+
+    def _build_ingest_suggestion(self, memory: TeamRetentionMemory) -> dict[str, Any] | None:
+        row = self.memory_store.get_memory(memory.retention_id)
+        if row is None:
+            return None
+        return {
+            "memory_id": memory.retention_id,
+            "content": memory.fact_value,
+            "due_at": memory.next_review_at or "待计算",
+            "metadata": {
+                "risk_level": memory.risk_level,
+                "fact_type": memory.fact_type,
+            },
+        }
 
     # ------------------------------------------------------------------
     # Rule fallback path
@@ -362,6 +401,29 @@ class TeamRetentionDomainHandler:
                 memory_id=memory_id,
                 updated=True,
                 message=f"next_review_at={next_review_at}",
+            )
+        if action == "promote_to_active":
+            if memory_id is None:
+                raise ValueError("memory_id is required")
+            self.memory_store.update_memory_status(memory_id, "active")
+            memory = self.team_retention_store.get_memory(memory_id)
+            if memory is not None:
+                self.team_retention_store.create_review_schedule(memory)
+            return DomainUpdateResult(
+                action=action,
+                memory_id=memory_id,
+                updated=True,
+                message="promoted to active with review schedule",
+            )
+        if action == "dismiss_candidate":
+            if memory_id is None:
+                raise ValueError("memory_id is required")
+            self.memory_store.update_memory_status(memory_id, "forgotten")
+            return DomainUpdateResult(
+                action=action,
+                memory_id=memory_id,
+                updated=True,
+                message="candidate dismissed",
             )
         return None
 

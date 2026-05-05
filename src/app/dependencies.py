@@ -232,12 +232,16 @@ def get_memory_service() -> MemoryService:
         embedding_client=get_embedding_client(),
         llm_client=get_llm_client(),
     )
+    feishu_notifier = get_feishu_notifier()
+    feishu_settings = load_feishu_settings()
     team_handler = TeamRetentionDomainHandler(
         get_memory_core_store(),
         get_team_retention_store(),
         embedding_store=get_embedding_store(),
         embedding_client=get_embedding_client(),
         llm_client=get_llm_client(),
+        notifier=feishu_notifier,
+        chat_id=feishu_settings.default_chat_id,
     )
     cli_handler = CLIWorkflowDomainHandler(
         get_memory_core_store(),
