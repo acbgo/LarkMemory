@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import shutil
+import uuid
+from pathlib import Path
+
 import pytest
 from src.domains.cli_workflow.extractor import CLIWorkflowExtractor, _is_trivial, _has_known_prefix, _has_flags
 from src.domains.cli_workflow.models import CLIWorkflowCandidate
@@ -165,6 +169,37 @@ class TestShellExtraction:
         event = make_shell_event("")
         candidates = extractor.extract(event)
         assert len(candidates) == 0
+
+    def test_python_script_path_is_stored_as_absolute_command_identity(self):
+        extractor = CLIWorkflowExtractor()
+        tmp_path = Path.cwd() / ".tmp-tests" / f"cli-workflow-path-{uuid.uuid4().hex}"
+        script = tmp_path / "tools" / "cli_dummy.py"
+        script.parent.mkdir(parents=True)
+        try:
+            script.write_text("print('ok')", encoding="utf-8")
+            event = make_shell_event(
+                "python tools/cli_dummy.py --env staging",
+                project_id=tmp_path.name,
+            )
+            event.payload["cwd"] = str(tmp_path)
+
+            candidates = extractor.extract(event)
+
+            assert len(candidates) == 1
+            expected = str(script.resolve())
+            assert candidates[0].memory.command_name == f"python {expected}"
+            assert candidates[0].memory.command_template == f"python {expected} --env {{env}}"
+        finally:
+            shutil.rmtree(tmp_path, ignore_errors=True)
+
+    def test_git_command_identity_keeps_subcommand(self):
+        extractor = CLIWorkflowExtractor()
+        event = make_shell_event("git log --oneline --max-count 5")
+
+        candidates = extractor.extract(event)
+
+        assert len(candidates) == 1
+        assert candidates[0].memory.command_name == "git log"
 
 
 class TestOpenClawExtraction:

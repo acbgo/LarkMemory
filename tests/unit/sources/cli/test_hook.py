@@ -95,6 +95,13 @@ class TestHookTemplates:
         assert "_lark_memory_complete" in template
         assert "complete -D" in template
 
+    def test_bash_insert_completion_appends_all_suggestions(self):
+        template = get_hook_template("bash")
+        assert "local suggestions=($result)" in template
+        assert 'result="${suggestions[*]}"' in template
+        assert '"\\e[Z": _lark_memory_insert_completion' in template
+        assert "| head -1" not in template
+
     def test_zsh_template_has_completion_function(self):
         template = get_hook_template("zsh")
         assert "_lark_memory_complete_zsh" in template

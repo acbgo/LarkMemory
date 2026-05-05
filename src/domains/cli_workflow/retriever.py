@@ -109,7 +109,7 @@ class CLIWorkflowRetriever:
         for row in rows:
             if row.get("status") == "superseded":
                 continue
-            entities = list(row.get("entities") or row.get("entities_json") or [])
+            entities = _parse_entities(row)
             row_user = self._entity_value(entities, "user_id")
             row_project = self._entity_value(entities, "project_id")
 
@@ -121,14 +121,11 @@ class CLIWorkflowRetriever:
             if query.project_id and row_project and query.project_id != row_project:
                 continue
 
-            # 按基础命令名过滤：查询 "pytest" 不返回 "complete" 等无关命令
+            # 只在 query 可提取 base_command 时，按 command_name 子串匹配过滤
             if base_command:
                 row_cmd_name = self._entity_value(entities, "command_name")
-                if row_cmd_name:
-                    row_base = row_cmd_name.split()[0].lower() if row_cmd_name.split() else ""
-                    # base_command 必须是 command_name 的第一个单词或完整包含在其中
-                    if base_command != row_base and base_command not in row_cmd_name.lower():
-                        continue
+                if row_cmd_name and base_command not in row_cmd_name.lower():
+                    continue
 
             result.append(row)
         return result
@@ -220,7 +217,93 @@ class CLIWorkflowRetriever:
         for term in raw_terms:
             if term in stop_words or term.lower() in stop_words:
                 continue
-            if term not in result:
+     find .tmp-demo -type f -name "*.py" -maxdepth 2
+     tar -czf .tmp-demo/cli-test.tgz --exclude "*.bak" .tmp-demo/cli_dummy.py
+     grep -n --ignore-case --context 2 "dummy" .tmp-demo/cli_dummy.py
+     四、测试后看建议
+     
+     执行几条后等一下：
+     
+     sleep 2
+     然后查建议：
+     
+     lark-memory suggest git
+     lark-memory suggest tar
+     lark-memory suggest grep
+     lark-memory suggest find
+     测试补全：
+     
+     lark-memory complete -- "git log " ""
+     lark-memory complete -- "tar " ""
+     lark-memory complete -- "grep " ""
+     lark-memory complete -- "find " ""
+     小提醒：当前方向 A 的 extractor 对“已知工具链”更敏感，git、docker、kubectl、npm、uv、curl、lark-cli 这类更容易被记住。grep/find/tar 如果没在已知工具链列表里，只有带 flag 时才更可能被抽取，适合用来测边界。
+     
+     
+     
+     
+     
+     19:27
+     git grep -n "cli_workflow" -- src tests这个指令怎么推出
+     19:31
+     
+     
+     你是想问“这个命令怎么退出”对吧？
+     
+     git grep -n "cli_workflow" -- src tests 如果输出很多，通常会进入分页器 less。退出按：
+     
+     q
+     如果它还在执行、没进入分页器，可以按：
+     
+     Ctrl + C
+     下次不想进入分页器，可以这样跑：
+     
+     git --no-pager grep -n "cli_workflow" -- src tests
+     或者限制输出数量：
+     
+     git --no-pager grep -n "cli_workflow" -- src tests | head -20
+     
+     
+     
+     
+     19:31
+     
+     
+     
+     
+     
+     默认权限
+     
+     5.5
+     中
+     
+     
+     
+     本地模式
+     
+     main
+     
+     分支详情
+     
+     更改
+     +5,397
+     -9
+     
+     Git 操作
+     GitHub CLI 不可用
+     
+     生成结果
+     
+     127.0.0.1:8765
+     
+     Scenario Analysis.md
+     
+     team_retention_llm_prompt.md
+     
+     feishu-integration-usage.md
+     
+     来源
+     网页搜索       if term not in result:
                 result.append(term)
         return result
 
@@ -246,3 +329,17 @@ class CLIWorkflowRetriever:
             if entity.startswith(marker):
                 return entity[len(marker):]
         return None
+
+
+def _parse_entities(row: dict[str, Any]) -> list[str]:
+    """从 DB 行中解析 entities 字段，兼容 entities_json JSON 字符串和 entities 列表。"""
+    raw = row.get("entities") or row.get("entities_json") or []
+    if isinstance(raw, str):
+        import json
+        try:
+            return json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            return []
+    if isinstance(raw, list):
+        return raw
+    return []
