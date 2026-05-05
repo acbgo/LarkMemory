@@ -42,11 +42,6 @@ def query_id() -> str:
     return new_id("qry")
 
 
-def benchmark_run_id() -> str:
-    """生成 benchmark 运行 ID，返回 `bench-*` 字符串；用于评测任务追踪。"""
-    return new_id("bench")
-
-
 def request_id() -> str:
     """生成请求 ID，返回 `req-*` 字符串；用于 HTTP 请求日志关联。"""
     return new_id("req")

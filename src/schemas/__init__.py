@@ -14,11 +14,6 @@ from .llm import (
     ToolCall,
 )
 from .memory_core import MemoryCore, MemoryDomain, MemoryStatus
-from .benchmark import (
-    BenchmarkRunRequest,
-    BenchmarkRunResponse,
-    BenchmarkStatusResponse,
-)
 from .ingest import EventContextPayload, IngestRequest, IngestResponse
 from .proactive import ProactiveResponse, ProactiveSuggestion
 from .retrieve import MemoryHit, RetrieveRequest, RetrieveResponse
@@ -39,9 +34,6 @@ __all__ = [
     "EmbeddingResponsePayload",
     "EventType",
     "FunctionCall",
-    "BenchmarkRunRequest",
-    "BenchmarkRunResponse",
-    "BenchmarkStatusResponse",
     "IngestRequest",
     "IngestResponse",
     "LLMResponse",

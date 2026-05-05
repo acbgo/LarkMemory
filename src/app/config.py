@@ -52,6 +52,7 @@ class AppSettings:
     enable_proactive_push: bool = False
     proactive_decider_min_confidence: float = 0.8
     proactive_related_top_k: int = 3
+    proactive_min_related_score: float = 0.55
 
 
 def _load_env_file(path: str | None) -> dict[str, str]:
@@ -176,4 +177,5 @@ def load_settings() -> AppSettings:
             file_values,
         ),
         proactive_related_top_k=_env_int("LARKMEMORY_PROACTIVE_RELATED_TOP_K", 3, file_values),
+        proactive_min_related_score=_env_float("LARKMEMORY_PROACTIVE_MIN_RELATED_SCORE", 0.55, file_values),
     )

@@ -18,7 +18,6 @@ ROUTER_MODULES = [
     "src.api.rerank",
     "src.api.update",
     "src.api.proactive",
-    "src.api.benchmark",
 ]
 
 

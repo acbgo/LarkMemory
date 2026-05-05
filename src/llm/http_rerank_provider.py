@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any
 from urllib import request
 
 from .rerank_base import RerankScore
+
+logger = logging.getLogger(__name__)
 
 
 class HttpRerankProvider:
@@ -46,22 +49,76 @@ class HttpRerankProvider:
         )
         with request.urlopen(req, timeout=self.timeout) as response:
             data = json.loads(response.read().decode("utf-8"))
+        _log_response_shape(data)
         return _parse_scores(data)
 
 
-def _parse_scores(data: dict[str, Any]) -> list[RerankScore]:
+def _parse_scores(data: Any) -> list[RerankScore]:
     """Parse common rerank response shapes into indexed scores."""
-    if isinstance(data.get("scores"), list):
-        return [
-            RerankScore(index=index, score=float(score))
-            for index, score in enumerate(data["scores"])
-        ]
-    results = data.get("results") or data.get("data") or []
+    if isinstance(data, list):
+        results = data
+    elif not isinstance(data, dict):
+        return []
+    else:
+        if "error" in data:
+            raise RuntimeError(f"Rerank provider returned error: {data.get('error')}")
+        if isinstance(data.get("scores"), list):
+            return [
+                RerankScore(index=index, score=float(score))
+                for index, score in enumerate(data["scores"])
+            ]
+        results = data.get("results") or data.get("data") or []
+
     scores: list[RerankScore] = []
     for fallback_index, item in enumerate(results):
         if not isinstance(item, dict):
             continue
         index = int(item.get("index", fallback_index))
-        score = float(item.get("score", item.get("relevance_score", 0.0)))
+        score = _extract_score(item)
         scores.append(RerankScore(index=index, score=score))
     return scores
+
+
+def _extract_score(item: dict[str, Any]) -> float:
+    """Read the first supported score field from a rerank result object."""
+
+    for key in ("score", "relevance_score", "similarity", "logit"):
+        if key in item:
+            return float(item[key])
+    return 0.0
+
+
+def _log_response_shape(data: Any) -> None:
+    """Log compact rerank response diagnostics without document text."""
+
+    if isinstance(data, dict):
+        results = data.get("results") or data.get("data") or []
+        preview = results[:3] if isinstance(results, list) else []
+        logger.info(
+            "action=http_rerank_response_received keys=%s result_count=%s preview=%s",
+            sorted(data.keys()),
+            len(results) if isinstance(results, list) else 0,
+            [_compact_result(item) for item in preview if isinstance(item, dict)],
+        )
+        return
+    if isinstance(data, list):
+        logger.info(
+            "action=http_rerank_response_received keys=[] result_count=%s preview=%s",
+            len(data),
+            [_compact_result(item) for item in data[:3] if isinstance(item, dict)],
+        )
+        return
+    logger.info(
+        "action=http_rerank_response_received keys=[] result_count=0 raw_type=%s",
+        type(data).__name__,
+    )
+
+
+def _compact_result(item: dict[str, Any]) -> dict[str, Any]:
+    """Keep only routing and score fields from a provider result."""
+
+    return {
+        key: item.get(key)
+        for key in ("id", "index", "score", "relevance_score", "similarity", "logit")
+        if key in item
+    }

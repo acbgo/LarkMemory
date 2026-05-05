@@ -3,7 +3,6 @@ from __future__ import annotations
 import unittest
 
 from src.utils.ids import (
-    benchmark_run_id,
     event_id,
     is_typed_id,
     memory_id,
@@ -56,5 +55,4 @@ class TestIds(unittest.TestCase):
         self.assertTrue(event_id().startswith("evt-"))
         self.assertTrue(memory_id().startswith("mem-"))
         self.assertTrue(query_id().startswith("qry-"))
-        self.assertTrue(benchmark_run_id().startswith("bench-"))
         self.assertTrue(request_id().startswith("req-"))

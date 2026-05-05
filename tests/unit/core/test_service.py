@@ -10,7 +10,7 @@ from src.core.memory_core import create_memory_core
 from src.core.service import MemoryService
 from src.domains.project_decision import ProjectDecisionDomainHandler
 from src.domains.team_retention.handler import TeamRetentionDomainHandler
-from src.retrieval import RetrievalQuery
+from src.retrieval import RankedMemory, RetrievalQuery, memory_item_from_core
 from src.schemas import EventContext, NormalizedEvent
 from src.storage import EventStore, MemoryCoreStore, TeamRetentionStore
 
@@ -55,17 +55,20 @@ class FakeRetrieveLLM:
 
 
 class SpyRetrieveHandler:
-    domain = "project_decision"
-
-    def __init__(self) -> None:
+    def __init__(self, domain: str = "project_decision", rows: list[object] | None = None) -> None:
+        self.domain = domain
         self.queries: list[RetrievalQuery] = []
+        self.rows = list(rows or [])
 
     def ingest_event(self, event: NormalizedEvent, runtime: object) -> object:
         raise AssertionError("not used")
 
     def retrieve(self, query: RetrievalQuery, *, top_k: int) -> list[object]:
         self.queries.append(query)
-        return []
+        return [
+            RankedMemory(item=memory_item_from_core(row), final_score=1.0, rank=index + 1)
+            for index, row in enumerate(self.rows[:top_k])
+        ]
 
     def update_memory(self, action: str, **kwargs: object) -> object | None:
         return None
@@ -86,6 +89,34 @@ class FakeProactiveEngine:
         self.calls.append({"event_id": event.event_id, "domain": domain, "memory_ids": list(memory_ids)})
         if self.should_raise:
             raise RuntimeError("proactive failed")
+
+
+class FakeGlobalRerankClient:
+    def __init__(self, ordered_ids: list[str], *, score: float | None = None) -> None:
+        self.ordered_ids = ordered_ids
+        self.score = score
+        self.calls: list[dict[str, object]] = []
+
+    def rerank(self, query: str, documents: list[object], *, top_k: int | None = None) -> object:
+        self.calls.append({"query": query, "documents": documents, "top_k": top_k})
+        result_by_id = {getattr(document, "id"): document for document in documents}
+        results = []
+        for rank, memory_id in enumerate(self.ordered_ids[: top_k or len(self.ordered_ids)], start=1):
+            document = result_by_id[memory_id]
+            results.append(
+                type(
+                    "FakeRerankResult",
+                    (),
+                    {
+                        "id": memory_id,
+                        "score": self.score if self.score is not None else float(100 - rank),
+                        "rank": rank,
+                        "index": rank - 1,
+                        "metadata": getattr(document, "metadata", {}),
+                    },
+                )()
+            )
+        return type("FakeRerankResponse", (), {"model": "fake-rerank", "results": results})()
 
 
 class TestService(unittest.TestCase):
@@ -452,6 +483,136 @@ class TestService(unittest.TestCase):
             handler.queries[0].session_context["rewritten_text"],
             "查询项目中为什么选择方案 B 的历史决策和理由",
         )
+
+    def test_retrieve_does_not_query_secondary_when_primary_returns_results(self) -> None:
+        project_memory = create_memory_core(
+            memory_id="mem-project",
+            domain="project_decision",
+            memory_type="decision",
+            scope="project",
+            source_type="feishu_chat",
+            source_ref="event-project",
+            content_text="采用 SQLite",
+            summary_text="采用 SQLite",
+        )
+        primary = SpyRetrieveHandler("project_decision", [project_memory])
+        secondary = SpyRetrieveHandler("team_retention")
+        service = MemoryService(
+            event_store=self.event_store,
+            memory_store=self.memory_store,
+            domain_handlers=[primary, secondary],  # type: ignore[list-item]
+        )
+
+        result = service.retrieve(RetrievalQuery("为什么选择 SQLite", project_id="project-1"), top_k=1, include_trace=True)
+
+        self.assertEqual([memory.item.memory_id for memory in result.ranked_memories], ["mem-project"])
+        self.assertEqual(len(primary.queries), 1)
+        self.assertEqual(secondary.queries, [])
+        self.assertEqual(result.trace["target_domains"], ["project_decision"])
+
+    def test_retrieve_uses_secondary_only_when_primary_empty(self) -> None:
+        secondary_memory = create_memory_core(
+            memory_id="mem-team",
+            domain="team_retention",
+            memory_type="team_retention",
+            scope="team",
+            source_type="feishu_chat",
+            source_ref="event-team",
+            content_text="团队长期记住 API key 轮换",
+            summary_text="API key 轮换",
+        )
+        primary = SpyRetrieveHandler("project_decision")
+        secondary = SpyRetrieveHandler("team_retention", [secondary_memory])
+        service = MemoryService(
+            event_store=self.event_store,
+            memory_store=self.memory_store,
+            domain_handlers=[primary, secondary],  # type: ignore[list-item]
+        )
+
+        result = service.retrieve(RetrievalQuery("为什么选择 SQLite", project_id="project-1"), top_k=1, include_trace=True)
+
+        self.assertEqual([memory.item.memory_id for memory in result.ranked_memories], ["mem-team"])
+        self.assertEqual(len(primary.queries), 1)
+        self.assertEqual(len(secondary.queries), 1)
+        self.assertEqual(result.trace["target_domains"], ["project_decision", "team_retention"])
+
+    def test_retrieve_uses_global_rerank_client_when_configured(self) -> None:
+        project_memory = create_memory_core(
+            memory_id="mem-project",
+            domain="project_decision",
+            memory_type="decision",
+            scope="project",
+            source_type="feishu_chat",
+            source_ref="event-project",
+            content_text="SQLite 决策",
+            summary_text="SQLite 决策",
+        )
+        team_memory = create_memory_core(
+            memory_id="mem-team",
+            domain="team_retention",
+            memory_type="team_retention",
+            scope="team",
+            source_type="feishu_chat",
+            source_ref="event-team",
+            content_text="会议室外卖规则",
+            summary_text="会议室外卖规则",
+        )
+        handler = SpyRetrieveHandler("project_decision", [team_memory, project_memory])
+        rerank_client = FakeGlobalRerankClient(["mem-project", "mem-team"])
+        service = MemoryService(
+            event_store=self.event_store,
+            memory_store=self.memory_store,
+            domain_handlers=[handler],  # type: ignore[list-item]
+            rerank_client=rerank_client,
+        )
+
+        with self.assertLogs("src.core.service", level="INFO") as captured:
+            result = service.retrieve(RetrievalQuery("SQLite 数据库选型理由", project_id="project-1"), top_k=2)
+
+        self.assertEqual([memory.item.memory_id for memory in result.ranked_memories], ["mem-project", "mem-team"])
+        self.assertEqual(len(rerank_client.calls), 1)
+        logs = "\n".join(captured.output)
+        self.assertIn("action=global_rerank_done", logs)
+        self.assertIn("raw_scores=", logs)
+        self.assertIn("top_ids=['mem-project', 'mem-team']", logs)
+
+    def test_retrieve_falls_back_to_local_rerank_when_global_rerank_scores_are_all_zero(self) -> None:
+        project_memory = create_memory_core(
+            memory_id="mem-project",
+            domain="project_decision",
+            memory_type="decision",
+            scope="project",
+            source_type="feishu_chat",
+            source_ref="event-project",
+            content_text="SQLite 决策",
+            summary_text="SQLite 决策",
+        )
+        team_memory = create_memory_core(
+            memory_id="mem-team",
+            domain="team_retention",
+            memory_type="team_retention",
+            scope="team",
+            source_type="feishu_chat",
+            source_ref="event-team",
+            content_text="会议室外卖规则",
+            summary_text="会议室外卖规则",
+        )
+        handler = SpyRetrieveHandler("project_decision", [team_memory, project_memory])
+        rerank_client = FakeGlobalRerankClient(["mem-team", "mem-project"], score=0.0)
+        service = MemoryService(
+            event_store=self.event_store,
+            memory_store=self.memory_store,
+            domain_handlers=[handler],  # type: ignore[list-item]
+            rerank_client=rerank_client,
+        )
+
+        with self.assertLogs("src.core.service", level="INFO") as captured:
+            result = service.retrieve(RetrievalQuery("SQLite 数据库选型理由", project_id="project-1"), top_k=2)
+
+        self.assertEqual(len(result.ranked_memories), 2)
+        self.assertTrue(all(memory.final_score > 0 for memory in result.ranked_memories))
+        logs = "\n".join(captured.output)
+        self.assertIn("action=global_rerank_zero_scores", logs)
 
     def test_retrieve_emits_clear_pipeline_logs(self) -> None:
         self.memory_store.insert_memory_core(

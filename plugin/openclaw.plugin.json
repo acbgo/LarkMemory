@@ -5,10 +5,10 @@
   "configSchema": {
     "type": "object",
     "properties": {
-      "memoryApiUrl": {
+      "memoryApiBase": {
         "type": "string",
-        "description": "Memory Backend API 地址",
-        "default": "http://127.0.0.1:8765/api/v1"
+        "description": "Memory Backend 根地址，例如 http://127.0.0.1:8765 或 http://<ALIYUN_PUBLIC_IP>:8765",
+        "default": "http://127.0.0.1:8765"
       },
       "userId": {
         "type": "string",

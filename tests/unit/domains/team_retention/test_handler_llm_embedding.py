@@ -657,6 +657,35 @@ def test_llm_reject_does_not_store_or_index_memory() -> None:
         shutil.rmtree(temp_dir, ignore_errors=True)
 
 
+def test_administrative_noise_is_rejected_even_when_llm_marks_candidate() -> None:
+    memory_store, team_store, temp_dir = _stores()
+    try:
+        llm = FakeLLMClient(
+            _semantic_response(
+                fact_type="team_fact",
+                fact_value="会议室 C 的白板笔已经补充，放在电视柜抽屉里。",
+                evidence_text="会议室 C 的白板笔已经补充，放在电视柜抽屉里。",
+                primary_entity={"type": "facility", "name": "会议室 C", "normalized_key": "meeting-room-c"},
+            )
+        )
+        embedding_store = FakeEmbeddingStore()
+        handler = TeamRetentionDomainHandler(memory_store, team_store, llm_client=llm)
+        runtime = DomainRuntime(
+            memory_store=memory_store,
+            add_memory=memory_store.insert_memory_core,
+            embedding_store=embedding_store,  # type: ignore[arg-type]
+        )
+
+        result = handler.ingest_event(_event("会议室 C 的白板笔已经补充，放在电视柜抽屉里。"), runtime)
+
+        assert result.memory_ids == []
+        assert result.candidate_count == 0
+        assert memory_store.list_active_memories(domain="team_retention") == []
+        assert embedding_store.upserts == []
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+
 def test_vector_similar_changed_fact_becomes_conflict_candidate_without_schedule() -> None:
     memory_store, team_store, temp_dir = _stores()
     try:

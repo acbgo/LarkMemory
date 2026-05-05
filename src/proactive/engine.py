@@ -43,6 +43,7 @@ class ProactiveEngine:
         summarizer: Any | None = None,
         default_chat_id: str | None = None,
         related_top_k: int = 3,
+        min_related_score: float = 0.55,
     ) -> None:
         self.memory_store = memory_store
         self.proactive_store = proactive_store
@@ -52,6 +53,7 @@ class ProactiveEngine:
         self.summarizer = summarizer
         self.default_chat_id = default_chat_id
         self.related_top_k = max(1, related_top_k)
+        self.min_related_score = max(0.0, min(1.0, float(min_related_score)))
 
     def maybe_push(self, event: NormalizedEvent, *, domain: str | None, memory_ids: list[str]) -> None:
         if domain != "project_decision":
@@ -80,19 +82,7 @@ class ProactiveEngine:
         event: NormalizedEvent,
         memory: ProjectDecision,
     ) -> None:
-        decider = self.decider or ProjectDecisionProactiveDecider(None)
-        decision = decider.decide(event, memory)
-        push_type = decision.push_type or "decision_context_push"
-        if not decision.should_push:
-            self.proactive_store.upsert_record(
-                event_id=event.event_id,
-                domain="project_decision",
-                push_type=push_type,
-                status="skipped",
-                reason=decision.reason or "decider_rejected",
-                memory_id=memory.decision_id,
-            )
-            return
+        push_type = "decision_context_push"
         handler = self.domain_handlers.get("project_decision")
         if handler is None:
             return
@@ -107,8 +97,33 @@ class ProactiveEngine:
                 memory_id=memory.decision_id,
             )
             return
+        decider = self.decider or ProjectDecisionProactiveDecider(None)
+        decision = decider.decide(event, memory, related_rows)
+        push_type = decision.push_type or "decision_context_push"
+        if not decision.should_push:
+            self.proactive_store.upsert_record(
+                event_id=event.event_id,
+                domain="project_decision",
+                push_type=push_type,
+                status="skipped",
+                reason=decision.reason or "decider_rejected",
+                memory_id=memory.decision_id,
+                related_memory_ids=[str(row.get("memory_id")) for row in related_rows if row.get("memory_id")],
+            )
+            return
         summarizer = self.summarizer or ProjectDecisionProactiveSummarizer(None)
         summary = summarizer.summarize(event, memory, related_rows)
+        if summary.get("is_related") is False:
+            self.proactive_store.upsert_record(
+                event_id=event.event_id,
+                domain="project_decision",
+                push_type=push_type,
+                status="skipped",
+                reason="summary_unrelated",
+                memory_id=memory.decision_id,
+                related_memory_ids=list(summary.get("memory_ids") or []),
+            )
+            return
         target_chat_id = self._target_chat_id(event)
         if not target_chat_id or self.notifier is None:
             self.proactive_store.upsert_record(
@@ -174,6 +189,8 @@ class ProactiveEngine:
         ranked = handler.retrieve(query, top_k=self.related_top_k)
         rows: list[dict[str, Any]] = []
         for result in ranked:
+            if float(getattr(result, "final_score", 0.0) or 0.0) < self.min_related_score:
+                continue
             memory_id = result.item.memory_id
             if memory_id == memory.decision_id:
                 continue
