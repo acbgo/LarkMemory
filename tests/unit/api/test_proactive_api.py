@@ -21,7 +21,14 @@ class TestProactiveApi(unittest.TestCase):
         self.temp_dir = root / f"api-proactive-{uuid.uuid4().hex}"
         self.temp_dir.mkdir()
         self.db_path = str(self.temp_dir / "proactive.db")
-        self.env = patch.dict(os.environ, {"LARKMEMORY_SQLITE_PATH": self.db_path}, clear=True)
+        self.env = patch.dict(
+            os.environ,
+            {
+                "LARKMEMORY_SQLITE_PATH": self.db_path,
+                "LARKMEMORY_CONFIG_FILE": str(self.temp_dir / "missing.env"),
+            },
+            clear=True,
+        )
         self.env.start()
         reset_dependency_cache()
         self.addCleanup(reset_dependency_cache)

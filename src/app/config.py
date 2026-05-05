@@ -49,6 +49,9 @@ class AppSettings:
     log_dir: str = "logs"
     log_file: str = "larkmemory.log"
     request_log_enabled: bool = True
+    enable_proactive_push: bool = False
+    proactive_decider_min_confidence: float = 0.8
+    proactive_related_top_k: int = 3
 
 
 def _load_env_file(path: str | None) -> dict[str, str]:
@@ -166,4 +169,11 @@ def load_settings() -> AppSettings:
         log_file=_env_str("LARKMEMORY_LOG_FILE", "larkmemory.log", file_values)
         or "larkmemory.log",
         request_log_enabled=_env_bool("LARKMEMORY_REQUEST_LOG_ENABLED", True, file_values),
+        enable_proactive_push=_env_bool("LARKMEMORY_ENABLE_PROACTIVE_PUSH", False, file_values),
+        proactive_decider_min_confidence=_env_float(
+            "LARKMEMORY_PROACTIVE_DECIDER_MIN_CONFIDENCE",
+            0.8,
+            file_values,
+        ),
+        proactive_related_top_k=_env_int("LARKMEMORY_PROACTIVE_RELATED_TOP_K", 3, file_values),
     )

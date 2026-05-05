@@ -3,6 +3,48 @@ from __future__ import annotations
 from typing import Any
 
 
+def build_decision_context_card(suggestion: dict[str, Any]) -> dict[str, Any]:
+    """Render a project-decision proactive suggestion as a Feishu interactive card."""
+    memory_id = str(suggestion.get("memory_id") or "")
+    title = str(suggestion.get("title") or suggestion.get("topic") or "相关历史决策")
+    summary = str(suggestion.get("summary") or "")
+    bullets = [str(item) for item in (suggestion.get("bullets") or []) if str(item).strip()]
+    suggested_action = str(suggestion.get("suggested_action") or "查看历史决策上下文")
+    bullet_text = "\n".join(f"- {item}" for item in bullets)
+    content = f"**{title}**\n\n{summary}"
+    if bullet_text:
+        content = f"{content}\n\n相关历史：\n{bullet_text}"
+    content = f"{content}\n\n建议：{suggested_action}"
+    return {
+        "config": {"wide_screen_mode": True},
+        "header": {
+            "template": "blue",
+            "title": {"tag": "plain_text", "content": "相关历史决策"},
+        },
+        "elements": [
+            {
+                "tag": "markdown",
+                "content": content,
+            },
+            {
+                "tag": "action",
+                "actions": [
+                    {
+                        "tag": "button",
+                        "text": {"tag": "plain_text", "content": "收到"},
+                        "type": "primary",
+                        "value": {
+                            "source": "larkmemory",
+                            "action": "reviewed",
+                            "memory_id": memory_id,
+                        },
+                    },
+                ],
+            },
+        ],
+    }
+
+
 def build_review_reminder_card(suggestion: dict[str, Any]) -> dict[str, Any]:
     """Render a team-retention review suggestion as a Feishu interactive card."""
     memory_id = str(suggestion.get("memory_id") or "")

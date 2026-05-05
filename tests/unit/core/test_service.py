@@ -77,6 +77,17 @@ class SpyRetrieveHandler:
         return []
 
 
+class FakeProactiveEngine:
+    def __init__(self, *, should_raise: bool = False) -> None:
+        self.should_raise = should_raise
+        self.calls: list[dict[str, object]] = []
+
+    def maybe_push(self, event: NormalizedEvent, *, domain: str | None, memory_ids: list[str]) -> None:
+        self.calls.append({"event_id": event.event_id, "domain": domain, "memory_ids": list(memory_ids)})
+        if self.should_raise:
+            raise RuntimeError("proactive failed")
+
+
 class TestService(unittest.TestCase):
     def setUp(self) -> None:
         root = Path.cwd() / ".tmp-tests"
@@ -496,6 +507,52 @@ class TestService(unittest.TestCase):
     def test_proactive_and_maintenance(self) -> None:
         self.assertEqual(self.service.proactive_suggestions(), [])
         self.assertIn("decay", self.service.run_maintenance())
+
+    def test_ingest_event_triggers_proactive_engine_after_domain_ingest(self) -> None:
+        proactive_engine = FakeProactiveEngine()
+        service = MemoryService(
+            event_store=self.event_store,
+            memory_store=self.memory_store,
+            proactive_engine=proactive_engine,
+            domain_handlers=[ProjectDecisionDomainHandler(self.memory_store)],
+        )
+        event = NormalizedEvent(
+            event_id="event-proactive",
+            event_type="chat_message",
+            source_type="feishu_chat",
+            occurred_at="2026-05-05T00:00:00Z",
+            context=EventContext(project_id="project-1", team_id="team-1", workspace_id="workspace-1"),
+            content_text="决定采用方案 B，而不是方案 A",
+            payload={"chat_id": "oc_chat_1"},
+        )
+
+        result = service.ingest_event(event)
+
+        self.assertEqual(len(result.memory_ids), 1)
+        self.assertEqual(proactive_engine.calls, [{"event_id": "event-proactive", "domain": "project_decision", "memory_ids": result.memory_ids}])
+
+    def test_ingest_event_ignores_proactive_engine_failure(self) -> None:
+        proactive_engine = FakeProactiveEngine(should_raise=True)
+        service = MemoryService(
+            event_store=self.event_store,
+            memory_store=self.memory_store,
+            proactive_engine=proactive_engine,
+            domain_handlers=[ProjectDecisionDomainHandler(self.memory_store)],
+        )
+        event = NormalizedEvent(
+            event_id="event-proactive-fail",
+            event_type="chat_message",
+            source_type="feishu_chat",
+            occurred_at="2026-05-05T00:00:00Z",
+            context=EventContext(project_id="project-1", team_id="team-1", workspace_id="workspace-1"),
+            content_text="决定采用方案 B，而不是方案 A",
+            payload={"chat_id": "oc_chat_1"},
+        )
+
+        result = service.ingest_event(event)
+
+        self.assertTrue(result.stored)
+        self.assertEqual(len(result.memory_ids), 1)
 
     def test_ingest_team_retention_creates_memory_and_review_schedule(self) -> None:
         event = NormalizedEvent(

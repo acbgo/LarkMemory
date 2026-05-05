@@ -15,7 +15,16 @@ from src.llm import (
     OpenAICompatibleEmbeddingProvider,
     RerankClient,
 )
+from src.proactive import (
+    ProactiveEngine,
+    ProjectDecisionProactiveDecider,
+    ProjectDecisionProactiveSummarizer,
+)
+from src.sources.feishu.client.config import load_feishu_settings
+from src.sources.feishu.client.sdk import build_api_client
+from src.sources.feishu.proactive import FeishuNotifier
 from src.storage import EmbeddingStore, EventStore, MemoryCoreStore, TeamRetentionStore
+from src.storage import ProactiveStore
 
 
 logger = logging.getLogger(__name__)
@@ -56,6 +65,14 @@ def get_memory_core_store() -> MemoryCoreStore:
 def get_team_retention_store() -> TeamRetentionStore:
     """返回缓存的团队留存存储实例，使用当前配置中的 SQLite 路径。"""
     store = TeamRetentionStore(get_settings().sqlite_path)
+    store.create_table()
+    return store
+
+
+@lru_cache(maxsize=1)
+def get_proactive_store() -> ProactiveStore:
+    """返回缓存的主动推送记录存储实例。"""
+    store = ProactiveStore(get_settings().sqlite_path)
     store.create_table()
     return store
 
@@ -159,34 +176,76 @@ def get_llm_client() -> LLMClient | None:
 
 
 @lru_cache(maxsize=1)
+def get_feishu_notifier() -> FeishuNotifier | None:
+    """按 Feishu 配置返回主动消息发送器；缺配置或不可用时返回 None。"""
+    settings = load_feishu_settings()
+    if not settings.app_id or not settings.app_secret:
+        return None
+    try:
+        return FeishuNotifier(build_api_client(settings))
+    except Exception:
+        logger.warning("action=feishu_notifier_unavailable", exc_info=True)
+        return None
+
+
+@lru_cache(maxsize=1)
+def get_proactive_engine() -> ProactiveEngine | None:
+    """按配置组装主动推送引擎；未启用或依赖缺失时返回 None。"""
+    settings = get_settings()
+    if not settings.enable_proactive_push:
+        return None
+    llm_client = get_llm_client()
+    notifier = get_feishu_notifier()
+    if llm_client is None or notifier is None:
+        return None
+    return ProactiveEngine(
+        memory_store=get_memory_core_store(),
+        proactive_store=get_proactive_store(),
+        domain_handlers={},
+        notifier=notifier,
+        decider=ProjectDecisionProactiveDecider(
+            llm_client,
+            min_confidence=settings.proactive_decider_min_confidence,
+        ),
+        summarizer=ProjectDecisionProactiveSummarizer(llm_client),
+        default_chat_id=load_feishu_settings().default_chat_id,
+        related_top_k=settings.proactive_related_top_k,
+    )
+
+
+@lru_cache(maxsize=1)
 def get_memory_service() -> MemoryService:
     """组装并返回缓存的 MemoryService，注入 store、LLM 和领域处理器依赖。"""
+    project_handler = ProjectDecisionDomainHandler(
+        get_memory_core_store(),
+        embedding_store=get_embedding_store(),
+        embedding_client=get_embedding_client(),
+        rerank_client=get_rerank_client(),
+        llm_client=get_llm_client(),
+    )
+    team_handler = TeamRetentionDomainHandler(
+        get_memory_core_store(),
+        get_team_retention_store(),
+        embedding_store=get_embedding_store(),
+        embedding_client=get_embedding_client(),
+        llm_client=get_llm_client(),
+    )
+    cli_handler = CLIWorkflowDomainHandler(
+        get_memory_core_store(),
+        llm_client=get_llm_client(),
+    )
+    proactive_engine = get_proactive_engine()
+    handlers = [project_handler, team_handler, cli_handler]
+    if proactive_engine is not None:
+        proactive_engine.domain_handlers = {handler.domain: handler for handler in handlers}
     return MemoryService(
         event_store=get_event_store(),
         memory_store=get_memory_core_store(),
         embedding_store=get_embedding_store(),
         embedding_client=get_embedding_client(),
         llm_client=get_llm_client(),
-        domain_handlers=[
-            ProjectDecisionDomainHandler(
-                get_memory_core_store(),
-                embedding_store=get_embedding_store(),
-                embedding_client=get_embedding_client(),
-                rerank_client=get_rerank_client(),
-                llm_client=get_llm_client(),
-            ),
-            TeamRetentionDomainHandler(
-                get_memory_core_store(),
-                get_team_retention_store(),
-                embedding_store=get_embedding_store(),
-                embedding_client=get_embedding_client(),
-                llm_client=get_llm_client(),
-            ),
-            CLIWorkflowDomainHandler(
-                get_memory_core_store(),
-                llm_client=get_llm_client(),
-            ),
-        ],
+        domain_handlers=handlers,
+        proactive_engine=proactive_engine,
     )
 
 
@@ -200,4 +259,7 @@ def reset_dependency_cache() -> None:
     get_embedding_client.cache_clear()
     get_rerank_client.cache_clear()
     get_llm_client.cache_clear()
+    get_proactive_store.cache_clear()
+    get_feishu_notifier.cache_clear()
+    get_proactive_engine.cache_clear()
     get_memory_service.cache_clear()

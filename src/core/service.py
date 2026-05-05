@@ -14,6 +14,7 @@ from src.core.domain_handler import DomainRuntime, MemoryDomainHandler
 from src.core.router import DomainRouter
 from src.core.scheduler import ScheduledTaskResult, Scheduler
 from src.core.supersede import SupersedeManager
+from src.proactive import ProactiveEngine
 from src.retrieval import (
     FusedCandidate,
     IntentAnalyzer,
@@ -73,6 +74,7 @@ class MemoryService:
         decay_policy: DecayPolicy | None = None,
         access_tracker: AccessTracker | None = None,
         domain_handlers: Iterable[MemoryDomainHandler] | None = None,
+        proactive_engine: ProactiveEngine | None = None,
     ) -> None:
         self.event_store = event_store
         self.memory_store = memory_store
@@ -92,6 +94,7 @@ class MemoryService:
             handler.domain: handler
             for handler in (domain_handlers or [])
         }
+        self.proactive_engine = proactive_engine
 
     def ingest_event(self, event: NormalizedEvent) -> IngestResult:
         logger.info(
@@ -134,6 +137,20 @@ class MemoryService:
             embedding_client=self.embedding_client,
         )
         domain_result = handler.ingest_event(event, runtime)
+        if self.proactive_engine is not None:
+            try:
+                self.proactive_engine.maybe_push(
+                    event,
+                    domain=primary_domain,
+                    memory_ids=domain_result.memory_ids,
+                )
+            except Exception:
+                logger.warning(
+                    "action=proactive_engine_failed event_id=%s domain=%s",
+                    event.event_id,
+                    primary_domain,
+                    exc_info=True,
+                )
         return IngestResult(
             event_id=event_id,
             stored=True,

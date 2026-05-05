@@ -917,3 +917,33 @@
 - 验证：`python -m pytest tests\unit\domains\project_decision\test_versioning.py tests\unit\domains\project_decision\test_handler.py -q -p no:cacheprovider`，22 passed。
 - 验证：`python -m pytest tests\unit\domains\project_decision tests\unit\core\test_service.py tests\unit\api\test_ingest_api.py tests\unit\api\test_retrieve_api.py -q -p no:cacheprovider`，81 passed。
 - 验证：`python -m compileall src tests`，通过。
+
+## 2026-05-05 ProjectDecision 主动推送闭环
+
+- 新增 `src/proactive/`：
+  - `decider.py`：LLM 判断当前 project decision 是否值得主动推送历史上下文。
+  - `summarizer.py`：LLM 将当前决策和相关历史记忆总结成卡片摘要；失败时回退本地摘要。
+  - `engine.py`：编排 ingest 后的主动推送链路，负责幂等检查、相关记忆检索、摘要生成和飞书发送。
+- 新增 `src/storage/proactive_store.py`，记录 `event_id + push_type` 的 `skipped/sent/failed` 状态，作为主动推送幂等与排障基础。
+- 新增 `decision_context_push` 飞书卡片：
+  - `src/sources/feishu/proactive/cards.py` 增加 `build_decision_context_card()`
+  - `src/sources/feishu/proactive/notifier.py` 增加 `send_decision_context()`
+- `MemoryService.ingest_event()` 在 domain ingest 成功后触发 `proactive_engine.maybe_push()`；主动推送失败仅记日志，不影响 ingest 返回。
+- `src/app/config.py` 增加主动推送配置：
+  - `LARKMEMORY_ENABLE_PROACTIVE_PUSH`
+  - `LARKMEMORY_PROACTIVE_DECIDER_MIN_CONFIDENCE`
+  - `LARKMEMORY_PROACTIVE_RELATED_TOP_K`
+- `src/app/dependencies.py` 增加：
+  - `get_proactive_store()`
+  - `get_feishu_notifier()`
+  - `get_proactive_engine()`
+  并在 `get_memory_service()` 中接入。
+- 补充主动推送相关单测：
+  - `tests/unit/storage/test_proactive_store.py`
+  - `tests/unit/proactive/test_engine.py`
+  - `tests/unit/sources/feishu/test_proactive.py`
+  - `tests/unit/core/test_service.py`
+  - `tests/unit/app/test_dependencies.py`
+- 顺手修复测试环境对本地 `larkmemory.env` 的隐式依赖，避免依赖测试和 proactive API 测试误连真实 LLM 服务。
+- 验证：`python -m pytest tests\unit\storage\test_proactive_store.py tests\unit\proactive\test_engine.py tests\unit\sources\feishu\test_proactive.py tests\unit\core\test_service.py tests\unit\app\test_dependencies.py -q -p no:cacheprovider`，58 passed。
+- 验证：`python -m pytest tests\unit\domains\project_decision tests\unit\api\test_ingest_api.py tests\unit\api\test_retrieve_api.py tests\unit\api\test_proactive_api.py -q -p no:cacheprovider`，63 passed。

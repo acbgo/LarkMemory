@@ -13,6 +13,7 @@ from src.app.dependencies import (
     get_event_store,
     get_llm_client,
     get_memory_service,
+    get_proactive_store,
     get_rerank_client,
     get_memory_core_store,
     get_settings,
@@ -124,7 +125,14 @@ class TestDependencies(unittest.TestCase):
             self.assertIsNone(get_embedding_store())
 
     def test_get_embedding_store_returns_none_when_vector_store_disabled(self) -> None:
-        with patch.dict(os.environ, {"LARKMEMORY_ENABLE_EMBEDDING": "true"}, clear=True):
+        with patch.dict(
+            os.environ,
+            {
+                "LARKMEMORY_ENABLE_EMBEDDING": "true",
+                "LARKMEMORY_CONFIG_FILE": str(self.temp_dir / "missing.env"),
+            },
+            clear=True,
+        ):
             reset_dependency_cache()
             self.assertIsNone(get_embedding_store())
 
@@ -146,10 +154,44 @@ class TestDependencies(unittest.TestCase):
         self.assertEqual(store.collection_name, "memory_core_test")
         self.assertEqual(store.persist_directory, ".tmp-tests/chroma")
 
+    def test_get_proactive_store_creates_table(self) -> None:
+        db_path = str(self.temp_dir / "proactive.db")
+        with patch.dict(os.environ, {"LARKMEMORY_SQLITE_PATH": db_path}, clear=True):
+            reset_dependency_cache()
+            store = get_proactive_store()
+            row = store.fetch_one(
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
+                ("proactive_push",),
+            )
+
+        self.assertIsNotNone(row)
+
     def test_get_embedding_client_returns_none_when_disabled(self) -> None:
         with patch.dict(os.environ, {"LARKMEMORY_ENABLE_EMBEDDING": "false"}, clear=True):
             reset_dependency_cache()
             self.assertIsNone(get_embedding_client())
+
+    def test_get_memory_service_wires_proactive_engine_when_enabled(self) -> None:
+        db_path = str(self.temp_dir / "service-proactive.db")
+        fake_notifier = object()
+        fake_llm = object()
+        with patch.dict(
+            os.environ,
+            {
+                "LARKMEMORY_SQLITE_PATH": db_path,
+                "LARKMEMORY_ENABLE_PROACTIVE_PUSH": "true",
+            },
+            clear=True,
+        ):
+            reset_dependency_cache()
+            with patch("src.app.dependencies.get_feishu_notifier", return_value=fake_notifier), patch(
+                "src.app.dependencies.get_llm_client",
+                return_value=fake_llm,
+            ):
+                service = get_memory_service()
+
+        self.assertIsNotNone(service.proactive_engine)
+        self.assertIs(service.proactive_engine.notifier, fake_notifier)
 
     def test_get_embedding_client_builds_openai_compatible_client(self) -> None:
         db_path = str(self.temp_dir / "embedding-client.db")
@@ -296,6 +338,13 @@ class TestDependencies(unittest.TestCase):
             self.assertIsNone(get_llm_client())
 
     def test_get_llm_client_returns_none_when_missing_key_or_model(self) -> None:
-        with patch.dict(os.environ, {"LARKMEMORY_ENABLE_LLM": "true"}, clear=True):
+        with patch.dict(
+            os.environ,
+            {
+                "LARKMEMORY_ENABLE_LLM": "true",
+                "LARKMEMORY_CONFIG_FILE": str(self.temp_dir / "missing.env"),
+            },
+            clear=True,
+        ):
             reset_dependency_cache()
             self.assertIsNone(get_llm_client())
