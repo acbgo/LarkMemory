@@ -371,15 +371,23 @@ class MemoryCoreStore(SQLiteStore):
         """.format(where_clause=" AND ".join(clauses))
         parameters.append(limit)
         rows = self.fetch_all(sql, tuple(parameters))
+        if not rows:
+            return []
+        raw_scores = [float(row["raw_score"]) for row in rows]
+        raw_min = min(raw_scores)
+        raw_max = max(raw_scores)
+        raw_range = raw_max - raw_min or 1.0
         result: list[dict[str, Any]] = []
-        for index, row in enumerate(rows, start=1):
+        for row in rows:
+            raw = float(row["raw_score"])
+            normalized = (raw_max - raw) / raw_range if len(rows) > 1 else 1.0
             result.append(
                 {
                     "memory_id": row["memory_id"],
                     "domain": row["domain"],
                     "status": row["status"],
-                    "bm25_score": 1.0 / index,
-                    "raw_score": row["raw_score"],
+                    "bm25_score": round(normalized, 4),
+                    "raw_score": raw,
                 }
             )
         return result

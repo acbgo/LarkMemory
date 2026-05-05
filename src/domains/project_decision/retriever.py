@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import math
 import re
 import logging
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any
 
 from src.retrieval import MemoryItem, RankedMemory, RetrievalQuery, memory_item_from_core
@@ -116,11 +118,13 @@ class ProjectDecisionRetriever:
         embedding_store: EmbeddingStore | None = None,
         embedding_client: EmbeddingClient | None = None,
         rerank_client: RerankClient | None = None,
+        decay_rate: float = 0.001,
     ) -> None:
         self.memory_store = memory_store
         self.embedding_store = embedding_store
         self.embedding_client = embedding_client
         self.rerank_client = rerank_client
+        self.decay_rate = decay_rate
 
     def retrieve(
         self,
@@ -150,7 +154,8 @@ class ProjectDecisionRetriever:
         rows = self.memory_store.batch_get_memories([hit.memory_id for hit in fused_hits])
         filtered = self._filter_candidates(rows, domain_query)
         results = self._build_results(filtered, hit_by_id)
-        return self._rerank_results(domain_query, results, limit=effective_limit)
+        results = self._rerank_results(domain_query, results, limit=effective_limit)
+        return self._apply_time_decay(results)
 
     def retrieve_cards(
         self,
@@ -261,6 +266,42 @@ class ProjectDecisionRetriever:
             )
         return sorted(results, key=lambda result: (result.score, result.decision.decision_id), reverse=True)
 
+    def _rrf_weight_for_rank(self, rank: int) -> float:
+        """Position-aware RRF weight: top ranks trust RRF more, later ranks trust reranker more."""
+        if rank <= 3:
+            return 0.75
+        if rank <= 10:
+            return 0.60
+        return 0.40
+
+    def _apply_time_decay(self, results: list[ProjectDecisionSearchResult]) -> list[ProjectDecisionSearchResult]:
+        """Apply exponential time decay so recent decisions score higher than old ones."""
+        if self.decay_rate <= 0 or not results:
+            return results
+        now = datetime.now(timezone.utc).isoformat()
+        for result in results:
+            factor = _time_decay_factor(result.decision.decided_at, self.decay_rate, now)
+            result.score *= factor
+            result.memory_item.extra["time_decay"] = round(factor, 4)
+        results.sort(key=lambda r: r.score, reverse=True)
+        return results
+
+    def _build_rerank_text(self, decision: ProjectDecision) -> str:
+        """Build structured text for reranker input, richer than raw summary_text."""
+        parts: list[str] = []
+        if decision.topic:
+            parts.append(f"主题: {decision.topic}")
+        conclusion = decision.conclusion or decision.decision
+        if conclusion:
+            parts.append(f"决策: {conclusion}")
+        if decision.stage:
+            parts.append(f"阶段: {decision.stage}")
+        if decision.alternatives:
+            parts.append(f"备选: {'; '.join(decision.alternatives[:3])}")
+        if decision.reasons:
+            parts.append(f"理由: {'; '.join(decision.reasons[:3])}")
+        return "\n".join(parts) if parts else (conclusion or decision.topic or "")
+
     def _rerank_results(
         self,
         query: ProjectDecisionQuery,
@@ -268,13 +309,13 @@ class ProjectDecisionRetriever:
         *,
         limit: int,
     ) -> list[ProjectDecisionSearchResult]:
-        """使用可选 rerank 模型重排 RRF 候选，失败时回退 RRF 顺序。"""
+        """使用可选 rerank 模型重排 RRF 候选，位置感知混合 RRF 与 rerank 分数。"""
         if self.rerank_client is None or len(results) <= 1:
             return results[:limit]
         documents = [
             RerankDocument(
                 id=result.decision.decision_id,
-                text=result.memory_item.summary_text or result.memory_item.content_text,
+                text=self._build_rerank_text(result.decision),
                 metadata={
                     "domain": "project_decision",
                     "rrf_score": result.memory_item.extra.get("rrf_score", result.score),
@@ -294,46 +335,73 @@ class ProjectDecisionRetriever:
             )
             return results[:limit]
         result_by_id = {result.decision.decision_id: result for result in results}
+        rrf_rank_by_id = {
+            result.decision.decision_id: rank + 1
+            for rank, result in enumerate(results)
+        }
+        rerank_scores = [float(r.score) for r in response.results]
+        rerank_min = min(rerank_scores) if rerank_scores else 0.0
+        rerank_max = max(rerank_scores) if rerank_scores else 1.0
+        rerank_range = rerank_max - rerank_min or 1.0
+
         reranked: list[ProjectDecisionSearchResult] = []
         for rerank_result in response.results:
             result = result_by_id.get(rerank_result.id)
             if result is None:
                 continue
-            result.score = float(rerank_result.score)
-            result.memory_item.extra["rerank_score"] = float(rerank_result.score)
+            rrf_score = float(result.memory_item.extra.get("rrf_score", result.score))
+            raw_rerank = float(rerank_result.score)
+            norm_rerank = (raw_rerank - rerank_min) / rerank_range
+            rrf_rank = rrf_rank_by_id.get(result.decision.decision_id, len(results))
+            rrf_weight = self._rrf_weight_for_rank(rrf_rank)
+            blended = rrf_weight * rrf_score + (1.0 - rrf_weight) * norm_rerank
+            result.score = blended
+            result.memory_item.extra["rrf_score"] = rrf_score
+            result.memory_item.extra["rrf_rank"] = rrf_rank
+            result.memory_item.extra["rrf_weight"] = rrf_weight
+            result.memory_item.extra["rerank_score"] = raw_rerank
+            result.memory_item.extra["rerank_score_norm"] = norm_rerank
             result.memory_item.extra["rerank_model"] = response.model
             reranked.append(result)
-        return reranked[:limit]
+        return sorted(reranked, key=lambda r: r.score, reverse=True)[:limit]
 
     def _bm25_recall(self, query: ProjectDecisionQuery, *, limit: int) -> list[ProjectDecisionRecallHit]:
-        """使用 MemoryCore FTS5 BM25 索引返回有序关键词召回列表。"""
-        try:
-            rows = self.memory_store.search_bm25(
-                query.query_text,
-                domain="project_decision",
-                status=None if query.include_superseded else "active",
-                limit=limit,
-            )
-        except Exception:
-            logger.warning(
-                "action=bm25_recall_failed domain=project_decision query_text=%s",
-                query.query_text,
-                exc_info=True,
-            )
-            return []
-        hits: list[ProjectDecisionRecallHit] = []
-        for rank, row in enumerate(rows, start=1):
-            memory_id = row.get("memory_id")
-            score = row.get("bm25_score")
-            if not isinstance(memory_id, str) or not isinstance(score, (int, float)):
+        """使用 MemoryCore FTS5 BM25 索引返回有序关键词召回列表，多 query variant 合并最佳分。"""
+        variants = query.query_variants or [query.query_text]
+        best_by_id: dict[str, tuple[float, str]] = {}
+        for variant in variants:
+            try:
+                rows = self.memory_store.search_bm25(
+                    variant,
+                    domain="project_decision",
+                    status=None if query.include_superseded else "active",
+                    limit=limit,
+                )
+            except Exception:
+                logger.warning(
+                    "action=bm25_recall_failed domain=project_decision query_text=%s",
+                    variant,
+                    exc_info=True,
+                )
                 continue
+            for row in rows:
+                memory_id = row.get("memory_id")
+                score = row.get("bm25_score")
+                if not isinstance(memory_id, str) or not isinstance(score, (int, float)):
+                    continue
+                old_score = best_by_id.get(memory_id, (0.0, ""))[0]
+                if float(score) > old_score:
+                    best_by_id[memory_id] = (float(score), variant)
+        ordered = sorted(best_by_id.items(), key=lambda item: (item[1][0], item[0]), reverse=True)
+        hits: list[ProjectDecisionRecallHit] = []
+        for rank, (memory_id, (score, _variant)) in enumerate(ordered[:limit], start=1):
             hits.append(
                 ProjectDecisionRecallHit(
                     memory_id=memory_id,
                     source="bm25",
                     rank=rank,
-                    score=float(score),
-                    metadata={"bm25_score": float(score), "matched_fields": ["bm25"]},
+                    score=score,
+                    metadata={"bm25_score": score, "matched_fields": ["bm25"]},
                 )
             )
         return hits
@@ -452,19 +520,20 @@ class ProjectDecisionRetriever:
         for row in rows:
             if not query.include_superseded and row.get("status") == "superseded":
                 continue
-            text = self._row_search_text(row)
             entities = list(row.get("entities") or row.get("entities_json") or [])
             tags = list(row.get("tags") or row.get("tags_json") or [])
-            if query.project_id and not self._contains_any(text, entities + tags, query.project_id):
+            if query.project_id and not self._entity_contains(entities, "project_id", query.project_id):
                 continue
-            if query.team_id and not self._contains_any(text, entities + tags, query.team_id):
+            if query.team_id and not self._entity_contains(entities, "team_id", query.team_id):
                 continue
-            if query.workspace_id and not self._contains_any(text, entities + tags, query.workspace_id):
+            if query.workspace_id and not self._entity_contains(entities, "workspace_id", query.workspace_id):
                 continue
-            if query.stage and query.stage.lower() not in text.lower():
-                continue
-            if query.topic and query.topic.lower() not in text.lower():
-                continue
+            if query.stage or query.topic:
+                text = self._row_search_text(row)
+                if query.stage and query.stage.lower() not in text.lower():
+                    continue
+                if query.topic and query.topic.lower() not in text.lower():
+                    continue
             result.append(row)
         return result
 
@@ -508,6 +577,14 @@ class ProjectDecisionRetriever:
             return query
         return ProjectDecisionQuery.from_retrieval_query(query, limit=limit)
 
+    def _entity_contains(self, entities: list[str], prefix: str, value: str) -> bool:
+        """Check if entities list contains a prefixed entry (e.g. project_id:foo) or the raw value."""
+        prefixed = f"{prefix}:{value}"
+        for entity in entities:
+            if entity == value or entity == prefixed:
+                return True
+        return False
+
     def _row_search_text(self, row: dict[str, Any]) -> str:
         entities = " ".join(row.get("entities") or row.get("entities_json") or [])
         tags = " ".join(row.get("tags") or row.get("tags_json") or [])
@@ -523,6 +600,19 @@ class ProjectDecisionRetriever:
             if part
         )
 
-    def _contains_any(self, text: str, fields: list[str], needle: str) -> bool:
-        lowered = needle.lower()
-        return lowered in text.lower() or any(lowered == field.lower() for field in fields)
+
+def _time_decay_factor(decided_at: str | None, decay_rate: float, now_iso: str) -> float:
+    """Exponential decay factor based on days since decision was made."""
+    if not decided_at or decay_rate <= 0:
+        return 1.0
+    try:
+        decided_date = decided_at[:10]
+        now_date = now_iso[:10]
+        decided_dt = datetime.strptime(decided_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        now_dt = datetime.strptime(now_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        days = (now_dt - decided_dt).days
+        if days < 1:
+            return 1.0
+        return math.exp(-decay_rate * days)
+    except Exception:
+        return 1.0
