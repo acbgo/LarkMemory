@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+import shlex
+from pathlib import Path
 from typing import Any
 
 from src.sources.cli._client import post_retrieve
@@ -27,6 +29,115 @@ def _hit_to_workflow(hit: dict[str, Any]) -> dict[str, Any] | None:
 
 def _hit_score(hit: dict[str, Any]) -> float:
     return float(hit.get("score", 0))
+
+
+def _normalize_for_compare(value: str) -> str:
+    """Normalize command identity strings for shell-facing comparisons."""
+    return value.replace("\\", "/").lower().strip()
+
+
+def _msys_to_windows_path(value: str) -> str:
+    """Convert Git Bash style /c/... paths when running on Windows Python."""
+    if len(value) >= 3 and value[0] == "/" and value[2] == "/":
+        drive = value[1]
+        if drive.isalpha():
+            return f"{drive.upper()}:/{value[3:]}"
+    return value
+
+
+def _resolve_cli_path(value: str, *, cwd: str | None = None) -> str:
+    """Resolve a command path relative to cwd for stable command matching."""
+    normalized_cwd = _msys_to_windows_path(cwd or os.getcwd())
+    normalized_value = _msys_to_windows_path(value)
+    path = Path(normalized_value.replace("/", os.sep))
+    if not path.is_absolute():
+        path = Path(normalized_cwd.replace("/", os.sep)) / path
+    try:
+        return str(path.resolve())
+    except OSError:
+        return str(path.absolute())
+
+
+def _query_command_identity(line: str, *, cwd: str | None = None) -> str:
+    """Extract the command identity from a suggest query or completion line."""
+    try:
+        tokens = shlex.split(line.strip())
+    except ValueError:
+        tokens = line.strip().split()
+    if not tokens:
+        return ""
+    executable = tokens[0]
+    if (
+        len(tokens) >= 2
+        and executable.lower() in {"python", "python3", "node", "deno", "bun"}
+        and _looks_like_script_path(tokens[1])
+    ):
+        return f"{executable} {_resolve_cli_path(tokens[1], cwd=cwd)}"
+    identity = []
+    for token in tokens:
+        if token.startswith("--") or (token.startswith("-") and len(token) == 2):
+            break
+        if token.startswith("-"):
+            break
+        identity.append(token)
+        if len(identity) >= 3:
+            break
+    return " ".join(identity)
+
+
+def _looks_like_script_path(value: str) -> bool:
+    lowered = value.lower()
+    return (
+        "/" in value
+        or "\\" in value
+        or lowered.endswith((".py", ".js", ".ts", ".mjs", ".cjs"))
+    )
+
+
+def _is_specific_script_identity(value: str) -> bool:
+    """Return True for identities such as `python C:/repo/tool.py`."""
+    first, sep, rest = value.partition(" ")
+    return bool(
+        sep
+        and first.lower() in {"python", "python3", "node", "deno", "bun"}
+        and _looks_like_script_path(rest)
+    )
+
+
+def _workflow_matches_command(wf: dict[str, Any], query: str, *, cwd: str | None = None) -> bool:
+    """Return True when a workflow belongs to the command requested by the CLI."""
+    command_name = str(wf.get("command_name") or "")
+    if not command_name or not query.strip():
+        return True
+    query_identity = _query_command_identity(query, cwd=cwd)
+    if not query_identity:
+        return True
+    command_cmp = _normalize_for_compare(command_name)
+    query_cmp = _normalize_for_compare(query_identity)
+    query_first = query_cmp.split(" ", 1)[0]
+    command_first = command_cmp.split(" ", 1)[0]
+    query_is_script = _is_specific_script_identity(query_cmp)
+    command_is_script = _is_specific_script_identity(command_cmp)
+    if query_is_script:
+        return command_is_script and command_cmp == query_cmp
+    if " " not in query_cmp:
+        return command_first == query_first or query_cmp in command_cmp
+    return command_cmp.startswith(query_cmp) or query_cmp.startswith(command_cmp)
+
+
+def _filter_results_by_command(
+    results: list[dict[str, Any]],
+    query: str,
+    *,
+    cwd: str | None = None,
+) -> list[dict[str, Any]]:
+    """Filter MemoryHit rows to workflows matching the requested command."""
+    filtered: list[dict[str, Any]] = []
+    for result in results:
+        wf = _hit_to_workflow(result)
+        if wf is not None and _workflow_matches_command(wf, query, cwd=cwd):
+            filtered.append(result)
+    return filtered
 
 
 def _format_suggest(results: list[dict[str, Any]]) -> str:
@@ -89,13 +200,7 @@ def run_suggest(
 
     try:
         results = post_retrieve(payload)
-        if command:
-            results = [
-                r for r in results
-                if command.lower() in str(
-                    (_hit_to_workflow(r) or {}).get("command_name", "")
-                ).lower()
-            ]
+        results = _filter_results_by_command(results, command or query_text, cwd=cwd)
         return _format_suggest(results)
     except Exception as e:
         return f"查询失败: {e}"
@@ -111,7 +216,7 @@ def run_complete(line: str, cur: str, *, cwd: str | None = None) -> str:
     payload: dict[str, Any] = {
         "query_text": line,
         "user_id": user_id,
-        "top_k": 3,
+        "top_k": 10,
         "include_trace": False,
     }
     if actual_project:
@@ -120,6 +225,9 @@ def run_complete(line: str, cur: str, *, cwd: str | None = None) -> str:
     try:
         results = post_retrieve(payload)
     except Exception:
+        return ""
+    results = _filter_results_by_command(results, line, cwd=cwd)
+    if not results:
         return ""
 
     candidates: list[str] = []

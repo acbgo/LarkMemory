@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import shlex
+from pathlib import Path
 from typing import Any
 
 from src.schemas import NormalizedEvent
@@ -49,6 +51,15 @@ def _has_flags(tokens: list[str]) -> bool:
     return any(t.startswith("--") or (t.startswith("-") and len(t) == 2) for t in tokens)
 
 
+def _msys_to_windows_path(value: str) -> str:
+    """Convert Git Bash style /c/... paths when the hook runs under Windows Python."""
+    if len(value) >= 3 and value[0] == "/" and value[2] == "/":
+        drive = value[1]
+        if drive.isalpha():
+            return f"{drive.upper()}:/{value[3:]}"
+    return value
+
+
 class CLIWorkflowExtractor:
     """从 shell 或 openclaw 事件中提取 CLI 工作流记忆。"""
 
@@ -86,7 +97,11 @@ class CLIWorkflowExtractor:
         if not tokens:
             return []
 
-        command_name = self._extract_base_command(tokens)
+        command_name = self._normalize_command_identity(
+            tokens,
+            self._extract_base_command(tokens),
+            cwd=str(event.payload.get("cwd") or ""),
+        )
 
         if _is_trivial(command_name):
             return []
@@ -151,7 +166,11 @@ class CLIWorkflowExtractor:
         if raw_command:
             tokens = self._tokenize(raw_command)
             if tokens:
-                command_name = self._extract_base_command(tokens)
+                command_name = self._normalize_command_identity(
+                    tokens,
+                    self._extract_base_command(tokens),
+                    cwd=str(event.payload.get("cwd") or ""),
+                )
                 command_template, param_bindings = self._parameterize(tokens, command_name)
                 if command_template:
                     signals = ["openclaw_explicit"]
@@ -246,6 +265,46 @@ class CLIWorkflowExtractor:
             if len(base) >= 3:
                 break
         return " ".join(base) if base else ""
+
+    def _normalize_command_identity(
+        self,
+        tokens: list[str],
+        command_name: str,
+        *,
+        cwd: str = "",
+    ) -> str:
+        """将脚本类命令的执行文件路径归一成绝对路径，作为稳定 command identity。"""
+        if len(tokens) < 2:
+            return command_name
+        executable = tokens[0]
+        if executable.lower() not in {"python", "python3", "node", "deno", "bun"}:
+            return command_name
+        script = tokens[1]
+        if script.startswith("-") or not self._looks_like_script_path(script):
+            return command_name
+        absolute_script = self._resolve_command_path(script, cwd=cwd)
+        return f"{executable} {absolute_script}"
+
+    @staticmethod
+    def _looks_like_script_path(value: str) -> bool:
+        lowered = value.lower()
+        return (
+            "/" in value
+            or "\\" in value
+            or lowered.endswith((".py", ".js", ".ts", ".mjs", ".cjs"))
+        )
+
+    @staticmethod
+    def _resolve_command_path(value: str, *, cwd: str = "") -> str:
+        normalized = _msys_to_windows_path(value).replace("/", os.sep)
+        path = Path(normalized)
+        if not path.is_absolute():
+            normalized_cwd = _msys_to_windows_path(cwd or os.getcwd()).replace("/", os.sep)
+            path = Path(normalized_cwd) / path
+        try:
+            return str(path.resolve())
+        except OSError:
+            return str(path.absolute())
 
     def _parameterize(
         self, tokens: list[str], command_name: str
@@ -502,7 +561,11 @@ class CLIWorkflowExtractor:
         if full_command:
             tokens = self._tokenize(str(full_command))
             if tokens:
-                command_name = self._extract_base_command(tokens)
+                command_name = self._normalize_command_identity(
+                    tokens,
+                    self._extract_base_command(tokens),
+                    cwd=str(event.payload.get("cwd") or ""),
+                )
                 command_template, _bindings = self._parameterize(tokens, command_name)
                 if command_template:
                     return [

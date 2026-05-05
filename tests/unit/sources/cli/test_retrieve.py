@@ -112,3 +112,150 @@ class TestRunComplete:
         with patch("urllib.request.urlopen", return_value=mock_resp):
             output = run_complete("lark project deploy --", "--")
             assert "--env" in output
+
+    def test_complete_requests_enough_candidates_when_top_hits_are_exhausted(self, monkeypatch):
+        monkeypatch.setenv("USER", "testuser")
+        captured = {}
+
+        def fake_post_retrieve(payload):
+            captured.update(payload)
+            return []
+
+        with patch("src.sources.cli.retrieve.post_retrieve", side_effect=fake_post_retrieve):
+            run_complete("python .tmp-demo/cli_dummy.py --env staging", "", cwd="C:\\repo")
+
+        assert captured["top_k"] >= 10
+
+    def test_complete_skips_parameter_name_already_present_with_different_value(self, monkeypatch):
+        monkeypatch.setenv("USER", "testuser")
+        results = [{
+            "memory_id": "mem-1",
+            "domain": "cli_workflow",
+            "content_text": "命令模板: python C:\\repo\\.tmp-demo\\cli_dummy.py --env {env} --region {region}\n"
+                            "命令: python C:\\repo\\.tmp-demo\\cli_dummy.py\n分类: script\n"
+                            "执行次数: 10\n成功率: 1.00\n"
+                            "参数绑定:\n  --env prod (10次)\n  --region cn-east (8次)\n来源: shell",
+            "tags": ["cli_workflow", "param:env=prod", "param:region=cn-east", "source:shell"],
+            "entities": ["user_id:testuser", "command_name:python C:\\repo\\.tmp-demo\\cli_dummy.py"],
+            "score": 0.9,
+        }]
+        with patch("src.sources.cli.retrieve.post_retrieve", return_value=results):
+            output = run_complete("python .tmp-demo/cli_dummy.py --env staging ", "", cwd="C:\\repo")
+            assert "--env" not in output
+            assert "--region cn-east" in output
+
+    def test_complete_filters_candidates_to_matching_command(self, monkeypatch):
+        monkeypatch.setenv("USER", "testuser")
+        results = [
+            {
+                "memory_id": "mem-git",
+                "domain": "cli_workflow",
+                "content_text": "命令模板: git log --max-count {max-count}\n命令: git log\n"
+                                "分类: vcs\n执行次数: 99\n成功率: 1.00\n"
+                                "参数绑定:\n  --max-count 5 (99次)\n来源: shell",
+                "tags": ["cli_workflow", "param:max-count=5", "source:shell"],
+                "entities": ["user_id:testuser", "command_name:git log"],
+                "score": 0.99,
+            },
+            {
+                "memory_id": "mem-python",
+                "domain": "cli_workflow",
+                "content_text": "命令模板: python C:\\repo\\.tmp-demo\\cli_dummy.py --env {env}\n"
+                                "命令: python C:\\repo\\.tmp-demo\\cli_dummy.py\n分类: script\n"
+                                "执行次数: 2\n成功率: 1.00\n参数绑定:\n  --env staging (2次)\n来源: shell",
+                "tags": ["cli_workflow", "param:env=staging", "source:shell"],
+                "entities": ["user_id:testuser", "command_name:python C:\\repo\\.tmp-demo\\cli_dummy.py"],
+                "score": 0.5,
+            },
+        ]
+        with patch("src.sources.cli.retrieve.post_retrieve", return_value=results):
+            output = run_complete("python .tmp-demo/cli_dummy.py ", "", cwd="C:\\repo")
+            assert "--env staging" in output
+            assert "--max-count" not in output
+
+    def test_complete_filters_between_different_python_scripts(self, monkeypatch):
+        monkeypatch.setenv("USER", "testuser")
+        results = [
+            {
+                "memory_id": "mem-other-python",
+                "domain": "cli_workflow",
+                "content_text": "命令模板: python C:\\repo\\tools\\other.py --profile {profile}\n"
+                                "命令: python C:\\repo\\tools\\other.py\n分类: script\n"
+                                "执行次数: 20\n成功率: 1.00\n参数绑定:\n  --profile prod (20次)\n来源: shell",
+                "tags": ["cli_workflow", "param:profile=prod", "source:shell"],
+                "entities": ["user_id:testuser", "command_name:python C:\\repo\\tools\\other.py"],
+                "score": 0.99,
+            },
+            {
+                "memory_id": "mem-dummy-python",
+                "domain": "cli_workflow",
+                "content_text": "命令模板: python C:\\repo\\.tmp-demo\\cli_dummy.py --env {env}\n"
+                                "命令: python C:\\repo\\.tmp-demo\\cli_dummy.py\n分类: script\n"
+                                "执行次数: 2\n成功率: 1.00\n参数绑定:\n  --env staging (2次)\n来源: shell",
+                "tags": ["cli_workflow", "param:env=staging", "source:shell"],
+                "entities": ["user_id:testuser", "command_name:python C:\\repo\\.tmp-demo\\cli_dummy.py"],
+                "score": 0.5,
+            },
+        ]
+        with patch("src.sources.cli.retrieve.post_retrieve", return_value=results):
+            output = run_complete("python .tmp-demo/cli_dummy.py ", "", cwd="C:\\repo")
+            assert "--env staging" in output
+            assert "--profile prod" not in output
+
+    def test_complete_specific_python_script_does_not_match_generic_python_memory(self, monkeypatch):
+        monkeypatch.setenv("USER", "testuser")
+        results = [
+            {
+                "memory_id": "mem-generic-python",
+                "domain": "cli_workflow",
+                "content_text": "命令模板: python --module {module}\n命令: python\n"
+                                "分类: script\n执行次数: 50\n成功率: 1.00\n"
+                                "参数绑定:\n  --module http.server (50次)\n来源: shell",
+                "tags": ["cli_workflow", "param:module=http.server", "source:shell"],
+                "entities": ["user_id:testuser", "command_name:python"],
+                "score": 0.99,
+            },
+            {
+                "memory_id": "mem-dummy-python",
+                "domain": "cli_workflow",
+                "content_text": "命令模板: python C:\\repo\\.tmp-demo\\cli_dummy.py --env {env}\n"
+                                "命令: python C:\\repo\\.tmp-demo\\cli_dummy.py\n分类: script\n"
+                                "执行次数: 2\n成功率: 1.00\n参数绑定:\n  --env staging (2次)\n来源: shell",
+                "tags": ["cli_workflow", "param:env=staging", "source:shell"],
+                "entities": ["user_id:testuser", "command_name:python C:\\repo\\.tmp-demo\\cli_dummy.py"],
+                "score": 0.5,
+            },
+        ]
+        with patch("src.sources.cli.retrieve.post_retrieve", return_value=results):
+            output = run_complete("python .tmp-demo/cli_dummy.py ", "", cwd="C:\\repo")
+            assert "--env staging" in output
+            assert "--module http.server" not in output
+
+    def test_suggest_filters_base_command_when_api_returns_other_commands(self, monkeypatch):
+        monkeypatch.setenv("USER", "testuser")
+        results = [
+            {
+                "memory_id": "mem-git",
+                "domain": "cli_workflow",
+                "content_text": "命令模板: git log --max-count {max-count}\n命令: git log\n"
+                                "分类: vcs\n执行次数: 99\n成功率: 1.00\n"
+                                "参数绑定:\n  --max-count 5 (99次)\n来源: shell",
+                "tags": ["cli_workflow", "param:max-count=5", "source:shell"],
+                "entities": ["user_id:testuser", "command_name:git log"],
+                "score": 0.99,
+            },
+            {
+                "memory_id": "mem-python",
+                "domain": "cli_workflow",
+                "content_text": "命令模板: python C:\\repo\\.tmp-demo\\cli_dummy.py --env {env}\n"
+                                "命令: python C:\\repo\\.tmp-demo\\cli_dummy.py\n分类: script\n"
+                                "执行次数: 2\n成功率: 1.00\n参数绑定:\n  --env staging (2次)\n来源: shell",
+                "tags": ["cli_workflow", "param:env=staging", "source:shell"],
+                "entities": ["user_id:testuser", "command_name:python C:\\repo\\.tmp-demo\\cli_dummy.py"],
+                "score": 0.5,
+            },
+        ]
+        with patch("src.sources.cli.retrieve.post_retrieve", return_value=results):
+            output = run_suggest("python", cwd="C:\\repo")
+            assert "cli_dummy.py" in output
+            assert "git log" not in output

@@ -61,6 +61,19 @@ def _cmd_ingest(args: argparse.Namespace) -> None:
     run_from_args(vars(args))
 
 
+def _fill_complete_args(args: argparse.Namespace) -> None:
+    """Normalize shell completion positional args, ignoring argparse's `--` separator."""
+    if not args.remainder or args.line:
+        return
+    remainder = list(args.remainder)
+    if remainder and remainder[0] == "--":
+        remainder = remainder[1:]
+    if len(remainder) >= 1:
+        args.line = remainder[0]
+    if len(remainder) >= 2:
+        args.cur = remainder[1]
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
         prog="lark-memory",
@@ -101,11 +114,7 @@ def main(argv: list[str] | None = None) -> None:
     elif args.subcommand == "suggest":
         _cmd_suggest(args)
     elif args.subcommand == "complete":
-        if args.remainder and not args.line:
-            if len(args.remainder) >= 1:
-                args.line = args.remainder[0]
-            if len(args.remainder) >= 2:
-                args.cur = args.remainder[1]
+        _fill_complete_args(args)
         _cmd_complete(args)
     elif args.subcommand == "completion":
         _cmd_completion(args)
