@@ -46,7 +46,12 @@ def build_event_handler(
 
     doc_processor: DocProcessor | None = None
     if source_state_store is not None and doc_client is not None:
-        doc_processor = DocProcessor(source_state_store, doc_client, dispatcher)
+        doc_processor = DocProcessor(
+            source_state_store,
+            doc_client,
+            dispatcher,
+            team_id=getattr(settings, "default_chat_id", None),
+        )
 
     def on_message(data: Any) -> None:
         message_event = _message_event_from_lark(data)

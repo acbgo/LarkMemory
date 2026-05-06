@@ -41,6 +41,22 @@ class TestDocNormalizer(unittest.TestCase):
         self.assertIn("doc", event.tags)
         self.assertIn("section", event.tags)
 
+    def test_doc_section_can_bind_team_scope(self) -> None:
+        event = doc_section_to_event(
+            "## 文档事件 Demo 决策\n\nRetrieve API 的默认 top_k 调整为 8。",
+            "文档事件 Demo 决策",
+            "h-001-abcdef123456",
+            "doc_token_team",
+            "LarkMemory 项目",
+            1,
+            team_id="oc_b9cef0cb9a14fe72a58793560cc4aa1c",
+        )
+
+        self.assertEqual(event.context.team_id, "oc_b9cef0cb9a14fe72a58793560cc4aa1c")
+        self.assertEqual(event.context.scope, "team")
+        self.assertIsNone(event.context.project_id)
+        self.assertIsNone(event.context.workspace_id)
+
     def test_doc_section_falls_back_to_doc_title(self) -> None:
         event = doc_section_to_event(
             "无标题段落的正文内容。",
@@ -163,6 +179,26 @@ class TestDocProcessor(unittest.TestCase):
         event_ids = [e["event_id"] for e in events]
         self.assertTrue(any("doc:doc_dispatch:h-" in eid for eid in event_ids), f"events: {event_ids}")
         self.assertEqual(len(event_ids), 2)
+
+    def test_processor_binds_sections_to_default_team_scope(self) -> None:
+        content = "# 项目概述\n\n概述内容。\n\n## 需求分析\n\n需求内容。"
+        doc_client = self._FakeDocClient(content)
+        processor = DocProcessor(
+            self.state_store,
+            doc_client,
+            self.dispatcher,
+            team_id="oc_b9cef0cb9a14fe72a58793560cc4aa1c",
+        )
+        processor._process("doc_team_scope")
+
+        events = self.event_store.list_events(limit=20)
+        doc_events = [event for event in events if "doc_team_scope" in event.get("event_id", "")]
+        self.assertEqual(len(doc_events), 2)
+        for event in doc_events:
+            self.assertEqual(event["team_id"], "oc_b9cef0cb9a14fe72a58793560cc4aa1c")
+            self.assertEqual(event["scope"], "team")
+            self.assertIsNone(event["project_id"])
+            self.assertIsNone(event["workspace_id"])
 
     def test_processor_empty_content(self) -> None:
         doc_client = self._FakeDocClient("")
