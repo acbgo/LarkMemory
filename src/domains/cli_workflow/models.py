@@ -194,11 +194,13 @@ class CLIWorkflowMemory:
     def build_summary_text(self) -> str:
         label = self.command_category or "general"
         name = self.command_name
-        params = " ".join(
-            f"--{pb.param_name}" for pb in sorted(self.parameter_bindings, key=lambda x: -x.frequency)[:5]
-        )
+        bindings = sorted(self.parameter_bindings, key=lambda x: -x.frequency)
+        full_command = self.command_template or name
+        for pb in bindings:
+            full_command = full_command.replace(f"{{{pb.param_name}}}", pb.param_value)
+        params = " ".join(f"--{pb.param_name}" for pb in bindings[:5])
         semantic = f" - {self.semantic_description}" if self.semantic_description else ""
-        summary = f"{name} [{label}] {params} ({self.execution_count}次){semantic}"
+        summary = f"{full_command} | {name} [{label}] {params} ({self.execution_count}次){semantic}"
         return truncate_text(clean_text(summary), 200)
 
     def _execution_importance(self) -> float:

@@ -132,15 +132,20 @@ class TestCLIWorkflowMemory:
 
     def test_build_summary_text(self):
         memory = CLIWorkflowMemory(
-            command_name="lark project deploy",
-            command_category="deploy",
+            command_template="git log --max-count {max-count} --oneline",
+            command_name="git log",
+            command_category="vcs",
+            execution_count=3,
             parameter_bindings=[
-                ParameterBinding(param_name="env", param_value="prod", frequency=5),
+                ParameterBinding(param_name="max-count", param_value="5", frequency=3),
             ],
         )
         summary = memory.build_summary_text()
-        assert "lark project deploy" in summary
-        assert "deploy" in summary
+        assert "git log --max-count 5 --oneline" in summary
+        assert "git log" in summary
+        assert "vcs" in summary
+        assert "--max-count" in summary
+        assert "3次" in summary
 
     def test_to_dict(self):
         memory = CLIWorkflowMemory(
