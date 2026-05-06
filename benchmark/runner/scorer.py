@@ -114,6 +114,8 @@ def score_should_not_contain_match(ctx: ScoringContext) -> float:
 
 @register("noise_robustness")
 def score_noise_robustness(ctx: ScoringContext) -> float:
+    if not ctx.case.expected.get("should_retrieve", True):
+        return score_abstention_accuracy(ctx) * score_hallucination_rate(ctx)
     ev = score_evidence_match(ctx)
     kw = score_keyword_match(ctx)
     return ev * kw
@@ -138,7 +140,10 @@ def score_old_value_suppression(ctx: ScoringContext) -> float:
     forbidden.extend(inactive)
     if not forbidden:
         return 1.0
+<<<<<<< HEAD
     # Allow historical mentions: only check the top-ranked active answer
+=======
+>>>>>>> 77203baa09589dfcf6fde6ffb8d81fffff7a41b4
     if ctx.case.expected.get("allow_historical_mention"):
         current = ctx.case.expected.get("current_value", "")
         if not current:

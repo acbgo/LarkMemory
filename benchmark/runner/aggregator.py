@@ -113,11 +113,14 @@ def aggregate(
             cases=cases,
         ))
 
-    # Overall score = Σ(direction_score × weight) × 100
-    overall = sum(
-        dr.direction_score * dr.weight
-        for dr in direction_results
-    ) * 100
+    if suite_name in DIRECTION_WEIGHTS and len(direction_results) == 1:
+        overall = direction_results[0].direction_score * 100
+    else:
+        # Overall score = Σ(direction_score × weight) × 100
+        overall = sum(
+            dr.direction_score * dr.weight
+            for dr in direction_results
+        ) * 100
 
     return BenchmarkRunResult(
         run_id=run_id,
