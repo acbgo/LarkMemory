@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 from src.core.domain_handler import DomainIngestResult, DomainRuntime, DomainUpdateResult
@@ -11,6 +12,7 @@ from src.retrieval import RankedMemory, RetrievalQuery
 from src.schemas import NormalizedEvent
 from src.storage import EmbeddingStore, MemoryCoreStore, TeamRetentionStore
 from src.utils.ids import new_id
+from src.utils.text import clean_text
 
 from .admission import TeamRetentionAdmissionDecision, TeamRetentionAdmissionDecider
 from .embedding import TeamRetentionEmbeddingIndexer
@@ -79,6 +81,12 @@ class TeamRetentionDomainHandler:
     def _ingest_event_with_llm(self, event: NormalizedEvent, runtime: DomainRuntime) -> DomainIngestResult:
         logger.info("action=ingest_llm_start event_id=%s", event.event_id)
         preprocess = self.preprocessor.preprocess(event)
+        if _is_retrieval_question(preprocess.raw_text):
+            logger.info(
+                "action=team_retention_query_skipped event_id=%s reason=retrieval_question",
+                event.event_id,
+            )
+            return DomainIngestResult(candidate_count=0, message="team_retention query skipped")
 
         extraction = TeamRetentionLLMExtractor(self.llm_client).extract(event, preprocess)
         if extraction is None:
@@ -133,6 +141,50 @@ class TeamRetentionDomainHandler:
                 "evidence_text": extraction.evidence_text or preprocess.raw_text,
             }
         )
+
+        structured_conflict = self._detect_structured_conflict(memory)
+        if structured_conflict is not None:
+            old_memory, reason = structured_conflict
+            memory.metadata.update(
+                {
+                    "conflict_with": old_memory.retention_id,
+                    "conflict_reason": reason,
+                }
+            )
+            if _has_explicit_update_signal(preprocess.raw_text):
+                memory.overwrite_of = old_memory.retention_id
+                admission = TeamRetentionAdmissionDecision(
+                    "active",
+                    confidence,
+                    importance,
+                    f"structured_update:{reason}",
+                )
+                logger.info(
+                    "action=structured_conflict_update event_id=%s target=%s reason=%s",
+                    event.event_id,
+                    old_memory.retention_id,
+                    reason,
+                )
+            else:
+                admission = TeamRetentionAdmissionDecision(
+                    "candidate",
+                    confidence,
+                    importance,
+                    f"structured_conflict_requires_confirmation:{reason}",
+                )
+                logger.info(
+                    "action=structured_conflict_candidate event_id=%s target=%s reason=%s",
+                    event.event_id,
+                    old_memory.retention_id,
+                    reason,
+                )
+            memory.metadata.update(
+                {
+                    "final_decision": admission.status,
+                    "admission_reason": admission.reason,
+                    "needs_confirmation": admission.status == "candidate",
+                }
+            )
 
         if self.arbitrator is not None and admission.status == "active":
             pass  # arbitration path below
@@ -261,6 +313,9 @@ class TeamRetentionDomainHandler:
     # ------------------------------------------------------------------
 
     def _ingest_event_with_rules(self, event: NormalizedEvent, runtime: DomainRuntime) -> DomainIngestResult:
+        preprocess = self.preprocessor.preprocess(event)
+        if _is_retrieval_question(preprocess.raw_text):
+            return DomainIngestResult(candidate_count=0, message="team_retention query skipped")
         candidates = self.extractor.extract(event)
         memory_ids: list[str] = []
         for candidate in candidates:
@@ -360,6 +415,25 @@ class TeamRetentionDomainHandler:
                 row = self.memory_store.get_memory(item.retention_id)
                 if row is not None and row.get("status") == "active":
                     return item.retention_id
+        return None
+
+    def _detect_structured_conflict(self, memory: TeamRetentionMemory) -> tuple[TeamRetentionMemory, str] | None:
+        rows = self.memory_store.list_active_memories(domain=self.domain, limit=100)
+        for row in rows:
+            old_memory = self.team_retention_store.get_memory(str(row["memory_id"]))
+            if old_memory is None:
+                old_memory = TeamRetentionMemory.from_memory_core(row)  # type: ignore[arg-type]
+            if old_memory.retention_id == memory.retention_id:
+                continue
+            if not _same_scope(old_memory, memory):
+                continue
+            if not _related_fact_type(old_memory.fact_type, memory.fact_type):
+                continue
+            if not _same_primary_entity(old_memory, memory):
+                continue
+            reason = _format_conflict_reason(old_memory.fact_value, memory.fact_value)
+            if reason:
+                return old_memory, reason
         return None
 
     # ------------------------------------------------------------------
@@ -479,3 +553,173 @@ class TeamRetentionDomainHandler:
 
     def scan_review_due(self, **kwargs: Any) -> list[dict[str, Any]]:
         return self.proactive_suggestions(**kwargs)
+
+
+_QUESTION_MARKERS = (
+    "什么",
+    "应该",
+    "怎么",
+    "如何",
+    "是否",
+    "吗",
+    "么",
+    "?",
+    "？",
+)
+_TEACHING_MARKERS = (
+    "请记住",
+    "团队记住",
+    "长期记住",
+    "请记录",
+    "创建团队知识",
+    "创建记忆",
+    "更新团队记忆",
+    "更新记忆",
+    "已变更",
+    "现在必须",
+    "以后必须",
+    "改为",
+    "不再",
+)
+_UPDATE_MARKERS = (
+    "更新",
+    "变更",
+    "已变更",
+    "改为",
+    "现在必须",
+    "现在使用",
+    "以后使用",
+    "以后必须",
+    "不再",
+    "旧规则",
+    "废弃",
+    "替换",
+    "覆盖",
+)
+_FORMAT_RE = re.compile(r"\b(xlsx|csv|parquet|json|excel)\b", re.IGNORECASE)
+
+
+def _is_retrieval_question(text: str) -> bool:
+    """Return whether a chat message is asking memory instead of teaching memory."""
+    cleaned = clean_text(text)
+    if not cleaned:
+        return False
+    if any(marker in cleaned for marker in _TEACHING_MARKERS):
+        return False
+    return any(marker in cleaned for marker in _QUESTION_MARKERS)
+
+
+def _has_explicit_update_signal(text: str) -> bool:
+    """Return whether text explicitly says a retained fact is being replaced."""
+    cleaned = clean_text(text)
+    return any(marker in cleaned for marker in _UPDATE_MARKERS)
+
+
+def _same_scope(left: TeamRetentionMemory, right: TeamRetentionMemory) -> bool:
+    """Match retained facts only inside the same available team/project/workspace scope."""
+    for field_name in ("team_id", "project_id", "workspace_id"):
+        left_value = getattr(left, field_name)
+        right_value = getattr(right, field_name)
+        if left_value or right_value:
+            if not left_value or not right_value or left_value != right_value:
+                return False
+    return bool(left.team_id or left.project_id or left.workspace_id or right.team_id or right.project_id or right.workspace_id)
+
+
+def _related_fact_type(left: str, right: str) -> bool:
+    """Treat customer/compliance/team facts as related when entity and slot also match."""
+    if left == right:
+        return True
+    related = {"customer_preference", "compliance", "team_fact", "risk"}
+    return left in related and right in related
+
+
+def _same_primary_entity(left: TeamRetentionMemory, right: TeamRetentionMemory) -> bool:
+    """Compare explicit primary_entity metadata first, then fall back to customer names in text."""
+    left_entity = _entity_key(left)
+    right_entity = _entity_key(right)
+    if left_entity and right_entity:
+        return left_entity == right_entity
+    return False
+
+
+def _entity_key(memory: TeamRetentionMemory) -> str | None:
+    primary = memory.metadata.get("primary_entity") if memory.metadata else None
+    if isinstance(primary, dict):
+        value = primary.get("normalized_key") or primary.get("name")
+        if isinstance(value, str) and value.strip():
+            return _normalize_entity(value)
+    return _extract_customer_key(memory.fact_value)
+
+
+def _extract_customer_key(text: str) -> str | None:
+    cleaned = clean_text(text)
+    match = re.search(r"([\u4e00-\u9fffA-Za-z0-9_-]{1,20})客户", cleaned)
+    if match:
+        return _normalize_entity(match.group(1))
+    match = re.search(r"客户\s*([\u4e00-\u9fffA-Za-z0-9_-]{1,20})", cleaned)
+    if match:
+        return _normalize_entity(match.group(1))
+    return None
+
+
+def _normalize_entity(value: str) -> str:
+    normalized = clean_text(value).lower()
+    normalized = normalized.replace("customer-", "")
+    normalized = normalized.replace("客户", "")
+    normalized = re.sub(r"\s+", "", normalized)
+    return normalized
+
+
+def _format_conflict_reason(old_value: str, new_value: str) -> str | None:
+    if not _same_export_format_slot(old_value, new_value):
+        return None
+    old_allowed = _accepted_formats(old_value)
+    old_rejected = _rejected_formats(old_value)
+    new_allowed = _accepted_formats(new_value)
+    new_rejected = _rejected_formats(new_value)
+    if new_allowed & old_rejected:
+        return f"new_allowed_old_rejected:{','.join(sorted(new_allowed & old_rejected))}"
+    if old_allowed & new_rejected:
+        return f"old_allowed_new_rejected:{','.join(sorted(old_allowed & new_rejected))}"
+    if old_allowed and new_allowed and old_allowed.isdisjoint(new_allowed):
+        return f"format_changed:{','.join(sorted(old_allowed))}->{','.join(sorted(new_allowed))}"
+    return None
+
+
+def _same_export_format_slot(left: str, right: str) -> bool:
+    left_cleaned = clean_text(left)
+    right_cleaned = clean_text(right)
+    slot_markers = ("导出", "格式", "生产数据")
+    return any(marker in left_cleaned for marker in slot_markers) and any(marker in right_cleaned for marker in slot_markers)
+
+
+def _accepted_formats(text: str) -> set[str]:
+    allowed = _formats_near_markers(text, ("必须使用", "要求", "使用", "接受", "改为", "现在必须", "现在使用"))
+    cleaned = clean_text(text).lower()
+    if not allowed and any(marker in cleaned for marker in ("使用", "要求", "必须", "接受")):
+        allowed.update(match.group(1).lower() for match in _FORMAT_RE.finditer(cleaned))
+    return allowed - _rejected_formats(text)
+
+
+def _rejected_formats(text: str) -> set[str]:
+    rejected = _formats_near_markers(text, ("不接受", "不再使用", "不允许", "禁止", "不要", "不用", "不行"))
+    cleaned = clean_text(text).lower()
+    for match in re.finditer(r"\b(xlsx|csv|parquet|json|excel)\b[，,、\s]{0,3}不行", cleaned):
+        rejected.add(match.group(1).lower())
+    return rejected
+
+
+def _formats_near_markers(text: str, markers: tuple[str, ...]) -> set[str]:
+    cleaned = clean_text(text).lower()
+    formats: set[str] = set()
+    for marker in markers:
+        start = 0
+        while True:
+            index = cleaned.find(marker.lower(), start)
+            if index < 0:
+                break
+            window = cleaned[index:index + 24]
+            formats.update(match.group(1).lower() for match in _FORMAT_RE.finditer(window))
+            start = index + len(marker)
+    return formats

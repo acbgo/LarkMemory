@@ -42,6 +42,36 @@ class FakeLLMClient:
         return dict(self.response)
 
 
+class SequenceLLMClient:
+    def __init__(self, responses: list[dict[str, Any]]) -> None:
+        self.responses = list(responses)
+        self.calls: list[dict[str, Any]] = []
+
+    async def ajson(
+        self,
+        system_prompt: str | None,
+        user_prompt: str,
+        *,
+        schema: dict[str, Any] | None = None,
+        temperature: float | None = 0,
+        max_tokens: int | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        self.calls.append(
+            {
+                "system_prompt": system_prompt,
+                "user_prompt": user_prompt,
+                "schema": schema,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+                "kwargs": kwargs,
+            }
+        )
+        if not self.responses:
+            raise AssertionError("SequenceLLMClient has no response left")
+        return dict(self.responses.pop(0))
+
+
 class RaisingLLMClient:
     def __init__(self) -> None:
         self.calls = 0
@@ -758,6 +788,145 @@ def test_acknowledge_action_is_noop_success_for_created_card() -> None:
         assert result is not None
         assert result.updated is True
         assert result.message == "acknowledged"
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+def test_team_retention_question_is_not_ingested_or_carded() -> None:
+    memory_store, team_store, temp_dir = _stores()
+    try:
+        notifier = FakeNotifier()
+        llm = FakeLLMClient(_extraction_response())
+        handler = TeamRetentionDomainHandler(
+            memory_store,
+            team_store,
+            llm_client=llm,
+            notifier=notifier,
+            chat_id="oc-demo",
+        )
+        runtime = DomainRuntime(memory_store=memory_store, add_memory=memory_store.insert_memory_core)
+
+        result = handler.ingest_event(_event("星河客户生产数据导出应该使用什么格式？"), runtime)
+
+        assert result.memory_ids == []
+        assert result.candidate_count == 0
+        assert llm.calls == []
+        assert notifier.created_cards == []
+        assert notifier.candidate_cards == []
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+def test_conflicting_lower_certainty_fact_becomes_candidate_without_review_card() -> None:
+    memory_store, team_store, temp_dir = _stores()
+    try:
+        notifier = FakeNotifier()
+        llm = SequenceLLMClient(
+            [
+                _extraction_response(
+                    fact_value="D演示-0507 星河客户生产数据导出必须使用 xlsx，不接受 csv。负责人张三。",
+                    risk_level="high",
+                    primary_entity={
+                        "type": "customer",
+                        "name": "星河客户",
+                        "normalized_key": "customer-xinghe",
+                    },
+                    topic_key="production-data-export-format",
+                ),
+                _extraction_response(
+                    fact_value="星河客户生产数据导出使用 csv 格式",
+                    risk_level="low",
+                    primary_entity={
+                        "type": "customer",
+                        "name": "星河客户",
+                        "normalized_key": "customer-xinghe",
+                    },
+                    topic_key="production-data-export-format",
+                ),
+            ]
+        )
+        handler = TeamRetentionDomainHandler(
+            memory_store,
+            team_store,
+            llm_client=llm,
+            notifier=notifier,
+            chat_id="oc-demo",
+        )
+        runtime = DomainRuntime(memory_store=memory_store, add_memory=memory_store.insert_memory_core)
+
+        first = handler.ingest_event(
+            _event("D演示-0507 星河客户生产数据导出必须使用 xlsx，不接受 csv。负责人张三。"),
+            runtime,
+        )
+        second = handler.ingest_event(_event("星河客户生产数据导出使用csv格式"), runtime)
+
+        old_id = first.memory_ids[0]
+        new_id = second.memory_ids[0]
+        assert memory_store.get_memory(old_id)["status"] == "active"
+        assert memory_store.get_memory(new_id)["status"] == "candidate"
+        assert team_store.get_review_schedule(old_id).active is True
+        assert team_store.get_review_schedule(new_id) is None
+        assert len(notifier.created_cards) == 1
+        assert len(notifier.candidate_cards) == 1
+        assert notifier.candidate_cards[0][1]["memory_id"] == new_id
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+def test_explicit_conflicting_update_supersedes_old_and_creates_review_card() -> None:
+    memory_store, team_store, temp_dir = _stores()
+    try:
+        notifier = FakeNotifier()
+        llm = SequenceLLMClient(
+            [
+                _extraction_response(
+                    fact_value="D演示-0507 星河客户生产数据导出必须使用 xlsx，不接受 csv。负责人张三。",
+                    risk_level="high",
+                    primary_entity={
+                        "type": "customer",
+                        "name": "星河客户",
+                        "normalized_key": "customer-xinghe",
+                    },
+                    topic_key="production-data-export-format",
+                ),
+                _extraction_response(
+                    fact_value="星河客户生产数据导出要求已变更，现在必须使用 csv，不再使用 xlsx。",
+                    risk_level="medium",
+                    primary_entity={
+                        "type": "customer",
+                        "name": "星河客户",
+                        "normalized_key": "customer-xinghe",
+                    },
+                    topic_key="production-data-export-format",
+                ),
+            ]
+        )
+        handler = TeamRetentionDomainHandler(
+            memory_store,
+            team_store,
+            llm_client=llm,
+            notifier=notifier,
+            chat_id="oc-demo",
+        )
+        runtime = DomainRuntime(memory_store=memory_store, add_memory=memory_store.insert_memory_core)
+
+        first = handler.ingest_event(
+            _event("D演示-0507 星河客户生产数据导出必须使用 xlsx，不接受 csv。负责人张三。"),
+            runtime,
+        )
+        second = handler.ingest_event(
+            _event("更新团队记忆：D演示-0507 星河客户生产数据导出要求已变更，现在必须使用 csv，不再使用 xlsx。"),
+            runtime,
+        )
+
+        old_id = first.memory_ids[0]
+        new_id = second.memory_ids[0]
+        assert memory_store.get_memory(old_id)["status"] == "superseded"
+        assert memory_store.get_memory(new_id)["status"] == "active"
+        assert team_store.get_review_schedule(old_id).active is False
+        assert team_store.get_review_schedule(new_id) is not None
+        assert len(notifier.created_cards) == 2
+        assert notifier.candidate_cards == []
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
 
