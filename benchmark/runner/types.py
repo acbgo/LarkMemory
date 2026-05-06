@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable
 
 # 7 test types (aligned with MemScope + competition requirements)
 TEST_TYPES = [
@@ -112,5 +112,7 @@ class RunnerConfig:
     suite_name: str = "all"
     case_ids: list[str] = field(default_factory=list)
     datasets_dir: str = "benchmark/datasets"
+    temp_root: str | None = None
     keep_temp: bool = False
     ablation: bool = False
+    progress_callback: Callable[[str, int, int, str, Any | None], None] | None = None

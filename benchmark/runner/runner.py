@@ -3,8 +3,8 @@ from __future__ import annotations
 import logging
 import os
 import shutil
-import tempfile
 import time
+import uuid
 from pathlib import Path
 
 from src.app.config import build_llm_extra_body, load_settings
@@ -69,9 +69,14 @@ class BenchmarkRunner:
 
             t0 = time.perf_counter()
             case_results: list[CaseResult] = []
-            for case in cases:
+            total = len(cases)
+            for index, case in enumerate(cases, start=1):
+                if self.config.progress_callback is not None:
+                    self.config.progress_callback("case_start", index, total, case.case_id, None)
                 cr = self._run_single_case(case)
                 case_results.append(cr)
+                if self.config.progress_callback is not None:
+                    self.config.progress_callback("case_done", index, total, case.case_id, cr)
 
             duration = time.perf_counter() - t0
 
@@ -106,7 +111,11 @@ class BenchmarkRunner:
     # ------------------------------------------------------------------
 
     def _setup_isolation(self) -> None:
-        self._temp_dir = tempfile.mkdtemp(prefix=f"bench-{self.config.run_id}-")
+        temp_root = Path(self.config.temp_root or "benchmark/.tmp-runs")
+        temp_root.mkdir(parents=True, exist_ok=True)
+        temp_dir = temp_root / f"bench-{self.config.run_id}-{uuid.uuid4().hex[:8]}"
+        temp_dir.mkdir(parents=True)
+        self._temp_dir = str(temp_dir)
         self._db_path = str(Path(self._temp_dir) / "benchmark.db")
 
         # Load env file so LLM/Embedding/Rerank config is available

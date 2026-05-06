@@ -1,0 +1,1094 @@
+{
+  "run_id": "project-decision-20260506-094125",
+  "suite_name": "decision_memory",
+  "overall_score": 21.8,
+  "rating": "待改进",
+  "summary": {
+    "total_cases": 40,
+    "passed_cases": 18,
+    "failed_cases": 22,
+    "error_cases": 0,
+    "pass_rate": 45.0,
+    "run_duration_seconds": 1162.01
+  },
+  "by_test_type": [
+    {
+      "test_type": "retrieval_recall",
+      "label": "基础召回",
+      "case_count": 12,
+      "passed_count": 11,
+      "pass_rate": 91.7,
+      "score": 95.7,
+      "metric_averages": {
+        "decision_match": 1.0,
+        "reason_match": 1.0,
+        "rejected_option_match": 1.0,
+        "evidence_match": 0.9091,
+        "recall_at_3": 0.9091,
+        "keyword_match": 1.0
+      }
+    },
+    {
+      "test_type": "anti_interference",
+      "label": "抗干扰",
+      "case_count": 5,
+      "passed_count": 3,
+      "pass_rate": 60.0,
+      "score": 75.0,
+      "metric_averages": {
+        "recall_at_3": 0.8,
+        "keyword_match": 0.8,
+        "noise_robustness": 0.8,
+        "evidence_match": 0.75,
+        "old_value_suppression": 0.0
+      }
+    },
+    {
+      "test_type": "contradiction_update",
+      "label": "矛盾更新",
+      "case_count": 6,
+      "passed_count": 0,
+      "pass_rate": 0.0,
+      "score": 66.7,
+      "metric_averages": {
+        "latest_value_accuracy": 1.0,
+        "old_value_suppression": 0.0,
+        "evidence_match": 1.0
+      }
+    },
+    {
+      "test_type": "efficiency",
+      "label": "效能验证",
+      "case_count": 3,
+      "passed_count": 2,
+      "pass_rate": 66.7,
+      "score": 85.7,
+      "metric_averages": {
+        "recall_at_3": 1.0,
+        "keyword_match": 1.0,
+        "char_saving_rate": 0.0,
+        "step_saving_rate": 1.0
+      }
+    },
+    {
+      "test_type": "long_term_retention",
+      "label": "长时序记忆",
+      "case_count": 5,
+      "passed_count": 2,
+      "pass_rate": 40.0,
+      "score": 70.5,
+      "metric_averages": {
+        "recall_at_3": 0.8,
+        "long_term_recall": 0.8,
+        "keyword_match": 0.8333,
+        "evidence_match": 0.8,
+        "latest_value_accuracy": 0.5,
+        "old_value_suppression": 0.0
+      }
+    },
+    {
+      "test_type": "abstention",
+      "label": "拒答/防幻觉",
+      "case_count": 5,
+      "passed_count": 0,
+      "pass_rate": 0.0,
+      "score": 41.7,
+      "metric_averages": {
+        "abstention_accuracy": 0.2,
+        "hallucination_rate": 0.8,
+        "noise_robustness": 0.0
+      }
+    },
+    {
+      "test_type": "cross_project",
+      "label": "跨项目隔离",
+      "case_count": 4,
+      "passed_count": 0,
+      "pass_rate": 0.0,
+      "score": 16.7,
+      "metric_averages": {
+        "scope_accuracy": 0.25,
+        "cross_project_leakage_rate": 0.25,
+        "evidence_match": 0.0
+      }
+    }
+  ],
+  "by_direction": [
+    {
+      "direction": "decision_memory",
+      "label": "B: 飞书决策记忆",
+      "weight": 0.3,
+      "case_count": 40,
+      "passed_count": 18,
+      "score": 72.6,
+      "metric_averages": {
+        "abstention_accuracy": 0.2,
+        "hallucination_rate": 0.8,
+        "noise_robustness": 0.5714,
+        "recall_at_3": 0.875,
+        "keyword_match": 0.875,
+        "evidence_match": 0.7667,
+        "old_value_suppression": 0.0,
+        "latest_value_accuracy": 0.875,
+        "scope_accuracy": 0.25,
+        "cross_project_leakage_rate": 0.25,
+        "char_saving_rate": 0.0,
+        "long_term_recall": 0.8,
+        "decision_match": 1.0,
+        "reason_match": 1.0,
+        "rejected_option_match": 1.0,
+        "step_saving_rate": 1.0
+      }
+    }
+  ],
+  "cases": [
+    {
+      "case_id": "dec_ret_001",
+      "category": "decision_memory",
+      "test_type": "retrieval_recall",
+      "difficulty": "easy",
+      "passed": true,
+      "error": null,
+      "metrics": {
+        "decision_match": {
+          "value": 1.0,
+          "passed": true
+        },
+        "reason_match": {
+          "value": 1.0,
+          "passed": true
+        },
+        "rejected_option_match": {
+          "value": 1.0,
+          "passed": true
+        },
+        "evidence_match": {
+          "value": 1.0,
+          "passed": true
+        }
+      }
+    },
+    {
+      "case_id": "dec_ret_002",
+      "category": "decision_memory",
+      "test_type": "retrieval_recall",
+      "difficulty": "easy",
+      "passed": true,
+      "error": null,
+      "metrics": {
+        "recall_at_3": {
+          "value": 1.0,
+          "passed": true
+        },
+        "keyword_match": {
+          "value": 1.0,
+          "passed": true
+        },
+        "evidence_match": {
+          "value": 1.0,
+          "passed": true
+        }
+      }
+    },
+    {
+      "case_id": "dec_ret_003",
+      "category": "decision_memory",
+      "test_type": "retrieval_recall",
+      "difficulty": "medium",
+      "passed": true,
+      "error": null,
+      "metrics": {
+        "recall_at_3": {
+          "value": 1.0,
+          "passed": true
+        },
+        "keyword_match": {
+          "value": 1.0,
+          "passed": true
+        },
+        "decision_match": {
+          "value": 1.0,
+          "passed": true
+        },
+        "reason_match": {
+          "value": 1.0,
+          "passed": true
+        }
+      }
+    },
+    {
+      "case_id": "dec_ret_004",
+      "category": "decision_memory",
+      "test_type": "retrieval_recall",
+      "difficulty": "medium",
+      "passed": false,
+      "error": null,
+      "metrics": {
+        "decision_match": {
+          "value": 1.0,
+          "passed": true
+        },
+        "reason_match": {
+          "value": 1.0,
+          "passed": true
+        },
+        "recall_at_3": {
+          "value": 0.0,
+          "passed": false
+        },
+        "evidence_match": {
+          "value": 0.0,
+          "passed": false
+        }
+      }
+    },
+    {
+      "case_id": "dec_ret_005",
+      "category": "decision_memory",
+      "test_type": "retrieval_recall",
+      "difficulty": "easy",
+      "passed": true,
+      "error": null,
+      "metrics": {
+        "decision_match": {
+          "value": 1.0,
+          "passed": true
+        },
+        "reason_match": {
+          "value": 1.0,
+          "passed": true
+        },
+        "recall_at_3": {
+          "value": 1.0,
+          "passed": true
+        },
+        "evidence_match": {
+          "value": 1.0,
+          "passed": true
+        }
+      }
+    },
+    {
+      "case_id": "dec_ret_006",
+      "category": "decision_memory",
+      "test_type": "retrieval_recall",
+      "difficulty": "easy",
+      "passed": true,
+      "error": null,
+      "metrics": {
+        "decision_match": {
+          "value": 1.0,
+          "passed": true
+        },
+        "recall_at_3": {
+          "value": 1.0,
+          "passed": true
+        },
+        "evidence_match": {
+          "value": 1.0,
+          "passed": true
+        }
+      }
+    },
+    {
+      "case_id": "dec_ret_007",
+      "category": "decision_memory",
+      "test_type": "retrieval_recall",
+      "difficulty": "easy",
+      "passed": true,
+      "error": null,
+      "metrics": {
+        "decision_match": {
+          "value": 1.0,
+          "passed": true
+        },
+        "reason_match": {
+          "value": 1.0,
+          "passed": true
+        },
+        "recall_at_3": {
+          "value": 1.0,
+          "passed": true
+        },
+        "evidence_match": {
+          "value": 1.0,
+          "passed": true
+        }
+      }
+    },
+    {
+      "case_id": "dec_ret_008",
+      "category": "decision_memory",
+      "test_type": "retrieval_recall",
+      "difficulty": "easy",
+      "passed": true,
+      "error": null,
+      "metrics": {
+        "decision_match": {
+          "value": 1.0,
+          "passed": true
+        },
+        "reason_match": {
+          "value": 1.0,
+          "passed": true
+        },
+        "recall_at_3": {
+          "value": 1.0,
+          "passed": true
+        },
+        "evidence_match": {
+          "value": 1.0,
+          "passed": true
+        }
+      }
+    },
+    {
+      "case_id": "dec_ret_009",
+      "category": "decision_memory",
+      "test_type": "retrieval_recall",
+      "difficulty": "medium",
+      "passed": true,
+      "error": null,
+      "metrics": {
+        "decision_match": {
+          "value": 1.0,
+          "passed": true
+        },
+        "reason_match": {
+          "value": 1.0,
+          "passed": true
+        },
+        "recall_at_3": {
+          "value": 1.0,
+          "passed": true
+        },
+        "evidence_match": {
+          "value": 1.0,
+          "passed": true
+        }
+      }
+    },
+    {
+      "case_id": "dec_ret_010",
+      "category": "decision_memory",
+      "test_type": "retrieval_recall",
+      "difficulty": "medium",
+      "passed": true,
+      "error": null,
+      "metrics": {
+        "decision_match": {
+          "value": 1.0,
+          "passed": true
+        },
+        "recall_at_3": {
+          "value": 1.0,
+          "passed": true
+        },
+        "evidence_match": {
+          "value": 1.0,
+          "passed": true
+        }
+      }
+    },
+    {
+      "case_id": "dec_ret_011",
+      "category": "decision_memory",
+      "test_type": "retrieval_recall",
+      "difficulty": "easy",
+      "passed": true,
+      "error": null,
+      "metrics": {
+        "decision_match": {
+          "value": 1.0,
+          "passed": true
+        },
+        "reason_match": {
+          "value": 1.0,
+          "passed": true
+        },
+        "recall_at_3": {
+          "value": 1.0,
+          "passed": true
+        },
+        "evidence_match": {
+          "value": 1.0,
+          "passed": true
+        }
+      }
+    },
+    {
+      "case_id": "dec_ret_012",
+      "category": "decision_memory",
+      "test_type": "retrieval_recall",
+      "difficulty": "easy",
+      "passed": true,
+      "error": null,
+      "metrics": {
+        "decision_match": {
+          "value": 1.0,
+          "passed": true
+        },
+        "reason_match": {
+          "value": 1.0,
+          "passed": true
+        },
+        "rejected_option_match": {
+          "value": 1.0,
+          "passed": true
+        },
+        "recall_at_3": {
+          "value": 1.0,
+          "passed": true
+        },
+        "evidence_match": {
+          "value": 1.0,
+          "passed": true
+        }
+      }
+    },
+    {
+      "case_id": "dec_anti_001",
+      "category": "decision_memory",
+      "test_type": "anti_interference",
+      "difficulty": "medium",
+      "passed": false,
+      "error": null,
+      "metrics": {
+        "recall_at_3": {
+          "value": 0.0,
+          "passed": false
+        },
+        "keyword_match": {
+          "value": 0.0,
+          "passed": false
+        },
+        "noise_robustness": {
+          "value": 0.0,
+          "passed": false
+        },
+        "evidence_match": {
+          "value": 0.0,
+          "passed": false
+        }
+      }
+    },
+    {
+      "case_id": "dec_anti_002",
+      "category": "decision_memory",
+      "test_type": "anti_interference",
+      "difficulty": "hard",
+      "passed": false,
+      "error": null,
+      "metrics": {
+        "recall_at_3": {
+          "value": 1.0,
+          "passed": true
+        },
+        "keyword_match": {
+          "value": 1.0,
+          "passed": true
+        },
+        "noise_robustness": {
+          "value": 1.0,
+          "passed": true
+        },
+        "old_value_suppression": {
+          "value": 0.0,
+          "passed": false
+        }
+      }
+    },
+    {
+      "case_id": "dec_anti_003",
+      "category": "decision_memory",
+      "test_type": "anti_interference",
+      "difficulty": "medium",
+      "passed": true,
+      "error": null,
+      "metrics": {
+        "recall_at_3": {
+          "value": 1.0,
+          "passed": true
+        },
+        "keyword_match": {
+          "value": 1.0,
+          "passed": true
+        },
+        "noise_robustness": {
+          "value": 1.0,
+          "passed": true
+        },
+        "evidence_match": {
+          "value": 1.0,
+          "passed": true
+        }
+      }
+    },
+    {
+      "case_id": "dec_anti_004",
+      "category": "decision_memory",
+      "test_type": "anti_interference",
+      "difficulty": "medium",
+      "passed": true,
+      "error": null,
+      "metrics": {
+        "recall_at_3": {
+          "value": 1.0,
+          "passed": true
+        },
+        "keyword_match": {
+          "value": 1.0,
+          "passed": true
+        },
+        "noise_robustness": {
+          "value": 1.0,
+          "passed": true
+        },
+        "evidence_match": {
+          "value": 1.0,
+          "passed": true
+        }
+      }
+    },
+    {
+      "case_id": "dec_anti_005",
+      "category": "decision_memory",
+      "test_type": "anti_interference",
+      "difficulty": "medium",
+      "passed": true,
+      "error": null,
+      "metrics": {
+        "recall_at_3": {
+          "value": 1.0,
+          "passed": true
+        },
+        "keyword_match": {
+          "value": 1.0,
+          "passed": true
+        },
+        "noise_robustness": {
+          "value": 1.0,
+          "passed": true
+        },
+        "evidence_match": {
+          "value": 1.0,
+          "passed": true
+        }
+      }
+    },
+    {
+      "case_id": "dec_contra_001",
+      "category": "decision_memory",
+      "test_type": "contradiction_update",
+      "difficulty": "medium",
+      "passed": false,
+      "error": null,
+      "metrics": {
+        "latest_value_accuracy": {
+          "value": 1.0,
+          "passed": true
+        },
+        "old_value_suppression": {
+          "value": 0.0,
+          "passed": false
+        },
+        "evidence_match": {
+          "value": 1.0,
+          "passed": true
+        }
+      }
+    },
+    {
+      "case_id": "dec_contra_002",
+      "category": "decision_memory",
+      "test_type": "contradiction_update",
+      "difficulty": "hard",
+      "passed": false,
+      "error": null,
+      "metrics": {
+        "latest_value_accuracy": {
+          "value": 1.0,
+          "passed": true
+        },
+        "old_value_suppression": {
+          "value": 0.0,
+          "passed": false
+        },
+        "evidence_match": {
+          "value": 1.0,
+          "passed": true
+        }
+      }
+    },
+    {
+      "case_id": "dec_contra_003",
+      "category": "decision_memory",
+      "test_type": "contradiction_update",
+      "difficulty": "hard",
+      "passed": false,
+      "error": null,
+      "metrics": {
+        "latest_value_accuracy": {
+          "value": 1.0,
+          "passed": true
+        },
+        "old_value_suppression": {
+          "value": 0.0,
+          "passed": false
+        },
+        "evidence_match": {
+          "value": 1.0,
+          "passed": true
+        }
+      }
+    },
+    {
+      "case_id": "dec_contra_004",
+      "category": "decision_memory",
+      "test_type": "contradiction_update",
+      "difficulty": "medium",
+      "passed": false,
+      "error": null,
+      "metrics": {
+        "latest_value_accuracy": {
+          "value": 1.0,
+          "passed": true
+        },
+        "old_value_suppression": {
+          "value": 0.0,
+          "passed": false
+        },
+        "evidence_match": {
+          "value": 1.0,
+          "passed": true
+        }
+      }
+    },
+    {
+      "case_id": "dec_contra_005",
+      "category": "decision_memory",
+      "test_type": "contradiction_update",
+      "difficulty": "medium",
+      "passed": false,
+      "error": null,
+      "metrics": {
+        "latest_value_accuracy": {
+          "value": 1.0,
+          "passed": true
+        },
+        "old_value_suppression": {
+          "value": 0.0,
+          "passed": false
+        },
+        "evidence_match": {
+          "value": 1.0,
+          "passed": true
+        }
+      }
+    },
+    {
+      "case_id": "dec_contra_006",
+      "category": "decision_memory",
+      "test_type": "contradiction_update",
+      "difficulty": "hard",
+      "passed": false,
+      "error": null,
+      "metrics": {
+        "latest_value_accuracy": {
+          "value": 1.0,
+          "passed": true
+        },
+        "old_value_suppression": {
+          "value": 0.0,
+          "passed": false
+        },
+        "evidence_match": {
+          "value": 1.0,
+          "passed": true
+        }
+      }
+    },
+    {
+      "case_id": "dec_eff_002",
+      "category": "decision_memory",
+      "test_type": "efficiency",
+      "difficulty": "easy",
+      "passed": true,
+      "error": null,
+      "metrics": {
+        "recall_at_3": {
+          "value": 1.0,
+          "passed": true
+        },
+        "keyword_match": {
+          "value": 1.0,
+          "passed": true
+        }
+      }
+    },
+    {
+      "case_id": "dec_eff_001",
+      "category": "decision_memory",
+      "test_type": "efficiency",
+      "difficulty": "medium",
+      "passed": false,
+      "error": null,
+      "metrics": {
+        "recall_at_3": {
+          "value": 1.0,
+          "passed": true
+        },
+        "char_saving_rate": {
+          "value": 0.0,
+          "passed": false
+        }
+      }
+    },
+    {
+      "case_id": "dec_eff_003",
+      "category": "decision_memory",
+      "test_type": "efficiency",
+      "difficulty": "medium",
+      "passed": true,
+      "error": null,
+      "metrics": {
+        "recall_at_3": {
+          "value": 1.0,
+          "passed": true
+        },
+        "keyword_match": {
+          "value": 1.0,
+          "passed": true
+        },
+        "step_saving_rate": {
+          "value": 1.0,
+          "passed": true
+        }
+      }
+    },
+    {
+      "case_id": "dec_long_001",
+      "category": "decision_memory",
+      "test_type": "long_term_retention",
+      "difficulty": "hard",
+      "passed": true,
+      "error": null,
+      "metrics": {
+        "recall_at_3": {
+          "value": 1.0,
+          "passed": true
+        },
+        "long_term_recall": {
+          "value": 1.0,
+          "passed": true
+        },
+        "keyword_match": {
+          "value": 1.0,
+          "passed": true
+        },
+        "evidence_match": {
+          "value": 1.0,
+          "passed": true
+        }
+      }
+    },
+    {
+      "case_id": "dec_long_002",
+      "category": "decision_memory",
+      "test_type": "long_term_retention",
+      "difficulty": "hard",
+      "passed": true,
+      "error": null,
+      "metrics": {
+        "recall_at_3": {
+          "value": 1.0,
+          "passed": true
+        },
+        "long_term_recall": {
+          "value": 1.0,
+          "passed": true
+        },
+        "keyword_match": {
+          "value": 1.0,
+          "passed": true
+        },
+        "evidence_match": {
+          "value": 1.0,
+          "passed": true
+        }
+      }
+    },
+    {
+      "case_id": "dec_long_003",
+      "category": "decision_memory",
+      "test_type": "long_term_retention",
+      "difficulty": "hard",
+      "passed": false,
+      "error": null,
+      "metrics": {
+        "recall_at_3": {
+          "value": 1.0,
+          "passed": true
+        },
+        "long_term_recall": {
+          "value": 1.0,
+          "passed": true
+        },
+        "keyword_match": {
+          "value": 0.5,
+          "passed": false
+        },
+        "evidence_match": {
+          "value": 1.0,
+          "passed": true
+        }
+      }
+    },
+    {
+      "case_id": "dec_long_004",
+      "category": "decision_memory",
+      "test_type": "long_term_retention",
+      "difficulty": "hard",
+      "passed": false,
+      "error": null,
+      "metrics": {
+        "recall_at_3": {
+          "value": 1.0,
+          "passed": true
+        },
+        "long_term_recall": {
+          "value": 1.0,
+          "passed": true
+        },
+        "latest_value_accuracy": {
+          "value": 1.0,
+          "passed": true
+        },
+        "old_value_suppression": {
+          "value": 0.0,
+          "passed": false
+        },
+        "evidence_match": {
+          "value": 1.0,
+          "passed": true
+        }
+      }
+    },
+    {
+      "case_id": "dec_long_005",
+      "category": "decision_memory",
+      "test_type": "long_term_retention",
+      "difficulty": "hard",
+      "passed": false,
+      "error": null,
+      "metrics": {
+        "recall_at_3": {
+          "value": 0.0,
+          "passed": false
+        },
+        "long_term_recall": {
+          "value": 0.0,
+          "passed": false
+        },
+        "latest_value_accuracy": {
+          "value": 0.0,
+          "passed": false
+        },
+        "old_value_suppression": {
+          "value": 0.0,
+          "passed": false
+        },
+        "evidence_match": {
+          "value": 0.0,
+          "passed": false
+        }
+      }
+    },
+    {
+      "case_id": "dec_abs_001",
+      "category": "decision_memory",
+      "test_type": "abstention",
+      "difficulty": "medium",
+      "passed": false,
+      "error": null,
+      "metrics": {
+        "abstention_accuracy": {
+          "value": 0.0,
+          "passed": false
+        },
+        "hallucination_rate": {
+          "value": 1.0,
+          "passed": true
+        }
+      }
+    },
+    {
+      "case_id": "dec_abs_002",
+      "category": "decision_memory",
+      "test_type": "abstention",
+      "difficulty": "hard",
+      "passed": false,
+      "error": null,
+      "metrics": {
+        "abstention_accuracy": {
+          "value": 0.0,
+          "passed": false
+        },
+        "hallucination_rate": {
+          "value": 1.0,
+          "passed": true
+        },
+        "noise_robustness": {
+          "value": 0.0,
+          "passed": false
+        }
+      }
+    },
+    {
+      "case_id": "dec_abs_003",
+      "category": "decision_memory",
+      "test_type": "abstention",
+      "difficulty": "medium",
+      "passed": false,
+      "error": null,
+      "metrics": {
+        "abstention_accuracy": {
+          "value": 0.0,
+          "passed": false
+        },
+        "hallucination_rate": {
+          "value": 1.0,
+          "passed": true
+        }
+      }
+    },
+    {
+      "case_id": "dec_abs_004",
+      "category": "decision_memory",
+      "test_type": "abstention",
+      "difficulty": "medium",
+      "passed": false,
+      "error": null,
+      "metrics": {
+        "abstention_accuracy": {
+          "value": 0.0,
+          "passed": false
+        },
+        "hallucination_rate": {
+          "value": 0.0,
+          "passed": false
+        }
+      }
+    },
+    {
+      "case_id": "dec_abs_005",
+      "category": "decision_memory",
+      "test_type": "abstention",
+      "difficulty": "medium",
+      "passed": false,
+      "error": null,
+      "metrics": {
+        "abstention_accuracy": {
+          "value": 1.0,
+          "passed": true
+        },
+        "hallucination_rate": {
+          "value": 1.0,
+          "passed": true
+        },
+        "noise_robustness": {
+          "value": 0.0,
+          "passed": false
+        }
+      }
+    },
+    {
+      "case_id": "dec_xproj_001",
+      "category": "decision_memory",
+      "test_type": "cross_project",
+      "difficulty": "medium",
+      "passed": false,
+      "error": null,
+      "metrics": {
+        "scope_accuracy": {
+          "value": 1.0,
+          "passed": true
+        },
+        "cross_project_leakage_rate": {
+          "value": 1.0,
+          "passed": true
+        },
+        "evidence_match": {
+          "value": 0.0,
+          "passed": false
+        }
+      }
+    },
+    {
+      "case_id": "dec_xproj_002",
+      "category": "decision_memory",
+      "test_type": "cross_project",
+      "difficulty": "hard",
+      "passed": false,
+      "error": null,
+      "metrics": {
+        "scope_accuracy": {
+          "value": 0.0,
+          "passed": false
+        },
+        "cross_project_leakage_rate": {
+          "value": 0.0,
+          "passed": false
+        },
+        "evidence_match": {
+          "value": 0.0,
+          "passed": false
+        }
+      }
+    },
+    {
+      "case_id": "dec_xproj_003",
+      "category": "decision_memory",
+      "test_type": "cross_project",
+      "difficulty": "hard",
+      "passed": false,
+      "error": null,
+      "metrics": {
+        "scope_accuracy": {
+          "value": 0.0,
+          "passed": false
+        },
+        "cross_project_leakage_rate": {
+          "value": 0.0,
+          "passed": false
+        },
+        "evidence_match": {
+          "value": 0.0,
+          "passed": false
+        }
+      }
+    },
+    {
+      "case_id": "dec_xproj_004",
+      "category": "decision_memory",
+      "test_type": "cross_project",
+      "difficulty": "medium",
+      "passed": false,
+      "error": null,
+      "metrics": {
+        "scope_accuracy": {
+          "value": 0.0,
+          "passed": false
+        },
+        "cross_project_leakage_rate": {
+          "value": 0.0,
+          "passed": false
+        },
+        "evidence_match": {
+          "value": 0.0,
+          "passed": false
+        }
+      }
+    }
+  ]
+}

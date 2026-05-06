@@ -1,6 +1,5 @@
 .claude
 .idea
-.workbuddy
 .tmp-tests
 .gitignore
 codeReview
@@ -10,6 +9,7 @@ logs/
 .pip-tmp
 lark-oapi-demo
 benchmark_project_decision
+benchmark/.tmp-runs
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
