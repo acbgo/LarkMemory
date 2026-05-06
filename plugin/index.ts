@@ -60,15 +60,30 @@ const DEFAULT_CONFIG: PluginConfig = {
 const DEFAULT_PROJECT_ID = null;
 const DEFAULT_WORKSPACE_ID = null;
 const DEFAULT_TEAM_ID = "oc_b9cef0cb9a14fe72a58793560cc4aa1c";
+const LOG_FILE_URL = new URL("./larkmemory-plugin.log", import.meta.url);
 
 function log(tag: string, message: string, data?: unknown) {
   const prefix = `\x1b[36m[LarkMemory]\x1b[0m [${tag}]`;
+  const plainPrefix = `[LarkMemory] [${tag}]`;
   if (data !== undefined) {
     console.log(`${prefix} ${message}`);
     console.log(`\x1b[90m${safeJson(data)}\x1b[0m`);
+    appendLogLine(`${plainPrefix} ${message}\n${safeJson(data)}`);
     return;
   }
   console.log(`${prefix} ${message}`);
+  appendLogLine(`${plainPrefix} ${message}`);
+}
+
+function appendLogLine(line: string) {
+  const timestamp = new Date().toISOString();
+  import("node:fs")
+    .then((fs) => {
+      fs.appendFileSync(LOG_FILE_URL, `${timestamp} ${line}\n`, "utf8");
+    })
+    .catch(() => {
+      // Keep plugin hooks working even when the runtime does not expose node:fs.
+    });
 }
 
 function sep(title: string) {
