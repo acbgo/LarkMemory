@@ -8,7 +8,7 @@ from typing import Any
 from src.sources.cli._client import post_retrieve
 from src.sources.cli.ingest import _detect_project_id, _detect_user_id
 from src.app.config import load_settings
-from src.storage.cli_workflow_store import CLIWorkflowStore
+from src.storage.cli_workflow_store import CLIWorkflowStore, split_command_identity
 
 
 def _hit_to_workflow(hit: dict[str, Any]) -> dict[str, Any] | None:
@@ -85,6 +85,19 @@ def _query_command_identity(line: str, *, cwd: str | None = None) -> str:
         if len(identity) >= 3:
             break
     return " ".join(identity)
+
+
+def _query_command_parts(line: str, *, cwd: str | None = None) -> tuple[str, str | None]:
+    """Parse a shell-facing query into base command and optional sub-command."""
+    identity = _query_command_identity(line, cwd=cwd)
+    if not identity:
+        return "", None
+    base_command, sub_command = split_command_identity(identity)
+    if not base_command:
+        return "", None
+    if sub_command == base_command:
+        return base_command, None
+    return base_command, sub_command
 
 
 def _looks_like_script_path(value: str) -> bool:
@@ -264,15 +277,23 @@ def _pattern_matches_suggest_query(pattern: dict[str, Any], query: str, *, cwd: 
 def _local_frequency_suggest(query_text: str, *, project_id: str | None, cwd: str | None) -> list[dict[str, Any]]:
     """Return shell suggestions from cli_command_pattern ordered by observed frequency."""
     store = _get_cli_store()
-    patterns = store.list_patterns(
-        user_id=_detect_user_id(),
+    user_id = _detect_user_id()
+    base_command, sub_command = _query_command_parts(query_text, cwd=cwd)
+    if not base_command:
+        return []
+    patterns = store.find_patterns_by_command_identity(
+        user_id=user_id,
         project_id=project_id,
+        base_command=base_command,
+        sub_command=sub_command,
         limit=100,
     )
     if not patterns and project_id is not None:
-        patterns = store.list_patterns(
-            user_id=_detect_user_id(),
+        patterns = store.find_patterns_by_command_identity(
+            user_id=user_id,
             project_id=None,
+            base_command=base_command,
+            sub_command=sub_command,
             limit=100,
         )
     workflows = [
@@ -287,15 +308,23 @@ def _local_frequency_suggest(query_text: str, *, project_id: str | None, cwd: st
 def _local_frequency_complete(line: str, *, project_id: str | None, cwd: str | None) -> list[dict[str, Any]]:
     """Return command-matched workflow rows for shell completion without semantic retrieval."""
     store = _get_cli_store()
-    patterns = store.list_patterns(
-        user_id=_detect_user_id(),
+    user_id = _detect_user_id()
+    base_command, sub_command = _query_command_parts(line, cwd=cwd)
+    if not base_command:
+        return []
+    patterns = store.find_patterns_by_command_identity(
+        user_id=user_id,
         project_id=project_id,
+        base_command=base_command,
+        sub_command=sub_command,
         limit=100,
     )
     if not patterns and project_id is not None:
-        patterns = store.list_patterns(
-            user_id=_detect_user_id(),
+        patterns = store.find_patterns_by_command_identity(
+            user_id=user_id,
             project_id=None,
+            base_command=base_command,
+            sub_command=sub_command,
             limit=100,
         )
     workflows: list[dict[str, Any]] = []

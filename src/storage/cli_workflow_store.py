@@ -354,6 +354,41 @@ class CLIWorkflowStore(SQLiteStore):
         )
         return [deserialize_pattern(row) for row in rows]
 
+    def find_patterns_by_command_identity(
+        self,
+        *,
+        user_id: str,
+        project_id: str | None = None,
+        base_command: str,
+        sub_command: str | None = None,
+        limit: int = 20,
+    ) -> list[dict[str, Any]]:
+        """Find active command patterns by base command and optional sub-command."""
+        clauses = ["user_id = ?", "status = 'active'", "LOWER(base_command) = LOWER(?)"]
+        params: list[Any] = [user_id, base_command]
+        if project_id is not None:
+            clauses.append("(project_id = ? OR project_id IS NULL)")
+            params.append(project_id)
+        params.append(limit)
+        rows = self.fetch_all(
+            f"""
+            SELECT * FROM cli_command_pattern
+            WHERE {" AND ".join(clauses)}
+            ORDER BY active_priority DESC, execution_count DESC, updated_at DESC
+            LIMIT ?
+            """,
+            tuple(params),
+        )
+        patterns = [deserialize_pattern(row) for row in rows]
+        if not sub_command:
+            return patterns
+        expected = normalize_command_text(sub_command)
+        return [
+            pattern
+            for pattern in patterns
+            if normalize_command_text(str(pattern.get("sub_command") or "")) == expected
+        ]
+
     def find_top_command_pattern_for_text(
         self,
         *,
@@ -537,7 +572,7 @@ def render_command(template: str, bindings: list[ParameterBinding]) -> str:
 def split_command_identity(command: str) -> tuple[str, str]:
     """Return base command and sub-command from a full command string."""
     try:
-        tokens = shlex.split(command)
+        tokens = shlex.split(command, posix=False)
     except ValueError:
         tokens = command.split()
     if not tokens:

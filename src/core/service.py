@@ -47,7 +47,10 @@ Return JSON only:
 
 Rules:
 - Mark relevant=true only when the candidate directly answers, explains, updates, or is necessary context for the query.
-- Mark relevant=false for unrelated team facts, admin rules, generic noise, or memories about a different topic.
+- Mark relevant=false if:
+  * The candidate is about a different project, customer, service, team, or entity than what the query asks about (e.g. query asks about Delta project, memory is about Alpha/Beta — mark irrelevant)
+  * The candidate mentions the same general topic (database, API, config) but for a DIFFERENT scope or entity
+  * The candidate is about an unrelated topic, generic noise, or admin rules
 - Do not reject historical or superseded memories if the query asks for history, changes, rollback, migration, or reasons.
 - Include every provided candidate id exactly once.
 """
@@ -433,6 +436,10 @@ class MemoryService:
             relevant = judgment.get("relevant")
             confidence = judgment.get("confidence", 0.0)
             if relevant is False and confidence >= _RELEVANCE_FILTER_CONFIDENCE_THRESHOLD:
+                rejected_ids.append(candidate.item.memory_id)
+                continue
+            # Also reject low-confidence irrelevant candidates when nothing is kept yet
+            if relevant is False and len(kept) == 0 and confidence >= 0.50:
                 rejected_ids.append(candidate.item.memory_id)
                 continue
             kept.append(candidate)
