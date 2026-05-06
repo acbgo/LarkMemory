@@ -216,13 +216,13 @@ class CLIWorkflowRetriever:
     ) -> list[CLIWorkflowSearchResult]:
         if limit < 1:
             raise ValueError("limit must be greater than 0")
-        if not query.user_id:
-            return []
-
         direct_identity = self._extract_explicit_command_identity(query)
         direct_results = self._retrieve_direct_sub_command(query, direct_identity, limit=limit)
         if direct_results:
             return direct_results[:limit]
+
+        if not query.user_id:
+            return []
 
         base_command = self._extract_base_command(query.query_text)
         analysis = self._analyze_query(query)
@@ -327,11 +327,14 @@ class CLIWorkflowRetriever:
         limit: int,
     ) -> list[CLIWorkflowSearchResult]:
         """Directly retrieve command patterns when the query names a concrete sub-command."""
-        if self.cli_store is None or identity is None or not query.user_id:
+        if self.cli_store is None or identity is None:
             return []
-        patterns = self.cli_store.list_patterns(
+        exact_sub_command = None if identity.script_path else identity.sub_command
+        patterns = self.cli_store.find_patterns_by_command_identity(
             user_id=query.user_id,
             project_id=query.project_id,
+            base_command=identity.base_command,
+            sub_command=exact_sub_command,
             limit=max(limit * 10, 100),
         )
         matches: list[tuple[float, dict[str, Any]]] = []
@@ -342,10 +345,14 @@ class CLIWorkflowRetriever:
             matches.append((score, pattern))
         if not matches:
             return []
-        policies = self.cli_store.list_parameter_policies(
-            user_id=query.user_id,
-            project_id=query.project_id,
-            limit=100,
+        policies = (
+            self.cli_store.list_parameter_policies(
+                user_id=query.user_id,
+                project_id=query.project_id,
+                limit=100,
+            )
+            if query.user_id
+            else []
         )
         results = [
             self._pattern_to_search_result(pattern, score, policies, query)

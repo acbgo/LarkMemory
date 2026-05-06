@@ -357,15 +357,18 @@ class CLIWorkflowStore(SQLiteStore):
     def find_patterns_by_command_identity(
         self,
         *,
-        user_id: str,
+        user_id: str | None = None,
         project_id: str | None = None,
         base_command: str,
         sub_command: str | None = None,
         limit: int = 20,
     ) -> list[dict[str, Any]]:
         """Find active command patterns by base command and optional sub-command."""
-        clauses = ["user_id = ?", "status = 'active'", "LOWER(base_command) = LOWER(?)"]
-        params: list[Any] = [user_id, base_command]
+        clauses = ["status = 'active'", "LOWER(base_command) = LOWER(?)"]
+        params: list[Any] = [base_command]
+        if user_id is not None:
+            clauses.append("user_id = ?")
+            params.append(user_id)
         if project_id is not None:
             clauses.append("(project_id = ? OR project_id IS NULL)")
             params.append(project_id)
