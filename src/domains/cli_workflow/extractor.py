@@ -205,7 +205,7 @@ class CLIWorkflowExtractor:
                     rule_candidates[0].memory.semantic_description = enriched["semantic_description"]
                     rule_candidates[0].memory.scenario_keywords = enriched["scenario_keywords"]
                     rule_candidates[0].signals.append("llm_semantics")
-                    logger.info(
+                    logger.debug(
                         "action=llm_semantics_enriched command_template=%s command_name=%s "
                         "semantic_description=%s scenario_keywords=%s params=%s param_count=%s",
                         rule_candidates[0].memory.command_template,
@@ -226,7 +226,7 @@ class CLIWorkflowExtractor:
                 # 规则未命中 → LLM 完整提取
                 llm_candidates = self._llm_full_extraction(text, event)
                 if llm_candidates:
-                    logger.info("action=llm_full_extraction_done candidate_count=%s", len(llm_candidates))
+                    logger.debug("action=llm_full_extraction_done candidate_count=%s", len(llm_candidates))
                     return llm_candidates
 
         return rule_candidates
@@ -587,22 +587,29 @@ class CLIWorkflowExtractor:
                     max_tokens=1024,
                 )
             )
+            llm_param_names = {str(item.get("param_name") or "") for item in raw.get("parameters", [])}
+            rule_param_names = {pb.param_name for pb in param_bindings}
+            if not llm_param_names & rule_param_names:
+                return {
+                    "parameter_bindings": param_bindings,
+                    "semantic_description": clean_text(str(raw.get("semantic_description") or "")) or None,
+                    "scenario_keywords": _string_list(raw.get("scenario_keywords")),
+                }
             result: list[ParameterBinding] = []
-            for item in raw.get("parameters", []):
-                pb = next(
-                    (p for p in param_bindings if p.param_name == item.get("param_name")),
+            for pb in param_bindings:
+                llm_item = next(
+                    (item for item in raw.get("parameters", []) if str(item.get("param_name") or "") == pb.param_name),
                     None,
                 )
-                if pb:
-                    new_pb = ParameterBinding(
-                        param_name=pb.param_name,
-                        param_value=pb.param_value,
-                        frequency=pb.frequency,
-                        semantics=str(item.get("semantics", "") or ""),
-                    )
-                    result.append(new_pb)
+                new_pb = ParameterBinding(
+                    param_name=pb.param_name,
+                    param_value=pb.param_value,
+                    frequency=pb.frequency,
+                    semantics=str(llm_item.get("semantics", "") or "") if llm_item else (pb.semantics or ""),
+                )
+                result.append(new_pb)
             return {
-                "parameter_bindings": result or param_bindings,
+                "parameter_bindings": result,
                 "semantic_description": clean_text(str(raw.get("semantic_description") or "")) or None,
                 "scenario_keywords": _string_list(raw.get("scenario_keywords")),
             }
@@ -641,7 +648,7 @@ class CLIWorkflowExtractor:
         scenario_keywords = raw.get("scenario_keywords") or []
         full_command = raw.get("full_command")
         semantic_description = clean_text(str(raw.get("semantic_description") or "")) or None
-        logger.info(
+        logger.debug(
             "action=llm_full_extraction_raw is_teaching=%s full_command=%s "
             "semantic_description=%s scenario_keywords=%s params=%s",
             is_teaching,
@@ -676,7 +683,7 @@ class CLIWorkflowExtractor:
                 command_template, parsed_bindings = self._parameterize(tokens, command_name)
                 if command_template:
                     merged_bindings = _merge_parameter_semantics(parsed_bindings, param_bindings)
-                    logger.info(
+                    logger.debug(
                         "action=llm_full_extraction_candidate command_name=%s command_template=%s "
                         "semantic_description=%s scenario_keywords=%s params=%s",
                         command_name,

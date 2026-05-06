@@ -255,6 +255,7 @@ class TeamRetentionStore(SQLiteStore):
             risk_level=memory.risk_level,
             review_policy=memory.review_policy,
         )
+        memory.next_review_at = next_review_at
         schedule_id = new_id("sched")
         now = utc_now_iso()
         self.execute(

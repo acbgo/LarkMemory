@@ -359,6 +359,44 @@ class TestHandlerIngest:
         assert result.memory_ids
         assert policies == []
 
+    def test_openclaw_repeated_full_command_does_not_increase_frequency(self, temp_dir):
+        db_path = str(temp_dir / "test_openclaw_no_frequency.db")
+        memory_store = MemoryCoreStore(db_path)
+        memory_store.create_table()
+        cli_store = CLIWorkflowStore(db_path)
+        cli_store.create_table()
+        handler = CLIWorkflowDomainHandler(memory_store, cli_store=cli_store)
+        add = _add_memory(memory_store)
+
+        event = NormalizedEvent(
+            event_id=event_id(),
+            event_type="memory_feedback",
+            source_type="openclaw",
+            occurred_at=utc_now_iso(),
+            context=EventContext(user_id="u_1", project_id="backend", scope="user"),
+            content_text='记住部署 demo-a 用命令 "python deploy.py --tenant demo-a --env staging"',
+            payload={"intent": "teach_command"},
+        )
+        first = handler.ingest_event(event, DomainRuntime(memory_store=memory_store, add_memory=add))
+        duplicate = NormalizedEvent(
+            event_id=event_id(),
+            event_type="memory_feedback",
+            source_type="openclaw",
+            occurred_at=utc_now_iso(),
+            context=EventContext(user_id="u_1", project_id="backend", scope="user"),
+            content_text='记住部署 demo-a 用命令 "python deploy.py --tenant demo-a --env staging"',
+            payload={"intent": "teach_command"},
+        )
+
+        second = handler.ingest_event(duplicate, DomainRuntime(memory_store=memory_store, add_memory=add))
+        core = memory_store.get_memory(first.memory_ids[0])
+        restored = CLIWorkflowMemory.from_memory_core(core)
+        patterns = cli_store.list_patterns(user_id="u_1", project_id="backend")
+
+        assert second.memory_ids == []
+        assert restored.execution_count == 1
+        assert patterns[0]["execution_count"] == 1
+
     def test_openclaw_command_decision_delete_forgets_existing_command(self, temp_dir):
         db_path = str(temp_dir / "test_command_delete.db")
         memory_store = MemoryCoreStore(db_path)

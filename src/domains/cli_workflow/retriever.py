@@ -222,14 +222,14 @@ class CLIWorkflowRetriever:
             raise ValueError("limit must be greater than 0")
         direct_identity = self._extract_explicit_command_identity(query)
         if direct_identity is None:
-            logger.info(
+            logger.debug(
                 "action=cli_direct_identity_missing query_text=%s query_user_id=%s project_id=%s",
                 query.query_text,
                 query.user_id,
                 query.project_id,
             )
         else:
-            logger.info(
+            logger.debug(
                 "action=cli_direct_identity_extracted query_text=%s query_user_id=%s project_id=%s "
                 "base_command=%s sub_command=%s script_path=%s script_basename=%s",
                 query.query_text,
@@ -360,7 +360,7 @@ class CLIWorkflowRetriever:
             sub_command=exact_sub_command,
             limit=max(limit * 10, 100),
         )
-        logger.info(
+        logger.debug(
             "action=cli_direct_pattern_lookup query_user_id=%s user_filter_ignored=%s project_id=%s "
             "project_filter_ignored=%s base_command=%s sub_command=%s sql_sub_command=%s pattern_count=%s",
             query.user_id,
@@ -378,7 +378,7 @@ class CLIWorkflowRetriever:
             if score <= 0:
                 continue
             matches.append((score, pattern))
-        logger.info(
+        logger.debug(
             "action=cli_direct_pattern_scored query_user_id=%s project_id=%s base_command=%s "
             "sub_command=%s matched_count=%s top_matches=%s",
             query.user_id,
