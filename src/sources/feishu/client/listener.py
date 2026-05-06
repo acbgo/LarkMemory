@@ -82,6 +82,7 @@ def build_event_handler(
             meeting_processor.process_meeting_ended_async(meeting.meeting_id, meeting.topic)
 
     def on_doc_changed(data: Any) -> None:
+        logger.info("action=doc_changed_raw data=%s", data)
         doc = _doc_changed_from_lark(data)
         if doc is None:
             logger.info("function=src.sources.feishu.client.listener.on_doc_changed action=skip_empty")
