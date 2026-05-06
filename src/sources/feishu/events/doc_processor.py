@@ -26,10 +26,13 @@ class DocProcessor:
         source_state_store: SourceStateStore,
         doc_client: FeishuDocClientProtocol,
         dispatcher: FeishuEventDispatcher,
+        *,
+        team_id: str | None = None,
     ) -> None:
         self._state = source_state_store
         self._doc = doc_client
         self._dispatch = dispatcher
+        self._team_id = team_id
 
     def process_doc_changed(self, file_token: str) -> None:
         """后台线程入口，编排完整的文档处理链路。"""
@@ -89,6 +92,7 @@ class DocProcessor:
                 file_token,
                 doc_title,
                 section.index,
+                team_id=self._team_id,
             )
             try:
                 self._dispatch.dispatch_normalized_event(event)
