@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 
 from src.app.config import AppSettings
 from src.app.main import create_app, register_routers
+from src.sources.feishu.client.config import FeishuSettings
 
 
 class TestMain(unittest.TestCase):
@@ -66,3 +67,48 @@ class TestMain(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.headers["x-request-id"], "req-main")
+
+    def test_lifespan_does_not_start_feishu_ws_when_disabled(self) -> None:
+        settings = FeishuSettings(enable_ws=False)
+        with patch("src.app.main.load_feishu_settings", return_value=settings), patch(
+            "src.app.main.build_ws_client"
+        ) as build_ws_client:
+            app = create_app(AppSettings())
+            with TestClient(app):
+                pass
+
+        build_ws_client.assert_not_called()
+        self.assertFalse(hasattr(app.state, "_feishu_ws_thread"))
+
+    def test_lifespan_starts_and_closes_feishu_ws_when_enabled(self) -> None:
+        settings = FeishuSettings(app_id="app-id", app_secret="app-secret", enable_ws=True)
+        calls: list[str] = []
+
+        class FakeClient:
+            def start(self) -> None:
+                calls.append("start")
+
+            def close(self) -> None:
+                calls.append("close")
+
+        with patch("src.app.main.load_feishu_settings", return_value=settings), patch(
+            "src.app.main.get_memory_service",
+            return_value=object(),
+        ), patch(
+            "src.app.main.build_api_client",
+            return_value=object(),
+        ), patch(
+            "src.app.main.SourceStateStore",
+        ), patch(
+            "src.app.main.build_event_handler",
+            return_value=object(),
+        ), patch(
+            "src.app.main.build_ws_client",
+            return_value=FakeClient(),
+        ):
+            app = create_app(AppSettings())
+            with TestClient(app):
+                pass
+
+        self.assertIn("start", calls)
+        self.assertIn("close", calls)

@@ -1113,3 +1113,10 @@
   - 覆盖全局 rerank 全 0 分数时回退本地 reranker。
 - 验证：`uv run pytest tests/unit/llm/test_http_rerank_provider.py tests/unit/llm/test_rerank_client.py tests/unit/core/test_service.py -q`，37 passed。
 - 验证：`uv run pytest tests/unit/app/test_dependencies.py -q`，22 passed。
+
+## 2026-05-06 Benchmark CLI 默认路径修复
+
+- 修复 `benchmark/run_project_decision_benchmark.py` 默认路径依赖当前 working directory 的问题。
+- `--datasets-dir`、`--reports-dir`、`--temp-dir` 现在默认基于脚本所在目录解析，避免在 PyCharm 中从 `benchmark/` 目录启动时被错误解析成 `benchmark\benchmark\datasets`。
+- 补充脚本级单测，验证默认路径为脚本相对绝对路径。
+- 验证：`uv run pytest tests/unit/benchmark/test_run_project_decision_benchmark.py -q`，7 passed。

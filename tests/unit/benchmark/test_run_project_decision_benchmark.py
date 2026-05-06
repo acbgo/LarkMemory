@@ -39,11 +39,13 @@ def test_parse_args_defaults_to_decision_memory_suite() -> None:
     from benchmark.run_project_decision_benchmark import parse_args
 
     args = parse_args([])
+    script_dir = Path("benchmark").resolve()
 
     assert args.suite == "decision_memory"
     assert args.run_id.startswith("project-decision-")
-    assert args.reports_dir == Path("benchmark/reports")
-    assert args.temp_dir == Path("benchmark/.tmp-runs")
+    assert args.datasets_dir == str(script_dir / "datasets")
+    assert args.reports_dir == script_dir / "reports"
+    assert args.temp_dir == script_dir / ".tmp-runs"
     assert args.case_id == []
     assert args.keep_temp is False
     assert args.quiet is False

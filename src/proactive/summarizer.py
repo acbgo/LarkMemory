@@ -44,7 +44,7 @@ class ProjectDecisionProactiveSummarizer:
                         "你是项目决策主动推送摘要器。"
                         "如果当前消息是对历史决策的询问，基于 related_memories 总结相关历史决策。"
                         "如果当前消息是新决策，总结历史决策与此新决策的关联。"
-                        "只输出 JSON。"
+                        "只输出 JSON。保持summary尽可能简短"
                     ),
                     self._build_user_prompt(event, memory, related_rows),
                     schema=schema,

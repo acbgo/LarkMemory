@@ -54,6 +54,35 @@ class FakeRetrieveLLM:
         return self.texts.pop(0)
 
 
+class FakeRetrieveJudgeLLM:
+    def __init__(self, texts: list[str], payloads: list[dict[str, object] | BaseException]) -> None:
+        self.texts = list(texts)
+        self.payloads = list(payloads)
+        self.calls: list[dict[str, object]] = []
+
+    async def atext(
+        self,
+        system_prompt: str | None,
+        user_prompt: str,
+        **kwargs: object,
+    ) -> str:
+        self.calls.append({"method": "atext", "system_prompt": system_prompt or "", "user_prompt": user_prompt, "kwargs": kwargs})
+        if not self.texts:
+            raise AssertionError("unexpected LLM text call")
+        return self.texts.pop(0)
+
+    async def ajson(self, system_prompt: str | None, user_prompt: str, **kwargs: object) -> dict[str, object]:
+        self.calls.append({"method": "ajson", "system_prompt": system_prompt or "", "user_prompt": user_prompt, "kwargs": kwargs})
+        if "primary" in (kwargs.get("schema") or {}).get("required", []):
+            return {"primary": "project_decision", "confidence": 0.9, "reason": "测试分类"}
+        if not self.payloads:
+            raise AssertionError("unexpected LLM json call")
+        payload = self.payloads.pop(0)
+        if isinstance(payload, BaseException):
+            raise payload
+        return payload
+
+
 class SpyRetrieveHandler:
     def __init__(self, domain: str = "project_decision", rows: list[object] | None = None) -> None:
         self.domain = domain
@@ -575,6 +604,146 @@ class TestService(unittest.TestCase):
         self.assertIn("action=global_rerank_done", logs)
         self.assertIn("raw_scores=", logs)
         self.assertIn("top_ids=['mem-project', 'mem-team']", logs)
+
+    def test_retrieve_filters_irrelevant_candidates_before_rerank(self) -> None:
+        project_memory = create_memory_core(
+            memory_id="mem-project",
+            domain="project_decision",
+            memory_type="decision",
+            scope="project",
+            source_type="feishu_chat",
+            source_ref="event-project",
+            content_text="SQLite 数据库选型决策",
+            summary_text="SQLite 数据库选型决策",
+        )
+        noise_memory = create_memory_core(
+            memory_id="mem-noise",
+            domain="team_retention",
+            memory_type="team_fact",
+            scope="team",
+            source_type="feishu_chat",
+            source_ref="event-noise",
+            content_text="报销单据应统一贴在 A4 纸上",
+            summary_text="报销规则",
+        )
+        related_memory = create_memory_core(
+            memory_id="mem-related",
+            domain="project_decision",
+            memory_type="decision",
+            scope="project",
+            source_type="feishu_chat",
+            source_ref="event-related",
+            content_text="生产环境数据库后续再评估 PostgreSQL",
+            summary_text="数据库后续评估",
+        )
+        handler = SpyRetrieveHandler("project_decision", [noise_memory, project_memory, related_memory])
+        llm = FakeRetrieveJudgeLLM(
+            ["project_decision", "SQLite 数据库选型理由"],
+            [
+                {
+                    "results": [
+                        {"id": "mem-noise", "relevant": False, "confidence": 0.95, "reason": "报销规则与数据库选型无关"},
+                        {"id": "mem-project", "relevant": True, "confidence": 0.9, "reason": "直接回答数据库选型"},
+                        {"id": "mem-related", "relevant": True, "confidence": 0.8, "reason": "相关数据库背景"},
+                    ]
+                }
+            ],
+        )
+        rerank_client = FakeGlobalRerankClient(["mem-project", "mem-related"])
+        service = MemoryService(
+            event_store=self.event_store,
+            memory_store=self.memory_store,
+            llm_client=llm,
+            domain_handlers=[handler],  # type: ignore[list-item]
+            rerank_client=rerank_client,
+        )
+
+        result = service.retrieve(RetrievalQuery("SQLite 数据库选型理由", project_id="project-1"), top_k=3, include_trace=True)
+
+        self.assertEqual([memory.item.memory_id for memory in result.ranked_memories], ["mem-project", "mem-related"])
+        self.assertEqual([getattr(document, "id") for document in rerank_client.calls[0]["documents"]], ["mem-project", "mem-related"])
+        self.assertEqual(result.trace["candidate_count"], 3)
+        self.assertEqual(result.trace["filtered_candidate_count"], 2)
+
+    def test_retrieve_keeps_candidates_when_llm_relevance_filter_fails(self) -> None:
+        project_memory = create_memory_core(
+            memory_id="mem-project",
+            domain="project_decision",
+            memory_type="decision",
+            scope="project",
+            source_type="feishu_chat",
+            source_ref="event-project",
+            content_text="SQLite 数据库选型决策",
+            summary_text="SQLite 数据库选型决策",
+        )
+        noise_memory = create_memory_core(
+            memory_id="mem-noise",
+            domain="team_retention",
+            memory_type="team_fact",
+            scope="team",
+            source_type="feishu_chat",
+            source_ref="event-noise",
+            content_text="报销单据应统一贴在 A4 纸上",
+            summary_text="报销规则",
+        )
+        handler = SpyRetrieveHandler("project_decision", [noise_memory, project_memory])
+        llm = FakeRetrieveJudgeLLM(
+            ["project_decision", "SQLite 数据库选型理由"],
+            [RuntimeError("judge unavailable")],
+        )
+        rerank_client = FakeGlobalRerankClient(["mem-project", "mem-noise"])
+        service = MemoryService(
+            event_store=self.event_store,
+            memory_store=self.memory_store,
+            llm_client=llm,
+            domain_handlers=[handler],  # type: ignore[list-item]
+            rerank_client=rerank_client,
+        )
+
+        result = service.retrieve(RetrievalQuery("SQLite 数据库选型理由", project_id="project-1"), top_k=2, include_trace=True)
+
+        self.assertEqual([memory.item.memory_id for memory in result.ranked_memories], ["mem-project", "mem-noise"])
+        self.assertEqual(len(rerank_client.calls[0]["documents"]), 2)
+        self.assertEqual(result.trace["filtered_candidate_count"], 2)
+        self.assertTrue(result.trace["llm_relevance_filter"]["failed"])
+
+    def test_retrieve_returns_empty_when_all_candidates_are_irrelevant(self) -> None:
+        noise_memory = create_memory_core(
+            memory_id="mem-noise",
+            domain="team_retention",
+            memory_type="team_fact",
+            scope="team",
+            source_type="feishu_chat",
+            source_ref="event-noise",
+            content_text="报销单据应统一贴在 A4 纸上",
+            summary_text="报销规则",
+        )
+        handler = SpyRetrieveHandler("project_decision", [noise_memory])
+        llm = FakeRetrieveJudgeLLM(
+            ["project_decision", "SQLite 数据库选型理由"],
+            [
+                {
+                    "results": [
+                        {"id": "mem-noise", "relevant": False, "confidence": 0.95, "reason": "无关"}
+                    ]
+                }
+            ],
+        )
+        rerank_client = FakeGlobalRerankClient(["mem-noise"])
+        service = MemoryService(
+            event_store=self.event_store,
+            memory_store=self.memory_store,
+            llm_client=llm,
+            domain_handlers=[handler],  # type: ignore[list-item]
+            rerank_client=rerank_client,
+        )
+
+        result = service.retrieve(RetrievalQuery("SQLite 数据库选型理由", project_id="project-1"), top_k=1, include_trace=True)
+
+        self.assertEqual(result.ranked_memories, [])
+        self.assertEqual(rerank_client.calls, [])
+        self.assertEqual(result.trace["candidate_count"], 1)
+        self.assertEqual(result.trace["filtered_candidate_count"], 0)
 
     def test_retrieve_falls_back_to_local_rerank_when_global_rerank_scores_are_all_zero(self) -> None:
         project_memory = create_memory_core(

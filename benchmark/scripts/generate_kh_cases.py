@@ -1,16 +1,4 @@
 #!/usr/bin/env python3
-"""
-Adapt MemScope knowledge_health (30 cases) into LarkMemory JSONL format,
-merging with existing 9 cases to reach 40 total for D direction.
-
-MemScope categories mapped to LarkMemory test_types:
-- freshness_detection → retrieval_recall / long_term_retention
-- forgetting_curve → long_term_retention
-- knowledge_gap → cross_project / abstention
-- team_sync → contradiction_update
-- critical_forgetting → long_term_retention / anti_interference
-- version_management → contradiction_update
-"""
 
 import json
 import os
@@ -18,7 +6,6 @@ import os
 NEW_CASES = [
     # ============================================================
     # retrieval_recall (6 new: kh_ret_003 ~ kh_ret_008)
-    # Adapted from MemScope freshness_detection + forgetting_curve
     # ============================================================
 
     {
@@ -379,7 +366,6 @@ NEW_CASES = [
 
     # ============================================================
     # contradiction_update (5 new: kh_contra_003 ~ kh_contra_007)
-    # Adapted from MemScope version_management + team_sync
     # ============================================================
 
     {
@@ -795,7 +781,6 @@ NEW_CASES = [
 
     # ============================================================
     # cross_project (4 new: kh_xproj_001 ~ kh_xproj_004)
-    # Adapted from MemScope knowledge_gap
     # ============================================================
 
     {

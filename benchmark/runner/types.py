@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
-# 7 test types (aligned with MemScope + competition requirements)
 TEST_TYPES = [
     "retrieval_recall",
     "anti_interference",

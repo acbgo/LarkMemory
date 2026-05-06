@@ -91,6 +91,21 @@ def test_cross_project_query_scope_uses_expected_evidence_project() -> None:
     assert _extract_project_id(case) == "Beta"
 
 
+def test_cross_project_query_scope_prefers_explicit_query_project_id() -> None:
+    case = _case(
+        input_events=[
+            {"event_id": "e1", "context": {"project": "Alpha"}},
+            {"event_id": "e2", "context": {"project": "Beta"}},
+        ],
+        expected={
+            "query_project_id": "QueryScope",
+            "evidence_event_ids": ["e2"],
+        },
+    )
+
+    assert _extract_project_id(case) == "QueryScope"
+
+
 def test_decision_only_suite_overall_uses_direction_score_without_global_weight() -> None:
     result = aggregate(
         run_id="run-1",
