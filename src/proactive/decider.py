@@ -35,16 +35,6 @@ class ProjectDecisionProactiveDecider:
     ) -> ProactiveDecision:
         if self.llm_client is None:
             return ProactiveDecision(False, reason="llm_unavailable")
-        schema = {
-            "type": "object",
-            "properties": {
-                "push": {"type": "boolean"},
-                "confidence": {"type": "number"},
-                "reason": {"type": "string"},
-                "push_type": {"type": "string"},
-            },
-            "required": ["push", "confidence", "reason"],
-        }
         related_text = "\n".join(
             f"- memory_id={row.get('memory_id')} summary={row.get('summary_text') or row.get('content_text')}"
             for row in (related_rows or [])
@@ -52,7 +42,16 @@ class ProjectDecisionProactiveDecider:
         try:
             raw = _run_async(
                 self.llm_client.ajson(
-                    "你是项目决策主动推送判断器。判断当前消息和候选历史决策是否确实相关且值得推送。只输出 JSON。",
+                    (
+                        "你是项目决策主动推送判断器。判断当前消息和候选历史决策是否确实相关且值得推送。"
+                        "只输出一个 JSON 对象，不要输出 Markdown、解释文字或代码块。"
+                        "JSON 字段必须为："
+                        'push: boolean，是否主动推送；'
+                        'confidence: number，0 到 1 的置信度；'
+                        'reason: string，简短说明判断依据；'
+                        'push_type: string，推送类型，默认使用 "decision_context_push"。'
+                        "字段名必须使用英文小写；不要输出额外字段。"
+                    ),
                     (
                         "判断这条消息是否值得主动推送历史决策上下文。\n"
                         "标准：涉及对已有决策的询问、质疑、回顾或变更提议 → 推送；"
@@ -64,8 +63,6 @@ class ProjectDecisionProactiveDecider:
                         f"event_text={event.content_text or ''}\n"
                         f"related_memories:\n{related_text}"
                     ),
-                    schema=schema,
-                    temperature=0,
                 )
             )
         except Exception:

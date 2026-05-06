@@ -56,3 +56,19 @@ def test_decider_prompt_includes_related_memories() -> None:
 
     assert decision.should_push is True
     assert "mem-2" in str(llm.calls[0]["user_prompt"])
+
+
+def test_decider_puts_output_contract_in_prompt_without_schema() -> None:
+    llm = FakeLLMClient({"push": True, "confidence": 0.9, "reason": "directly related"})
+    decider = ProjectDecisionProactiveDecider(llm, min_confidence=0.8)
+
+    decider.decide(_event(), _memory(), [{"memory_id": "mem-2", "summary_text": "SQLite 选型"}])
+
+    call = llm.calls[0]
+    system_prompt = str(call["system_prompt"])
+    kwargs = call["kwargs"]
+    assert "schema" not in kwargs
+    assert "push" in system_prompt
+    assert "confidence" in system_prompt
+    assert "reason" in system_prompt
+    assert "push_type" in system_prompt

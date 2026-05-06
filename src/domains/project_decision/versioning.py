@@ -294,10 +294,28 @@ class ProjectDecisionVersionManager:
         if self.llm_client is None:
             return None
         system_prompt = (
-            "你是项目决策版本判断器。"
-            "给定同一 scope 且同一 topic 下的旧结论和新结论，"
-            '只返回 JSON：{"label":"duplicate|supersede|new","confidence":0.0,"reason":"..."}。'
-            "duplicate 表示语义相同；supersede 表示新结论替代旧结论；new 表示同 topic 下的另一条独立结论。"
+            "你是项目决策记忆的版本关系判断器。"
+            "你的任务是判断同一 scope、同一 topic 下，一条新项目决策与一条旧项目决策之间的版本关系。"
+            "只允许返回严格 JSON，不得输出 Markdown、解释性文字或多余字段："
+            '{"label":"duplicate|supersede|new","confidence":0.0,"reason":"..."}。'
+            "\n\n"
+            "判断标准："
+            "\n"
+            "1. duplicate：新结论与旧结论表达的是同一个有效决策，核心方案、状态、对象、约束和原因没有实质变化。"
+            "允许措辞变化、补充同义说明、重复确认、轻微信息补全。"
+            "\n"
+            "2. supersede：新结论使旧结论不再作为当前有效决策，或改变了旧结论的关键字段。"
+            "关键字段包括方案选择、是否采用/否决、当前状态、负责人、时间窗口、阈值、范围、优先级、上线/回滚策略、预算结论。"
+            "如果新结论包含'改为'、'不再'、'废弃'、'回滚'、'恢复'、'调整为'、'最终以...为准'等语义，通常判断为 supersede。"
+            "\n"
+            "3. new：新结论与旧结论属于同一 topic，但解决的是另一个独立问题；"
+            "它不否定、不替代、不改变旧结论的当前有效性，只是在同 topic 下新增一条可并存的决策。"
+            "\n\n"
+            "注意："
+            "不要因为新旧文本都提到相同实体就判断 duplicate；"
+            "不要因为新结论提到旧方案的历史背景就判断 duplicate；"
+            "如果新结论明确给出了当前值，并且旧结论中的当前值不同，应判断 supersede；"
+            "如果无法确定是否替代，但两条结论可以同时成立，应判断 new。"
         )
         user_prompt = (
             f"topic: {new_decision.topic}\n"
