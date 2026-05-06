@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import shutil
 import unittest
 import uuid
@@ -8,6 +9,7 @@ from pathlib import Path
 from src.core import MemoryService
 from src.domains.team_retention.handler import TeamRetentionDomainHandler
 from src.sources.feishu.events import FeishuEventDispatcher, FeishuMessageEvent, normalize_message_event
+from src.schemas import EventContext, NormalizedEvent
 from src.storage import EventStore, MemoryCoreStore, TeamRetentionStore
 
 
@@ -86,3 +88,39 @@ class TestFeishuEvents(unittest.TestCase):
 
         self.assertEqual(len(first.memory_ids), 1)
         self.assertEqual(second.message, "duplicate feishu event ignored")
+
+    def test_dispatch_normalized_event_runs_ingest_outside_active_event_loop(self) -> None:
+        class LoopSensitiveService:
+            def ingest_event(self, event):
+                try:
+                    asyncio.get_running_loop()
+                except RuntimeError:
+                    return type(
+                        "Result",
+                        (),
+                        {
+                            "event_id": event.event_id,
+                            "stored": True,
+                            "memory_ids": [],
+                            "candidate_count": 0,
+                            "message": "ok",
+                        },
+                    )()
+                raise AssertionError("ingest_event should not run inside an active event loop")
+
+        event = NormalizedEvent(
+            event_id="feishu:event-loop",
+            event_type="chat_message",
+            source_type="feishu_chat",
+            occurred_at="2026-04-27T00:00:00Z",
+            context=EventContext(team_id="oc_chat_1"),
+            content_text="请团队长期记住：测试事件循环隔离。",
+        )
+
+        async def dispatch_inside_loop():
+            return FeishuEventDispatcher(LoopSensitiveService()).dispatch_normalized_event(event)  # type: ignore[arg-type]
+
+        result = asyncio.run(dispatch_inside_loop())
+
+        self.assertTrue(result.stored)
+        self.assertEqual(result.message, "ok")

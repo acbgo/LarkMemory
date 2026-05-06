@@ -153,9 +153,10 @@ celerybeat.pid
 .env
 .envrc
 larkmemory.env
-.venv
-env/
-venv/
+# .venv
+# env/
+.venv-local-tmp
+# venv/
 ENV/
 env.bak/
 venv.bak/

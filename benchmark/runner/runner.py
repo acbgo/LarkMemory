@@ -315,7 +315,7 @@ class BenchmarkRunner:
 
 def _extract_project_id(case) -> str | None:
     # Allow expected block to specify the query project_id (for cross_project cases)
-    exp = getattr(case, 'expected', {}) or {}
+    exp = getattr(case, "expected", {}) or {}
     pid = exp.get("query_project_id")
     if pid:
         return pid

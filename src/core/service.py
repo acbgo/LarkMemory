@@ -26,11 +26,53 @@ from src.retrieval import (
 )
 from src.schemas import MemoryCore, NormalizedEvent
 from src.storage import EmbeddingStore, EventStore, MemoryCoreStore
-from src.llm import EmbeddingClient, RerankClient
+from src.llm import EmbeddingClient, RerankClient, RerankDocument
 from src.utils.ids import query_id as new_query_id
 
 
 logger = logging.getLogger(__name__)
+
+_RELEVANCE_FILTER_CONFIDENCE_THRESHOLD = 0.75
+
+_CANDIDATE_RELEVANCE_SYSTEM_PROMPT = """\
+You are a strict relevance judge for a memory retrieval system.
+Given a user query and memory candidates, decide whether each candidate can help answer the query.
+
+Return JSON only:
+{
+  "results": [
+    {"id": "<memory_id>", "relevant": true, "confidence": 0.0, "reason": "<short reason>"}
+  ]
+}
+
+Rules:
+- Mark relevant=true only when the candidate directly answers, explains, updates, or is necessary context for the query.
+- Mark relevant=false for unrelated team facts, admin rules, generic noise, or memories about a different topic.
+- Do not reject historical or superseded memories if the query asks for history, changes, rollback, migration, or reasons.
+- Include every provided candidate id exactly once.
+"""
+
+_CANDIDATE_RELEVANCE_JSON_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "results": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "string"},
+                    "relevant": {"type": "boolean"},
+                    "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+                    "reason": {"type": "string"},
+                },
+                "required": ["id", "relevant", "confidence"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    "required": ["results"],
+    "additionalProperties": False,
+}
 
 
 @dataclass(slots=True)
@@ -275,6 +317,8 @@ class MemoryService:
                 )
                 for index, (_domain, ranked) in enumerate(domain_ranked)
             ]
+            original_candidate_count = len(candidates)
+            candidates, relevance_filter_trace = await self._filter_candidates_by_llm_relevance(candidates, rewritten)
             ranked = await Reranker(rerank_client=self.rerank_client).rerank(
                 candidates,
                 rewritten,
@@ -287,7 +331,9 @@ class MemoryService:
                 trace = {
                     "mode": "domain_handlers",
                     "target_domains": target_domains,
-                    "candidate_count": len(candidates),
+                    "candidate_count": original_candidate_count,
+                    "filtered_candidate_count": len(candidates),
+                    "llm_relevance_filter": relevance_filter_trace,
                     "result_count": len(ranked),
                 }
             return RetrieveResult(
@@ -315,6 +361,8 @@ class MemoryService:
             )
             for index, row in enumerate(rows)
         ]
+        original_candidate_count = len(candidates)
+        candidates, relevance_filter_trace = await self._filter_candidates_by_llm_relevance(candidates, rewritten)
         ranked = await Reranker(rerank_client=self.rerank_client).rerank(
             candidates,
             rewritten,
@@ -326,7 +374,9 @@ class MemoryService:
         if include_trace:
             trace = {
                 "mode": "memory_core_fallback",
-                "candidate_count": len(candidates),
+                "candidate_count": original_candidate_count,
+                "filtered_candidate_count": len(candidates),
+                "llm_relevance_filter": relevance_filter_trace,
                 "result_count": len(ranked),
             }
         return RetrieveResult(
@@ -335,6 +385,71 @@ class MemoryService:
             trace=trace,
             message="memory_core fallback; no domain handler results",
         )
+
+    async def _filter_candidates_by_llm_relevance(
+        self,
+        candidates: list[FusedCandidate],
+        query: Any,
+    ) -> tuple[list[FusedCandidate], dict[str, Any]]:
+        """在 rerank 前用 LLM 做候选相关性过滤；LLM 不可用或异常时保留原候选。"""
+        trace: dict[str, Any] = {
+            "enabled": False,
+            "failed": False,
+            "original_count": len(candidates),
+            "filtered_count": len(candidates),
+            "rejected_ids": [],
+        }
+        if self.llm_client is None or not hasattr(self.llm_client, "ajson") or not candidates:
+            trace["reason"] = "client_unavailable" if self.llm_client is None else "empty_candidates"
+            return candidates, trace
+
+        prompt = self._build_candidate_relevance_prompt(candidates, query)
+        trace["enabled"] = True
+        try:
+            payload = await self.llm_client.ajson(
+                _CANDIDATE_RELEVANCE_SYSTEM_PROMPT,
+                prompt,
+                schema=_CANDIDATE_RELEVANCE_JSON_SCHEMA,
+                temperature=0,
+            )
+        except Exception as exc:
+            logger.warning(
+                "action=llm_relevance_filter_failed candidate_count=%s error_type=%s",
+                len(candidates),
+                type(exc).__name__,
+                exc_info=True,
+            )
+            trace.update({"failed": True, "error_type": type(exc).__name__})
+            return candidates, trace
+
+        judgments = self._parse_candidate_relevance_payload(payload)
+        kept: list[FusedCandidate] = []
+        rejected_ids: list[str] = []
+        for candidate in candidates:
+            judgment = judgments.get(candidate.item.memory_id)
+            if judgment is None:
+                kept.append(candidate)
+                continue
+            relevant = judgment.get("relevant")
+            confidence = judgment.get("confidence", 0.0)
+            if relevant is False and confidence >= _RELEVANCE_FILTER_CONFIDENCE_THRESHOLD:
+                rejected_ids.append(candidate.item.memory_id)
+                continue
+            kept.append(candidate)
+
+        trace.update(
+            {
+                "filtered_count": len(kept),
+                "rejected_ids": rejected_ids,
+            }
+        )
+        logger.info(
+            "action=llm_relevance_filter_done candidate_count=%s filtered_count=%s rejected_ids=%s",
+            len(candidates),
+            len(kept),
+            rejected_ids,
+        )
+        return kept, trace
 
     async def _rerank_candidates(
         self,
@@ -433,6 +548,57 @@ class MemoryService:
             )
             if part
         )
+
+    def _build_candidate_relevance_prompt(self, candidates: list[FusedCandidate], query: Any) -> str:
+        """为 LLM 候选过滤构造包含查询和候选核心字段的短 prompt。"""
+        query_text = query.rewritten_text or query.original.query_text
+        parts = [f"User query: {query_text}", "", "Memory candidates:"]
+        for candidate in candidates:
+            item = candidate.item
+            content = item.summary_text or item.content_text or ""
+            if len(content) > 500:
+                content = content[:500] + "..."
+            parts.append(
+                "\n".join(
+                    [
+                        f"- id: {item.memory_id}",
+                        f"  domain: {getattr(item.domain, 'value', item.domain)}",
+                        f"  type: {item.memory_type}",
+                        f"  content: {content}",
+                        f"  tags: {' '.join(item.tags)}",
+                        f"  entities: {' '.join(item.entities)}",
+                    ]
+                )
+            )
+        return "\n".join(parts)
+
+    def _parse_candidate_relevance_payload(self, payload: Any) -> dict[str, dict[str, Any]]:
+        """解析 LLM 相关性判断，非法或缺失的候选判断由调用方按保留处理。"""
+        if not isinstance(payload, dict):
+            return {}
+        raw_results = payload.get("results")
+        if not isinstance(raw_results, list):
+            return {}
+        judgments: dict[str, dict[str, Any]] = {}
+        for raw in raw_results:
+            if not isinstance(raw, dict):
+                continue
+            memory_id = str(raw.get("id") or "").strip()
+            if not memory_id:
+                continue
+            relevant = raw.get("relevant")
+            if not isinstance(relevant, bool):
+                continue
+            try:
+                confidence = float(raw.get("confidence", 0.0))
+            except (TypeError, ValueError):
+                confidence = 0.0
+            judgments[memory_id] = {
+                "relevant": relevant,
+                "confidence": max(0.0, min(1.0, confidence)),
+                "reason": str(raw.get("reason") or ""),
+            }
+        return judgments
 
     def update_memory(
         self,

@@ -3,14 +3,21 @@ from __future__ import annotations
 import asyncio
 import importlib
 import logging
+import threading
 from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import FastAPI
 
 from src.app.config import AppSettings
-from src.app.dependencies import get_settings
+from src.app.dependencies import get_memory_service, get_settings
 from src.app.logging import RequestLogMiddleware, setup_logging
+from src.sources.feishu.client.config import load_feishu_settings
+from src.sources.feishu.client.doc_client import FeishuDocClient
+from src.sources.feishu.client.listener import build_event_handler
+from src.sources.feishu.client.sdk import build_api_client, build_ws_client
+from src.sources.feishu.client.vc_client import FeishuVcClient
+from src.storage.source_state_store import SourceStateStore
 
 
 ROUTER_MODULES = [
@@ -24,6 +31,8 @@ ROUTER_MODULES = [
 ]
 
 _REMINDER_TASK_ATTR = "_team_reminder_task"
+_FEISHU_WS_THREAD_ATTR = "_feishu_ws_thread"
+_FEISHU_WS_CLIENT_ATTR = "_feishu_ws_client"
 
 
 def create_app(settings: AppSettings | None = None) -> FastAPI:
@@ -37,9 +46,11 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> Any:
+        _start_feishu_ws_listener(app)
         _start_reminder_loop(app)
         yield
         _stop_reminder_loop(app)
+        _stop_feishu_ws_listener(app)
 
     app = FastAPI(
         title=resolved_settings.app_name,
@@ -53,6 +64,70 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
 
     register_routers(app)
     return app
+
+
+def _start_feishu_ws_listener(app: FastAPI) -> None:
+    """按配置在后台线程启动飞书 WebSocket listener，不阻塞 FastAPI 主服务。"""
+    logger = logging.getLogger(__name__)
+
+    try:
+        feishu_settings = load_feishu_settings()
+    except Exception:
+        logger.warning("action=feishu_ws_settings_failed", exc_info=True)
+        return
+    if not feishu_settings.enable_ws:
+        logger.info("action=feishu_ws_skipped reason=disabled")
+        return
+
+    def run_listener() -> None:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            api_client = build_api_client(feishu_settings)
+            source_state_store = SourceStateStore()
+            source_state_store.create_table()
+            handler = build_event_handler(
+                memory_service=get_memory_service(),
+                settings=feishu_settings,
+                source_state_store=source_state_store,
+                vc_client=FeishuVcClient(api_client),
+                doc_client=FeishuDocClient(api_client),
+            )
+            client = build_ws_client(feishu_settings, handler)
+            setattr(app.state, _FEISHU_WS_CLIENT_ATTR, client)
+            logger.info("action=feishu_ws_listener_started")
+            client.start()
+        except Exception:
+            logger.warning("action=feishu_ws_listener_failed", exc_info=True)
+        finally:
+            loop.close()
+
+    thread = threading.Thread(
+        target=run_listener,
+        name="feishu-ws-listener",
+        daemon=True,
+    )
+    setattr(app.state, _FEISHU_WS_THREAD_ATTR, thread)
+    thread.start()
+
+
+def _stop_feishu_ws_listener(app: FastAPI) -> None:
+    """关闭飞书 WebSocket client；SDK 无显式关闭 API 时依赖 daemon thread 随进程退出。"""
+    logger = logging.getLogger(__name__)
+    client = getattr(app.state, _FEISHU_WS_CLIENT_ATTR, None)
+    close = None
+    if client is not None:
+        close = getattr(client, "close", None) or getattr(client, "stop", None)
+    if callable(close):
+        try:
+            close()
+        except Exception:
+            logger.warning("action=feishu_ws_listener_close_failed", exc_info=True)
+
+    thread = getattr(app.state, _FEISHU_WS_THREAD_ATTR, None)
+    if thread is not None and thread.is_alive():
+        thread.join(timeout=5)
+    logger.info("action=feishu_ws_listener_stopped")
 
 
 def _start_reminder_loop(app: FastAPI) -> None:

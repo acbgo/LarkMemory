@@ -1,11 +1,4 @@
 #!/usr/bin/env python3
-"""
-Generate 24 new decision_memory benchmark cases adapted from MemScope D direction,
-appending to the existing 16 cases to reach 40 total.
-
-MemScope reference: eval/datasets/decision_memory.json (30 cases)
-Target: 16 existing + 24 new = 40 cases for LarkMemory D direction.
-"""
 
 import json
 import os
@@ -13,7 +6,6 @@ import os
 NEW_CASES = [
     # ============================================================
     # retrieval_recall (8 new: dec_ret_005 ~ dec_ret_012)
-    # Adapted from MemScope dec_001~dec_010, dec_011~dec_015
     # ============================================================
 
     {
@@ -363,7 +355,6 @@ NEW_CASES = [
 
     # ============================================================
     # anti_interference (3 new: dec_anti_003 ~ dec_anti_005)
-    # Adapted from MemScope dec_021~dec_025 search accuracy concepts
     # ============================================================
 
     {
@@ -492,7 +483,6 @@ NEW_CASES = [
 
     # ============================================================
     # contradiction_update (3 new: dec_contra_004 ~ dec_contra_006)
-    # Adapted from MemScope dec_018, dec_019, dec_020
     # ============================================================
 
     {
@@ -751,7 +741,6 @@ NEW_CASES = [
 
     # ============================================================
     # cross_project (2 new: dec_xproj_003 ~ dec_xproj_004)
-    # Adapted from MemScope dec_021~dec_025 search concepts
     # ============================================================
 
     {
@@ -912,7 +901,6 @@ NEW_CASES = [
 
     # ============================================================
     # long_term_retention (4 new: dec_long_002 ~ dec_long_005)
-    # Adapted from MemScope dec_026~dec_030
     # ============================================================
 
     {
