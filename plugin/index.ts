@@ -352,6 +352,8 @@ export default definePluginEntry({
       log("INPUT", "Extraction diagnostics", {
         event_keys: Object.keys(asRecord(event)),
         extracted_query: userMessage,
+        cleaned_body_preview: preview(String(asRecord(event).cleanedBody ?? "")),
+        input_preview: preview(String(asRecord(event).input ?? "")),
         content_preview: preview(String(asRecord(event).content ?? "")),
       });
 

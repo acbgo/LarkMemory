@@ -41,24 +41,29 @@ function latestMessageText(event, roles) {
 }
 
 export function extractUserQueryFromEvent(event) {
-  const fromMessages = latestMessageText(event, ["user", ""]);
-  if (fromMessages) {
-    return extractRetrieveQuery(fromMessages);
-  }
-
   const evt = asRecord(event);
   const candidates = [
     evt.cleanedBody,
+    evt.body,
+    evt.currentMessage,
+    evt.current_message,
+    evt.userMessage,
+    evt.user_message,
     evt.content,
     evt.text,
     evt.message,
-    evt.prompt,
     evt.input,
+    evt.prompt,
   ];
   for (const candidate of candidates) {
     if (typeof candidate === "string" && candidate.trim()) {
       return extractRetrieveQuery(candidate.trim());
     }
+  }
+
+  const fromMessages = latestMessageText(event, ["user", ""]);
+  if (fromMessages) {
+    return extractRetrieveQuery(fromMessages);
   }
   return "";
 }

@@ -34,16 +34,16 @@ test("extractRetrieveQuery removes OpenClaw Feishu metadata envelope", () => {
   assert.equal(extractRetrieveQuery(wrappedFeishuQuery), "多路召回之后用什么方法做融合？");
 });
 
-test("extractUserQueryFromEvent prefers latest user message over wrapped content field", () => {
+test("extractUserQueryFromEvent prefers current direct content over stale message history", () => {
   const event = {
     content: wrappedFeishuQuery,
     messages: [
       { role: "system", content: "system prompt" },
-      { role: "user", content: "真正的用户问题是什么？" },
+      { role: "user", content: "上一轮用户问题是什么？" },
     ],
   };
 
-  assert.equal(extractUserQueryFromEvent(event), "真正的用户问题是什么？");
+  assert.equal(extractUserQueryFromEvent(event), "多路召回之后用什么方法做融合？");
 });
 
 test("extractAssistantReplyFromEvent prefers latest assistant message", () => {
