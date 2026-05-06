@@ -153,10 +153,10 @@ celerybeat.pid
 .env
 .envrc
 larkmemory.env
-# .venv
-# env/
+ .venv/
+ env/
 .venv-local-tmp
-# venv/
+ venv/
 ENV/
 env.bak/
 venv.bak/
@@ -223,3 +223,34 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+/.venv/.lock
+/.venv/Scripts/chroma.exe
+/.venv/Scripts/distro.exe
+/.venv/Scripts/dotenv.exe
+/.venv/Scripts/f2py.exe
+/.venv/Scripts/fastapi.exe
+/.venv/Scripts/hf.exe
+/.venv/Scripts/httpx.exe
+/.venv/Scripts/huggingface-cli.exe
+/.venv/share/man/man1/isympy.1
+/.venv/Scripts/isympy.exe
+/.venv/Scripts/jsonschema.exe
+/.venv/Scripts/lark-memory.exe
+/.venv/Scripts/markdown-it.exe
+/.venv/Scripts/normalizer.exe
+/.venv/Scripts/numpy-config.exe
+/.venv/Scripts/onnxruntime_test.exe
+/.venv/Scripts/openai.exe
+/.venv/Scripts/pybase64.exe
+/.venv/Scripts/pygmentize.exe
+/.venv/Scripts/pyproject-build.exe
+/.venv/Scripts/python.exe
+/.venv/Scripts/tiny-agents.exe
+/.venv/Scripts/torchfrtrace.exe
+/.venv/Scripts/torchrun.exe
+/.venv/Scripts/tqdm.exe
+/.venv/Scripts/transformers.exe
+/.venv/Scripts/typer.exe
+/.venv/Scripts/uvicorn.exe
+/.venv/Scripts/watchfiles.exe
+/.venv/Scripts/wsdump.exe
