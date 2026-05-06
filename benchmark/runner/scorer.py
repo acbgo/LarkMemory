@@ -114,6 +114,8 @@ def score_should_not_contain_match(ctx: ScoringContext) -> float:
 
 @register("noise_robustness")
 def score_noise_robustness(ctx: ScoringContext) -> float:
+    if not ctx.case.expected.get("should_retrieve", True):
+        return score_abstention_accuracy(ctx) * score_hallucination_rate(ctx)
     ev = score_evidence_match(ctx)
     kw = score_keyword_match(ctx)
     return ev * kw
@@ -138,6 +140,14 @@ def score_old_value_suppression(ctx: ScoringContext) -> float:
     forbidden.extend(inactive)
     if not forbidden:
         return 1.0
+    if ctx.case.expected.get("allow_historical_mention"):
+        current = ctx.case.expected.get("current_value", "")
+        if not current:
+            return 1.0
+        if not ctx.ranked_memories:
+            return 0.0
+        top_text = ctx.ranked_memories[0].item.content_text.lower()
+        return 1.0 if current.lower() in top_text else 0.0
     hits = sum(1 for f in forbidden if f.lower() in ctx.response_text)
     return 1.0 if hits == 0 else 0.0
 

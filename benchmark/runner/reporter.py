@@ -66,6 +66,8 @@ def to_json(result: BenchmarkRunResult) -> dict[str, Any]:
                 "difficulty": c.difficulty,
                 "passed": all(mr.passed for mr in c.metric_results) if c.metric_results else False,
                 "error": c.error,
+                "response_text": c.response_text,
+                "evidence_event_ids": list(c.evidence_event_ids),
                 "metrics": {mr.metric_id: {"value": mr.value, "passed": mr.passed} for mr in c.metric_results},
             }
             for ttr in result.test_type_results

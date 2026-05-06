@@ -311,6 +311,15 @@ class BenchmarkRunner:
 # ------------------------------------------------------------------
 
 def _extract_project_id(case) -> str | None:
+    expected_ids = set(case.expected.get("evidence_event_ids", []))
+    if expected_ids:
+        for evt in case.input_events:
+            if evt.get("event_id") not in expected_ids:
+                continue
+            ctx = evt.get("context", {})
+            pid = ctx.get("project") or ctx.get("project_id")
+            if pid:
+                return pid
     for evt in case.input_events:
         ctx = evt.get("context", {})
         pid = ctx.get("project") or ctx.get("project_id")
