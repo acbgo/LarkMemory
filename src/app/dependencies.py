@@ -246,6 +246,9 @@ def get_memory_service() -> MemoryService:
     cli_handler = CLIWorkflowDomainHandler(
         get_memory_core_store(),
         cli_store=get_cli_workflow_store(),
+        embedding_store=get_embedding_store(),
+        embedding_client=get_embedding_client(),
+        rerank_client=get_rerank_client(),
         llm_client=get_llm_client(),
     )
     proactive_engine = get_proactive_engine()

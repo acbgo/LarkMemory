@@ -66,6 +66,30 @@ def test_parameter_policy_supersedes_old_value(cli_store: CLIWorkflowStore) -> N
     assert old["superseded_by"] == new_id
 
 
+def test_parameter_policy_keeps_same_param_in_different_scenarios(cli_store: CLIWorkflowStore) -> None:
+    deploy_id = cli_store.upsert_parameter_policy(
+        scenario_text="部署 demo-a 时参数 env 设置为 staging",
+        scenario_signature="部署 demo-a",
+        target_sub_command="python deploy.py",
+        param_name="env",
+        param_value="staging",
+        user_id="u_1",
+        project_id="Demo",
+    )
+    rollback_id = cli_store.upsert_parameter_policy(
+        scenario_text="回滚 demo-a 时参数 env 设置为 prod",
+        scenario_signature="回滚 demo-a",
+        target_sub_command="python rollback.py",
+        param_name="env",
+        param_value="prod",
+        user_id="u_1",
+        project_id="Demo",
+    )
+
+    active = cli_store.list_parameter_policies(user_id="u_1", project_id="Demo")
+    assert {item["policy_id"] for item in active} == {deploy_id, rollback_id}
+
+
 def test_extract_explicit_parameter_policy_from_text(cli_store: CLIWorkflowStore) -> None:
     ids = cli_store.upsert_parameter_policy_from_text(
         "记住部署 demo-a 的时候参数 stage 设置为 staging",

@@ -165,6 +165,9 @@ class BenchmarkRunner:
             CLIWorkflowDomainHandler(
                 self._memory_store,
                 cli_store=self._cli_workflow_store,
+                embedding_store=self._embedding_store,
+                embedding_client=embedding_client,
+                rerank_client=rerank_client,
                 llm_client=llm_client,
             ),
         ]
@@ -311,6 +314,11 @@ class BenchmarkRunner:
 # ------------------------------------------------------------------
 
 def _extract_project_id(case) -> str | None:
+    # Allow expected block to specify the query project_id (for cross_project cases)
+    exp = getattr(case, 'expected', {}) or {}
+    pid = exp.get("query_project_id")
+    if pid:
+        return pid
     for evt in case.input_events:
         ctx = evt.get("context", {})
         pid = ctx.get("project") or ctx.get("project_id")

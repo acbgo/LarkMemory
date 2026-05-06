@@ -12,6 +12,16 @@ from src.storage.cli_workflow_store import CLIWorkflowStore
 from src.storage.memory_core_store import MemoryCoreStore
 
 
+class FakeKeywordLLM:
+    def __init__(self, payload: dict[str, object]) -> None:
+        self.payload = payload
+        self.calls: list[dict[str, object]] = []
+
+    async def ajson(self, system_prompt: str | None, user_prompt: str, **kwargs: object) -> dict[str, object]:
+        self.calls.append({"system_prompt": system_prompt or "", "user_prompt": user_prompt, "kwargs": kwargs})
+        return self.payload
+
+
 @pytest.fixture
 def temp_dir():
     root = Path.cwd() / ".tmp-tests"
@@ -298,3 +308,56 @@ class TestCLIWorkflowRetriever:
         assert suggestion["parameter_bindings"][0]["param_name"] == "env"
         assert suggestion["parameter_bindings"][0]["param_value"] == "staging"
         assert "taught_param:env" in results[0].matched_fields
+
+    def test_llm_keywords_drive_bm25_recall(self, temp_dir):
+        db_path = str(temp_dir / "test_bm25_recall.db")
+        memory_store = MemoryCoreStore(db_path)
+        memory_store.create_table()
+        unrelated = CLIWorkflowMemory(
+            workflow_id="mem-noise",
+            user_id="u_1",
+            command_template="git status",
+            command_name="git status",
+            command_category="vcs",
+            project_id="backend",
+            execution_count=100,
+            success_count=100,
+        )
+        target = CLIWorkflowMemory(
+            workflow_id="mem-seed",
+            user_id="u_1",
+            command_template="python tools/seed.py --tenant {tenant} --dry-run",
+            command_name="python tools/seed.py",
+            command_category="script",
+            project_id="backend",
+            semantic_description="初始化 demo-a 租户的种子数据并使用 dry-run 预检查",
+            scenario_keywords=["初始化", "种子数据", "dry-run"],
+            parameter_bindings=[ParameterBinding(param_name="tenant", param_value="demo-a")],
+            execution_count=1,
+            success_count=1,
+        )
+        memory_store.insert_memory_core(unrelated.to_memory_core())
+        memory_store.insert_memory_core(target.to_memory_core())
+        llm = FakeKeywordLLM({
+            "keywords": ["种子数据", "dry-run", "demo-a"],
+            "semantic_query": "初始化 demo-a 租户种子数据 dry-run",
+        })
+        retriever = CLIWorkflowRetriever(memory_store, llm_client=llm)
+
+        results = retriever.retrieve(
+            RetrievalQuery(query_text="帮我做 demo-a 的初始化预检查", user_id="u_1", project_id="backend"),
+            limit=5,
+        )
+
+        assert results[0].memory.workflow_id == "mem-seed"
+        assert "bm25" in results[0].matched_fields
+
+    def test_low_confidence_returns_empty(self, memory_store_with_data):
+        retriever = CLIWorkflowRetriever(memory_store_with_data, min_relevance_score=2.0)
+
+        results = retriever.retrieve(
+            RetrievalQuery(query_text="完全无关的问题", user_id="u_1", project_id="backend"),
+            limit=5,
+        )
+
+        assert results == []

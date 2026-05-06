@@ -16,6 +16,22 @@ from src.utils.ids import event_id
 from src.utils.time import utc_now_iso
 
 
+class FakePolicyDecisionLLM:
+    def __init__(self, operation: str, confidence: float = 0.95) -> None:
+        self.operation = operation
+        self.confidence = confidence
+        self.calls: list[dict[str, object]] = []
+
+    async def ajson(self, system_prompt: str | None, user_prompt: str, **kwargs: object) -> dict[str, object]:
+        self.calls.append({"system_prompt": system_prompt or "", "user_prompt": user_prompt, "kwargs": kwargs})
+        return {
+            "operation": self.operation,
+            "confidence": self.confidence,
+            "reason": "test decision",
+            "conflict_fields": ["param_value"],
+        }
+
+
 @pytest.fixture
 def temp_dir():
     root = Path.cwd() / ".tmp-tests"
@@ -194,6 +210,79 @@ class TestHandlerIngest:
         assert policy_result.candidate_count == 1
         assert policies[0]["param_name"] == "env"
         assert policies[0]["param_value"] == "staging"
+
+    def test_openclaw_policy_decision_none_skips_write(self, temp_dir):
+        db_path = str(temp_dir / "test_policy_none.db")
+        memory_store = MemoryCoreStore(db_path)
+        memory_store.create_table()
+        cli_store = CLIWorkflowStore(db_path)
+        cli_store.create_table()
+        cli_store.upsert_parameter_policy(
+            scenario_text="部署 demo-a 时参数 env 设置为 prod",
+            scenario_signature="部署 demo-a",
+            param_name="env",
+            param_value="prod",
+            user_id="u_1",
+            project_id="backend",
+        )
+        handler = CLIWorkflowDomainHandler(
+            memory_store,
+            cli_store=cli_store,
+            llm_client=FakePolicyDecisionLLM("NONE"),
+        )
+        event = NormalizedEvent(
+            event_id=event_id(),
+            event_type="memory_feedback",
+            source_type="openclaw",
+            occurred_at=utc_now_iso(),
+            context=EventContext(user_id="u_1", project_id="backend", scope="user"),
+            content_text="记住部署 demo-a 的时候参数 env 设置为 staging",
+            payload={"intent": "teach_command"},
+        )
+
+        result = handler.ingest_event(event, DomainRuntime(memory_store=memory_store, add_memory=_add_memory(memory_store)))
+        active = cli_store.list_parameter_policies(user_id="u_1", project_id="backend")
+
+        assert result.candidate_count == 0
+        assert len(active) == 1
+        assert active[0]["param_value"] == "prod"
+
+    def test_openclaw_policy_decision_delete_forgets_top1(self, temp_dir):
+        db_path = str(temp_dir / "test_policy_delete.db")
+        memory_store = MemoryCoreStore(db_path)
+        memory_store.create_table()
+        cli_store = CLIWorkflowStore(db_path)
+        cli_store.create_table()
+        old_id = cli_store.upsert_parameter_policy(
+            scenario_text="部署 demo-a 时参数 env 设置为 prod",
+            scenario_signature="部署 demo-a",
+            param_name="env",
+            param_value="prod",
+            user_id="u_1",
+            project_id="backend",
+        )
+        handler = CLIWorkflowDomainHandler(
+            memory_store,
+            cli_store=cli_store,
+            llm_client=FakePolicyDecisionLLM("DELETE"),
+        )
+        event = NormalizedEvent(
+            event_id=event_id(),
+            event_type="memory_feedback",
+            source_type="openclaw",
+            occurred_at=utc_now_iso(),
+            context=EventContext(user_id="u_1", project_id="backend", scope="user"),
+            content_text="忘记部署 demo-a 的时候参数 env 设置为 prod",
+            payload={"intent": "teach_command"},
+        )
+
+        result = handler.ingest_event(event, DomainRuntime(memory_store=memory_store, add_memory=_add_memory(memory_store)))
+        active = cli_store.list_parameter_policies(user_id="u_1", project_id="backend")
+        old = cli_store.fetch_one("SELECT * FROM cli_parameter_policy WHERE policy_id = ?", (old_id,))
+
+        assert result.candidate_count == 0
+        assert active == []
+        assert old["status"] == "forgotten"
 
 
 class TestHandlerRetrieve:

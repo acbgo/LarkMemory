@@ -4,8 +4,18 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-from src.retrieval import MemoryItem, RankedMemory, RetrievalQuery, memory_item_from_core
+from src.retrieval import (
+    FusedCandidate,
+    MemoryItem,
+    RankedMemory,
+    RetrievalQuery,
+    Reranker,
+    RewrittenQuery,
+    memory_item_from_core,
+)
+from src.llm import EmbeddingClient, RerankClient
 from src.storage.cli_workflow_store import CLIWorkflowStore, split_command_identity
+from src.storage.embedding_store import EmbeddingStore
 from src.storage.memory_core_store import MemoryCoreStore
 from src.utils.text import clean_text
 
@@ -30,6 +40,91 @@ _SEMANTIC_ALIASES: dict[str, list[str]] = {
     "启动": ["run", "up", "start"],
     "回滚": ["rollback", "zero"],
 }
+
+_QUERY_ANALYSIS_SYSTEM = (
+    """
+你是 CLI 工作流记忆系统的检索查询分析器。
+
+你的任务是从用户查询中提取两类检索输入：
+1. keywords：用于 BM25 的原始关键词；
+2. semantic_query：用于向量检索的语义查询句。
+
+你必须只输出一个合法 JSON 对象，不得输出 Markdown、解释文字、代码块或额外字段。
+
+keywords 提取规则：
+- 只提取用户查询中明确出现的有检索价值的词。
+- 不做 query expansion。
+- 不添加同义词、工具别名、英文翻译或用户没有提到的命令。
+- 不生成完整命令。
+- 不臆造项目名、路径、环境名、参数、端口、IP 或文件名。
+
+keywords 应保留：
+- 命令或工具名：如 git、docker、kubectl、npm、pnpm、python、conda、ssh；
+- 子命令或动作词：如 deploy、build、test、start、run、logs、部署、启动、测试、构建、查看日志；
+- 项目名、服务名、模块名、仓库名、分支名；
+- 路径、文件名、配置名；
+- 环境名：如 dev、test、staging、prod、预发、线上；
+- 参数名和参数值：如 --env、--host、--port、staging、0.0.0.0、8080；
+- 报错关键词、错误码。
+
+keywords 不应包含：
+- 的、了、一下、怎么、如何、那个、之前、上次、帮我、请问等虚词或泛化词；
+- 没有明确出现在用户查询中的扩展词；
+- 与 CLI 检索无关的情绪词或寒暄词。
+
+semantic_query 规则：
+- 用一句自然语言改写用户查询，表达其想检索的 CLI 工作流记忆。
+- 保留用户明确提到的命令、工具、项目、环境、参数、路径、文件名。
+- 可以补足“查找……相关 CLI 命令记忆”的语义，但不得添加新的事实或扩展关键词。
+- 如果用户查询很短，也只基于原文生成语义查询，不要额外猜测。
+
+示例：
+用户查询：“demo-a 预发部署命令”
+输出：
+{
+  "keywords": ["demo-a", "预发", "部署", "命令"],
+  "semantic_query": "查找 demo-a 预发部署相关的 CLI 命令记忆"
+}
+
+用户查询：“上次那个 npm 启动命令”
+输出：
+{
+  "keywords": ["npm", "启动", "命令"],
+  "semantic_query": "查找之前记录的 npm 启动命令记忆"
+}
+
+用户查询：“看 k8s 日志怎么弄”
+输出：
+{
+  "keywords": ["k8s", "日志"],
+  "semantic_query": "查找 k8s 日志查看相关的 CLI 工作流记忆"
+}
+
+严格约束：
+1. 只输出 JSON。
+2. 不得输出 schema 之外的字段。
+3. keywords 必须是字符串数组。
+4. semantic_query 必须是字符串。
+5. keywords 只能来自用户查询原文，不得扩展。
+"""
+)
+
+_QUERY_ANALYSIS_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "required": ["keywords", "semantic_query"],
+    "properties": {
+        "keywords": {"type": "array", "items": {"type": "string"}},
+        "semantic_query": {"type": "string"},
+    },
+}
+
+
+@dataclass(slots=True)
+class CLIQueryAnalysis:
+    """CLI 检索查询分析结果，供 BM25、embedding 和 rerank 共用。"""
+
+    keywords: list[str]
+    semantic_query: str
 
 
 @dataclass(slots=True)
@@ -78,10 +173,25 @@ class CLIWorkflowSearchResult:
 class CLIWorkflowRetriever:
     """CLI 工作流检索器，融合 MemoryCore 文本召回与结构化 CLI 行为表排序。"""
 
-    def __init__(self, memory_store: MemoryCoreStore, cli_store: CLIWorkflowStore | None = None) -> None:
+    def __init__(
+        self,
+        memory_store: MemoryCoreStore,
+        cli_store: CLIWorkflowStore | None = None,
+        *,
+        llm_client: Any | None = None,
+        embedding_store: EmbeddingStore | None = None,
+        embedding_client: EmbeddingClient | None = None,
+        rerank_client: RerankClient | None = None,
+        min_relevance_score: float = 0.12,
+    ) -> None:
         """初始化检索器，cli_store 可选用于主动记忆优先和子命令频率混合排序。"""
         self.memory_store = memory_store
         self.cli_store = cli_store
+        self.llm_client = llm_client
+        self.embedding_store = embedding_store
+        self.embedding_client = embedding_client
+        self.rerank_client = rerank_client
+        self.min_relevance_score = min_relevance_score
 
     def retrieve(
         self,
@@ -95,13 +205,40 @@ class CLIWorkflowRetriever:
             return []
 
         base_command = self._extract_base_command(query.query_text)
+        analysis = self._analyze_query(query)
 
-        rows = self._load_candidates(limit=limit)
+        rows = self._load_candidates(query=query, analysis=analysis, limit=limit)
         filtered = self._filter_candidates(rows, query, base_command=base_command)
         scored = self._score_matches(filtered, query)
         scored = self._apply_structured_scores(scored, query)
+        scored = self._rerank_results(scored, query, analysis, limit=limit)
         scored.sort(key=lambda r: (-r.score, -(r.memory.execution_count or 0)))
+        scored = self._filter_low_confidence(scored)
         return scored[:limit]
+
+    def _analyze_query(self, query: RetrievalQuery) -> CLIQueryAnalysis:
+        """先用 LLM 提取关键词；不可用时退回规则关键词。"""
+        fallback = CLIQueryAnalysis(
+            keywords=self._extract_query_terms(query.query_text),
+            semantic_query=clean_text(query.query_text),
+        )
+        if self.llm_client is None:
+            return fallback
+        try:
+            raw = _run_async(
+                self.llm_client.ajson(
+                    _QUERY_ANALYSIS_SYSTEM,
+                    query.query_text,
+                    schema=_QUERY_ANALYSIS_SCHEMA,
+                    temperature=0,
+                    max_tokens=256,
+                )
+            )
+        except Exception:
+            return fallback
+        keywords = _string_list(raw.get("keywords"))
+        semantic_query = clean_text(str(raw.get("semantic_query") or "")) or fallback.semantic_query
+        return CLIQueryAnalysis(keywords=keywords or fallback.keywords, semantic_query=semantic_query)
 
     def _extract_base_command(self, query_text: str) -> str | None:
         """从明确的命令/前缀查询中提取基础命令，避免自然语言被硬过滤。"""
@@ -121,13 +258,101 @@ class CLIWorkflowRetriever:
             return None
         return None
 
-    def _load_candidates(self, *, limit: int) -> list[dict[str, Any]]:
+    def _load_candidates(
+        self,
+        *,
+        query: RetrievalQuery,
+        analysis: CLIQueryAnalysis,
+        limit: int,
+    ) -> list[dict[str, Any]]:
         active_rows = self.memory_store.search_memory_candidates(
             domain="cli_workflow",
             status="active",
             limit=max(limit * 10, 100),
         )
-        return active_rows
+        return self._merge_recall_rows(
+            [
+                (active_rows, "scan"),
+                (self._load_bm25_candidates(analysis, limit=limit), "bm25"),
+                (self._load_embedding_candidates(query, analysis, limit=limit), "embedding"),
+            ]
+        )
+
+    def _load_bm25_candidates(
+        self,
+        analysis: CLIQueryAnalysis,
+        *,
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        """用 LLM/规则关键词走 MemoryCore FTS5 BM25 召回。"""
+        query_text = clean_text(" ".join(analysis.keywords)) or analysis.semantic_query
+        if not query_text:
+            return []
+        hits = self.memory_store.search_bm25(
+            query_text,
+            domain="cli_workflow",
+            status="active",
+            limit=max(limit * 3, 20),
+        )
+        memory_ids = [str(hit["memory_id"]) for hit in hits]
+        rows = self.memory_store.batch_get_memories(memory_ids)
+        score_by_id = {str(hit["memory_id"]): float(hit.get("bm25_score") or 0.0) for hit in hits}
+        for row in rows:
+            row["_bm25_score"] = score_by_id.get(str(row.get("memory_id")), 0.0)
+        return rows
+
+    def _load_embedding_candidates(
+        self,
+        query: RetrievalQuery,
+        analysis: CLIQueryAnalysis,
+        *,
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        """用 semantic_query 对 semantic_description 向量索引召回。"""
+        if self.embedding_store is None or self.embedding_client is None:
+            return []
+        semantic_query = analysis.semantic_query or query.query_text
+        if not clean_text(semantic_query):
+            return []
+        try:
+            vector = self.embedding_client.embed_text(semantic_query)
+            hits = self.embedding_store.query_by_embedding(
+                vector,
+                domain="cli_workflow",
+                top_k=max(limit * 3, 20),
+                filters={"user_id": query.user_id} if query.user_id else None,
+            )
+        except Exception:
+            return []
+        memory_ids = [str(hit["memory_id"]) for hit in hits]
+        rows = self.memory_store.batch_get_memories(memory_ids)
+        score_by_id: dict[str, float] = {}
+        for hit in hits:
+            distance = hit.get("distance")
+            score = 0.0
+            if isinstance(distance, int | float):
+                score = max(0.0, 1.0 - float(distance))
+            score_by_id[str(hit["memory_id"])] = score
+        for row in rows:
+            row["_embedding_score"] = score_by_id.get(str(row.get("memory_id")), 0.0)
+        return rows
+
+    def _merge_recall_rows(self, groups: list[tuple[list[dict[str, Any]], str]]) -> list[dict[str, Any]]:
+        """合并 scan/BM25/embedding 召回结果并保留每条记忆的召回来源。"""
+        merged: dict[str, dict[str, Any]] = {}
+        for rows, source in groups:
+            for row in rows:
+                memory_id = str(row.get("memory_id") or "")
+                if not memory_id:
+                    continue
+                target = merged.setdefault(memory_id, dict(row))
+                fields = target.setdefault("_recall_sources", [])
+                if source not in fields:
+                    fields.append(source)
+                for key in ("_bm25_score", "_embedding_score"):
+                    if row.get(key) is not None:
+                        target[key] = max(float(target.get(key) or 0.0), float(row.get(key) or 0.0))
+        return list(merged.values())
 
     def _filter_candidates(
         self,
@@ -209,6 +434,14 @@ class CLIWorkflowRetriever:
                 matched_fields.append("user_id")
 
             # 关键词匹配
+            recall_sources = row.get("_recall_sources") or []
+            if "bm25" in recall_sources:
+                score += 0.35 + min(0.2, float(row.get("_bm25_score") or 0.0) * 0.2)
+                matched_fields.append("bm25")
+            if "embedding" in recall_sources:
+                score += 0.35 + min(0.2, float(row.get("_embedding_score") or 0.0) * 0.2)
+                matched_fields.append("embedding")
+
             if terms:
                 matched_terms = [
                     term for term in terms
@@ -253,6 +486,65 @@ class CLIWorkflowRetriever:
                     matched_fields=matched_fields,
                 )
             )
+        return results
+
+    def _rerank_results(
+        self,
+        results: list[CLIWorkflowSearchResult],
+        query: RetrievalQuery,
+        analysis: CLIQueryAnalysis,
+        *,
+        limit: int,
+    ) -> list[CLIWorkflowSearchResult]:
+        """对合并候选做可选 rerank，并把 rerank 分回写到领域结果。"""
+        if self.rerank_client is None or len(results) <= 1:
+            return results
+        candidates = [
+            FusedCandidate(
+                item=result.memory_item,
+                source_domain=result.memory_item.domain,
+                domain_rank=index + 1,
+                fusion_score=max(result.score, 0.01),
+            )
+            for index, result in enumerate(results)
+        ]
+        rewritten = RewrittenQuery(
+            original=query,
+            rewritten_text=analysis.semantic_query or query.query_text,
+            query_variants=[query.query_text, analysis.semantic_query],
+            extracted_topics=analysis.keywords,
+        )
+        try:
+            ranked = _run_async(
+                Reranker(rerank_client=self.rerank_client).rerank(
+                    candidates,
+                    rewritten,
+                    top_k=max(limit, len(results)),
+                )
+            )
+        except Exception:
+            return results
+        by_id = {result.memory.workflow_id: result for result in results}
+        reranked: list[CLIWorkflowSearchResult] = []
+        for ranked_memory in ranked:
+            result = by_id.get(ranked_memory.item.memory_id)
+            if result is None:
+                continue
+            result.score = max(result.score, ranked_memory.final_score)
+            result.matched_fields.append("rerank")
+            result.match_reason = "、".join(result.matched_fields)
+            reranked.append(result)
+        return reranked or results
+
+    def _filter_low_confidence(
+        self,
+        results: list[CLIWorkflowSearchResult],
+    ) -> list[CLIWorkflowSearchResult]:
+        """最高分低于阈值时认为无相关 CLI 记忆。"""
+        if not results:
+            return []
+        if results[0].score < self.min_relevance_score:
+            return []
         return results
 
     def _apply_structured_scores(
@@ -422,3 +714,26 @@ def _parse_entities(row: dict[str, Any]) -> list[str]:
     if isinstance(raw, list):
         return raw
     return []
+
+
+def _run_async(awaitable: Any) -> Any:
+    """在同步 retriever 中运行可选 LLM/rerank 异步调用。"""
+    try:
+        import asyncio
+        asyncio.get_running_loop()
+    except RuntimeError:
+        import asyncio
+        return asyncio.run(awaitable)
+    raise RuntimeError("CLIWorkflowRetriever sync API cannot run inside an active event loop")
+
+
+def _string_list(value: Any) -> list[str]:
+    """把 LLM 返回数组规整成非空去重字符串列表。"""
+    if not isinstance(value, list):
+        return []
+    result: list[str] = []
+    for item in value:
+        cleaned = clean_text(str(item))
+        if cleaned and cleaned not in result:
+            result.append(cleaned)
+    return result

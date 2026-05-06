@@ -197,12 +197,18 @@ class CLIWorkflowExtractor:
                 # 规则命中 → LLM 仅补语义
                 enriched = self._llm_enrich_semantics(
                     text,
+                    rule_candidates[0].memory.command_template,
                     rule_candidates[0].memory.parameter_bindings,
                 )
                 if enriched:
-                    rule_candidates[0].memory.parameter_bindings = enriched
+                    rule_candidates[0].memory.parameter_bindings = enriched["parameter_bindings"]
+                    rule_candidates[0].memory.semantic_description = enriched["semantic_description"]
+                    rule_candidates[0].memory.scenario_keywords = enriched["scenario_keywords"]
                     rule_candidates[0].signals.append("llm_semantics")
-                    logger.info("action=llm_semantics_enriched param_count=%s", len(enriched))
+                    logger.info(
+                        "action=llm_semantics_enriched param_count=%s",
+                        len(enriched["parameter_bindings"]),
+                    )
             else:
                 # 规则未命中 → LLM 完整提取
                 llm_candidates = self._llm_full_extraction(text, event)
@@ -218,6 +224,8 @@ class CLIWorkflowExtractor:
         command_template: str,
         command_name: str,
         param_bindings: list[ParameterBinding],
+        semantic_description: str | None = None,
+        scenario_keywords: list[str] | None = None,
         text: str,
         event: NormalizedEvent,
         evidence: str,
@@ -232,6 +240,8 @@ class CLIWorkflowExtractor:
             command_category=category,
             project_id=event.context.project_id,
             repo_id=event.context.repo_id,
+            semantic_description=semantic_description,
+            scenario_keywords=scenario_keywords or [],
             parameter_bindings=param_bindings,
             execution_count=1,
             last_executed_at=event.occurred_at or utc_now_iso(),
@@ -412,6 +422,12 @@ class CLIWorkflowExtractor:
         "type": "object",
         "required": ["parameters"],
         "properties": {
+            "intent": {"type": "string"},
+            "semantic_description": {"type": "string"},
+            "scenario_keywords": {
+                "type": "array",
+                "items": {"type": "string"},
+            },
             "parameters": {
                 "type": "array",
                 "items": {
@@ -428,9 +444,11 @@ class CLIWorkflowExtractor:
     }
 
     _LLM_SEMANTICS_SYSTEM = (
-        "你是一个 CLI 命令参数语义分析器。"
-        "输入是一组已被解析的参数绑定和用户教学原文。"
-        "为每个参数补充一段简洁的中文语义解释（semantics 字段），说明该参数在当前场景下的含义。"
+        "你是一个 CLI 命令主动记忆抽取器。"
+        "输入包含用户教学原文、已解析命令模板和参数绑定。"
+        "请输出命令意图 intent、用于检索的中文 semantic_description、场景关键词 scenario_keywords，"
+        "并为每个已解析参数补充简洁中文 semantics。"
+        "不要新增原文或命令里不存在的参数；不知道就保留空字符串。"
         "只返回 JSON，不要输出任何其他内容。"
     )
 
@@ -439,6 +457,8 @@ class CLIWorkflowExtractor:
         "required": ["scenario_keywords", "parameters", "is_teaching", "full_command"],
         "properties": {
             "full_command": {"type": "string|null"},
+            "intent": {"type": "string"},
+            "semantic_description": {"type": "string"},
             "scenario_keywords": {
                 "type": "array",
                 "items": {"type": "string"},
@@ -460,21 +480,80 @@ class CLIWorkflowExtractor:
     }
 
     _LLM_EXTRACTION_SYSTEM = (
-        "你是一个 CLI 工作流命令教学语义分析器。"
-        "用户可能给出完整命令，也可能只描述场景和参数片段。"
-        "如果用户给出了完整命令，请在 full_command 字段返回该命令。"
-        "如果用户只描述了场景（如'部署时提醒我'），full_command 为 null，用 scenario_keywords 描述场景。"
-        "parameters 中的每个参数必须包含语义解释（semantics）。"
-        "is_teaching 表示用户意图是否为显式命令教学。"
-        "只返回 JSON，不要输出 Markdown、解释文字或额外字段。"
+         """
+你是一个 CLI 工作流主动记忆场景中的命令教学语义分析器。
+
+你的任务不是凭空生成命令，而是解析用户主动说出的自然语言记忆，将其中的命令、参数偏好、项目场景和命令意图转成结构化 JSON，供后续规则解析、检索和命令推荐使用。
+
+你必须只输出一个 JSON 对象，不得输出 Markdown、解释文字、代码块或额外字段。输出必须严格符合给定 JSON Schema。
+
+抽取原则：
+
+1. full_command
+- 如果用户文本中包含完整可执行命令，必须原样抽取到 full_command。
+- 完整命令包括但不限于 shell、git、docker、kubectl、npm、pnpm、yarn、python、conda、ssh、scp、rsync、make、cmake、pytest、uv、pip 等命令。
+- 不要改写、补全或美化命令。
+- 不要猜测用户没有写出的命令。
+- 如果用户没有给出完整命令，full_command 必须为 null。
+
+2. is_teaching
+- 如果用户是在主动教系统记住某个命令、参数偏好、项目路径、部署习惯或场景规则，设为 true。
+- 典型表达包括：“记住”“以后”“下次”“部署 X 时用 Y”“在项目 A 里用这个参数”“默认用 staging”“这个项目走 xxx 命令”。
+- 如果用户只是普通提问、闲聊、报错求助、一次性说明，且没有明确让系统沉淀为未来习惯，设为 false。
+- 即使 is_teaching=false，也要根据输入尽量抽取已有语义字段。
+
+3. intent
+- 用简短短语概括命令或场景意图。
+- 示例：部署项目、启动服务、运行测试、切换环境、构建镜像、同步文件、进入项目目录、查看日志、提交代码。
+- 如果无法判断，填写空字符串 ""，不要编造。
+
+4. semantic_description
+- 用一句适合后续语义检索的中文描述表达该记忆。
+- 应能支持用户未来用自然语言检索，例如“部署 demo-a”“staging 环境部署”“demo-a 项目启动服务”。
+- 如果有 full_command，应说明该命令用于什么场景。
+- 如果没有 full_command，应说明用户表达的命令偏好或参数语义。
+- 不要写成泛泛总结。
+
+5. scenario_keywords
+- 提取与场景检索相关的关键词数组。
+- 包括项目名、服务名、环境名、动作、工具名、路径、模块名等。
+- 示例：["demo-a", "部署", "staging", "环境"]
+- 不要放入无意义虚词。
+- 如果无法提取，返回空数组 []。
+
+6. parameters
+- 只抽取用户明确提到的参数、参数值或偏好。
+- 每个参数包含：
+  - param_name：参数名、配置名或语义化参数名。
+  - param_value：参数值。
+  - semantics：该参数在命令场景中的含义。
+- 如果用户给出了完整命令，可以抽取其中明确的参数，例如 --env staging、-p 8080:80。
+- 如果用户只说“部署 demo-a 时 env 用 staging”，也应抽取 env=staging。
+- 不要猜测未出现的参数。
+- 如果没有参数，返回空数组 []。
+
+低质量或非教学输入处理：
+- 如果输入没有完整命令，也没有明确命令教学语义，full_command 为 null，is_teaching 为 false。
+- 此时 intent 可以为空字符串，scenario_keywords 和 parameters 可以为空数组。
+- semantic_description 应忠实说明输入缺少可沉淀的 CLI 工作流信息。
+
+严格约束：
+1. 只基于用户输入抽取，不得臆造命令、路径、参数或项目名。
+2. 如果用户提供完整命令，full_command 必须尽量保持原文。
+3. 如果用户没有完整命令，不得根据经验补全命令。
+4. parameters 只记录明确出现的参数或偏好。
+5. 输出必须是合法 JSON。
+6. 不得输出 schema 之外的字段。
+"""
     )
 
     def _llm_enrich_semantics(
         self,
         original_text: str,
+        command_template: str,
         param_bindings: list[ParameterBinding],
-    ) -> list[ParameterBinding] | None:
-        """LLM 为规则已提取的参数补充语义描述。"""
+    ) -> dict[str, Any] | None:
+        """LLM 为规则已提取的 OpenClaw 命令补充命令语义和参数语义。"""
         try:
             raw = _run_async(
                 self.llm_client.ajson(  # type: ignore[union-attr]
@@ -482,6 +561,7 @@ class CLIWorkflowExtractor:
                     json.dumps(
                         {
                             "original_text": original_text,
+                            "command_template": command_template,
                             "parameters": [
                                 {"param_name": pb.param_name, "param_value": pb.param_value}
                                 for pb in param_bindings
@@ -508,7 +588,11 @@ class CLIWorkflowExtractor:
                         semantics=str(item.get("semantics", "") or ""),
                     )
                     result.append(new_pb)
-            return result if result else None
+            return {
+                "parameter_bindings": result or param_bindings,
+                "semantic_description": clean_text(str(raw.get("semantic_description") or "")) or None,
+                "scenario_keywords": _string_list(raw.get("scenario_keywords")),
+            }
         except Exception:
             logger.debug("action=llm_semantics_failed", exc_info=True)
             return None
@@ -543,6 +627,7 @@ class CLIWorkflowExtractor:
         llm_params = raw.get("parameters") or []
         scenario_keywords = raw.get("scenario_keywords") or []
         full_command = raw.get("full_command")
+        semantic_description = clean_text(str(raw.get("semantic_description") or "")) or None
 
         if not llm_params and not full_command:
             return []
@@ -566,13 +651,15 @@ class CLIWorkflowExtractor:
                     self._extract_base_command(tokens),
                     cwd=str(event.payload.get("cwd") or ""),
                 )
-                command_template, _bindings = self._parameterize(tokens, command_name)
+                command_template, parsed_bindings = self._parameterize(tokens, command_name)
                 if command_template:
                     return [
                         self._build_openclaw_candidate(
                             command_template=command_template,
                             command_name=command_name,
-                            param_bindings=param_bindings,
+                            param_bindings=_merge_parameter_semantics(parsed_bindings, param_bindings),
+                            semantic_description=semantic_description,
+                            scenario_keywords=_string_list(scenario_keywords),
                             text=text,
                             event=event,
                             evidence=str(full_command),
@@ -585,6 +672,7 @@ class CLIWorkflowExtractor:
             return self._associate_template(
                 scenario_keywords=scenario_keywords,
                 param_bindings=param_bindings,
+                semantic_description=semantic_description,
                 text=text,
                 event=event,
             )
@@ -595,6 +683,7 @@ class CLIWorkflowExtractor:
         self,
         scenario_keywords: list[str],
         param_bindings: list[ParameterBinding],
+        semantic_description: str | None,
         text: str,
         event: NormalizedEvent,
     ) -> list[CLIWorkflowCandidate]:
@@ -637,6 +726,8 @@ class CLIWorkflowExtractor:
                     command_template=existing_template,
                     command_name=existing_command_name,
                     param_bindings=param_bindings,
+                    semantic_description=semantic_description,
+                    scenario_keywords=_string_list(scenario_keywords),
                     text=text,
                     event=event,
                     evidence=text,
@@ -656,6 +747,8 @@ class CLIWorkflowExtractor:
                     command_category=category,
                     project_id=project_id,
                     repo_id=event.context.repo_id,
+                    semantic_description=semantic_description,
+                    scenario_keywords=_string_list(scenario_keywords),
                     parameter_bindings=param_bindings,
                     execution_count=0,
                     source_type="openclaw",
@@ -676,3 +769,47 @@ def _run_async(awaitable: Any) -> Any:
         import asyncio
         return asyncio.run(awaitable)
     raise RuntimeError("CLIWorkflowExtractor sync API cannot run inside an active event loop")
+
+
+def _string_list(value: Any) -> list[str]:
+    """把 LLM 返回的数组字段规整成非空字符串列表。"""
+    if not isinstance(value, list):
+        return []
+    result: list[str] = []
+    for item in value:
+        cleaned = clean_text(str(item))
+        if cleaned and cleaned not in result:
+            result.append(cleaned)
+    return result
+
+
+def _merge_parameter_semantics(
+    parsed_bindings: list[ParameterBinding],
+    llm_bindings: list[ParameterBinding],
+) -> list[ParameterBinding]:
+    """以命令解析出的参数为准，仅用 LLM 结果补充参数语义。"""
+    semantics_by_key = {
+        (binding.param_name, binding.param_value): binding.semantics
+        for binding in llm_bindings
+        if binding.semantics
+    }
+    semantics_by_name = {
+        binding.param_name: binding.semantics
+        for binding in llm_bindings
+        if binding.semantics
+    }
+    result: list[ParameterBinding] = []
+    for binding in parsed_bindings:
+        result.append(
+            ParameterBinding(
+                param_name=binding.param_name,
+                param_value=binding.param_value,
+                frequency=binding.frequency,
+                semantics=(
+                    semantics_by_key.get((binding.param_name, binding.param_value))
+                    or semantics_by_name.get(binding.param_name)
+                    or binding.semantics
+                ),
+            )
+        )
+    return result

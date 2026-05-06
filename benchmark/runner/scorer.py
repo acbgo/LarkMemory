@@ -138,6 +138,15 @@ def score_old_value_suppression(ctx: ScoringContext) -> float:
     forbidden.extend(inactive)
     if not forbidden:
         return 1.0
+    # Allow historical mentions: only check the top-ranked active answer
+    if ctx.case.expected.get("allow_historical_mention"):
+        current = ctx.case.expected.get("current_value", "")
+        if not current:
+            return 1.0
+        if not ctx.ranked_memories:
+            return 0.0
+        top_text = ctx.ranked_memories[0].item.content_text.lower()
+        return 1.0 if current.lower() in top_text else 0.0
     hits = sum(1 for f in forbidden if f.lower() in ctx.response_text)
     return 1.0 if hits == 0 else 0.0
 

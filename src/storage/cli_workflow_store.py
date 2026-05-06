@@ -56,6 +56,7 @@ class CLIWorkflowStore(SQLiteStore):
                 user_id TEXT NOT NULL,
                 project_id TEXT,
                 scenario_text TEXT NOT NULL,
+                scenario_signature TEXT,
                 semantic_description TEXT,
                 target_base_command TEXT,
                 target_sub_command TEXT,
@@ -92,6 +93,14 @@ class CLIWorkflowStore(SQLiteStore):
             ON cli_parameter_policy (user_id, project_id, param_name, status)
             """
         )
+        self._ensure_column("cli_parameter_policy", "scenario_signature", "TEXT")
+
+    def _ensure_column(self, table: str, column: str, column_type: str) -> None:
+        """Add a nullable column for existing SQLite databases when schema evolves."""
+        columns = self.fetch_all(f"PRAGMA table_info({table})")
+        if any(row["name"] == column for row in columns):
+            return
+        self.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
 
     def upsert_pattern(
         self,
@@ -214,6 +223,10 @@ class CLIWorkflowStore(SQLiteStore):
         user_id: str,
         project_id: str | None,
         memory_id_value: str | None = None,
+        scenario_signature: str | None = None,
+        target_base_command: str | None = None,
+        target_sub_command: str | None = None,
+        target_pattern_id: str | None = None,
     ) -> list[str]:
         """Extract explicit `参数 X 设置为 Y` policies from an OpenClaw teaching sentence."""
         policies = extract_parameter_policies(text)
@@ -228,6 +241,10 @@ class CLIWorkflowStore(SQLiteStore):
                     project_id=project_id,
                     memory_id_value=memory_id_value,
                     semantic_description=text,
+                    scenario_signature=scenario_signature or infer_scenario_signature(text),
+                    target_base_command=target_base_command,
+                    target_sub_command=target_sub_command,
+                    target_pattern_id=target_pattern_id,
                 )
             )
         return ids
@@ -242,20 +259,27 @@ class CLIWorkflowStore(SQLiteStore):
         project_id: str | None,
         memory_id_value: str | None = None,
         semantic_description: str | None = None,
+        scenario_signature: str | None = None,
+        target_base_command: str | None = None,
+        target_sub_command: str | None = None,
+        target_pattern_id: str | None = None,
     ) -> str:
         """Insert an active taught parameter policy, superseding older same-scope policies."""
         now = utc_now_iso()
+        scenario_signature = scenario_signature or infer_scenario_signature(semantic_description or scenario_text)
         existing = self.fetch_one(
             """
             SELECT * FROM cli_parameter_policy
             WHERE user_id = ?
               AND COALESCE(project_id, '') = COALESCE(?, '')
+              AND COALESCE(scenario_signature, '') = COALESCE(?, '')
+              AND COALESCE(target_sub_command, '') = COALESCE(?, '')
               AND param_name = ?
               AND status = 'active'
             ORDER BY updated_at DESC
             LIMIT 1
             """,
-            (user_id, project_id, param_name),
+            (user_id, project_id, scenario_signature, target_sub_command, param_name),
         )
         policy_id = memory_id()
         if existing and existing.get("param_value") != param_value:
@@ -273,11 +297,11 @@ class CLIWorkflowStore(SQLiteStore):
             """
             INSERT INTO cli_parameter_policy (
                 policy_id, memory_id, user_id, project_id, scenario_text,
-                semantic_description, target_base_command, target_sub_command,
+                scenario_signature, semantic_description, target_base_command, target_sub_command,
                 target_pattern_id, param_name, param_value, source_type,
                 memory_origin, active_priority, binding_status, status,
                 overwrite_of, superseded_by, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 policy_id,
@@ -285,10 +309,11 @@ class CLIWorkflowStore(SQLiteStore):
                 user_id,
                 project_id,
                 scenario_text,
+                scenario_signature,
                 semantic_description,
-                None,
-                None,
-                None,
+                target_base_command,
+                target_sub_command,
+                target_pattern_id,
                 param_name,
                 param_value,
                 "openclaw",
@@ -351,6 +376,58 @@ class CLIWorkflowStore(SQLiteStore):
             LIMIT ?
             """,
             tuple(params),
+        )
+
+    def find_top_parameter_policy(
+        self,
+        *,
+        user_id: str,
+        project_id: str | None,
+        param_name: str,
+        scenario_signature: str | None = None,
+        target_sub_command: str | None = None,
+    ) -> dict[str, Any] | None:
+        """Find the most relevant active policy for write-time conflict judgment."""
+        rows = self.fetch_all(
+            """
+            SELECT *,
+                CASE
+                    WHEN COALESCE(scenario_signature, '') = COALESCE(?, '') THEN 2
+                    ELSE 0
+                END +
+                CASE
+                    WHEN COALESCE(target_sub_command, '') = COALESCE(?, '') THEN 1
+                    ELSE 0
+                END AS match_score
+            FROM cli_parameter_policy
+            WHERE user_id = ?
+              AND COALESCE(project_id, '') = COALESCE(?, '')
+              AND param_name = ?
+              AND status = 'active'
+            ORDER BY match_score DESC, active_priority DESC, updated_at DESC
+            LIMIT 1
+            """,
+            (scenario_signature, target_sub_command, user_id, project_id, param_name),
+        )
+        return rows[0] if rows else None
+
+    def mark_parameter_policy_status(
+        self,
+        policy_id: str,
+        *,
+        status: str,
+        superseded_by: str | None = None,
+    ) -> None:
+        """Update a parameter policy status for LLM write-time decisions."""
+        self.execute(
+            """
+            UPDATE cli_parameter_policy
+            SET status = ?,
+                superseded_by = COALESCE(?, superseded_by),
+                updated_at = ?
+            WHERE policy_id = ?
+            """,
+            (status, superseded_by, utc_now_iso(), policy_id),
         )
 
     def sub_command_frequency(
@@ -430,6 +507,26 @@ def extract_parameter_policies(text: str) -> list[dict[str, str]]:
             seen.add(key)
             result.append({"param_name": key[0], "param_value": key[1]})
     return result
+
+
+def infer_scenario_signature(text: str) -> str:
+    """Infer a stable scenario signature without parameter values for conflict grouping."""
+    cleaned = clean_text(text)
+    if not cleaned:
+        return ""
+    for item in extract_parameter_policies(cleaned):
+        cleaned = cleaned.replace(item["param_name"], " ")
+        cleaned = cleaned.replace(item["param_value"], " ")
+    cleaned = re.sub(r"(参数|设置为|设为|记住|以后|下次|的时候|时|用|=|--)", " ", cleaned)
+    tokens = re.findall(r"[\u4e00-\u9fff]{2,}|[A-Za-z0-9_.-]+", cleaned)
+    stop = {"参数", "设置", "记住", "以后", "下次", "时候"}
+    result: list[str] = []
+    for token in tokens:
+        if token in stop:
+            continue
+        if token not in result:
+            result.append(token)
+    return " ".join(result[:8])
 
 
 def deserialize_pattern(row: dict[str, Any]) -> dict[str, Any]:

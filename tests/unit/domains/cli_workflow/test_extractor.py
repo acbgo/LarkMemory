@@ -251,6 +251,9 @@ class TestLLMSemanticsEnrichment:
     def test_rule_hit_enriches_with_semantics(self):
         """规则命中 + LLM → 参数获得 semantics"""
         llm = FakeOpenClawLLM({
+            "intent": "deploy",
+            "semantic_description": "部署到 staging 环境并进行 50 比例灰度",
+            "scenario_keywords": ["部署", "staging", "灰度"],
             "parameters": [
                 {"param_name": "env", "param_value": "staging",
                  "semantics": "部署目标环境，staging 为预发布环境"},
@@ -265,6 +268,8 @@ class TestLLMSemanticsEnrichment:
         candidates = extractor.extract(event)
         assert len(candidates) == 1
         assert "llm_semantics" in candidates[0].signals
+        assert candidates[0].memory.semantic_description == "部署到 staging 环境并进行 50 比例灰度"
+        assert candidates[0].memory.scenario_keywords == ["部署", "staging", "灰度"]
         for pb in candidates[0].memory.parameter_bindings:
             assert pb.semantics is not None
 
@@ -283,6 +288,8 @@ class TestLLMFullExtraction:
         """LLM 返回完整命令 → 参数化 + semantics"""
         llm = FakeOpenClawLLM({
             "full_command": "lark project deploy --region cn-shanghai",
+            "intent": "deploy",
+            "semantic_description": "部署项目时使用 cn-shanghai 作为目标区域",
             "scenario_keywords": ["部署", "区域配置"],
             "is_teaching": True,
             "parameters": [
@@ -298,6 +305,30 @@ class TestLLMFullExtraction:
         assert c.memory.source_type == "openclaw"
         assert "llm_full_extraction" in c.signals
         assert "region" in c.memory.command_template
+        assert c.memory.semantic_description == "部署项目时使用 cn-shanghai 作为目标区域"
+        assert c.memory.scenario_keywords == ["部署", "区域配置"]
+
+    def test_full_command_parameters_are_parsed_even_when_llm_omits_parameters(self):
+        """完整命令优先：LLM 未返回 parameters 时，也要从 full_command 解析参数。"""
+        llm = FakeOpenClawLLM({
+            "full_command": "lark project deploy --env staging --canary 10",
+            "intent": "deploy",
+            "semantic_description": "部署项目到 staging 环境并设置 10 灰度",
+            "scenario_keywords": ["部署", "staging", "灰度"],
+            "is_teaching": True,
+            "parameters": [],
+        })
+        extractor = CLIWorkflowExtractor(llm_client=llm)
+        event = make_openclaw_event("以后部署 staging 灰度 10 就按我说的命令来")
+
+        candidates = extractor.extract(event)
+
+        assert len(candidates) == 1
+        bindings = {
+            binding.param_name: binding.param_value
+            for binding in candidates[0].memory.parameter_bindings
+        }
+        assert bindings == {"env": "staging", "canary": "10"}
 
     def test_full_extraction_scenario_only_creates_partial(self):
         """LLM 只有场景词+参数 → 无完整命令 → partial candidate"""

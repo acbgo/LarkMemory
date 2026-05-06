@@ -90,6 +90,8 @@ class CLIWorkflowMemory:
     command_category: str = "general"
     project_id: str | None = None
     repo_id: str | None = None
+    semantic_description: str | None = None
+    scenario_keywords: list[str] = field(default_factory=list)
     parameter_bindings: list[ParameterBinding] = field(default_factory=list)
     execution_count: int = 1
     last_executed_at: str | None = None
@@ -122,6 +124,7 @@ class CLIWorkflowMemory:
                 *( [f"repo_id:{self.repo_id}"] if self.repo_id else [] ),
                 f"command_name:{self.command_name}",
                 f"command_template:{self.command_template}",
+                *[f"scenario:{keyword}" for keyword in self.scenario_keywords],
             ]
         )
         tags = _unique(
@@ -172,12 +175,17 @@ class CLIWorkflowMemory:
             lines.append(f"项目: {self.project_id}")
         if self.repo_id:
             lines.append(f"仓库: {self.repo_id}")
+        if self.semantic_description:
+            lines.append(f"语义: {self.semantic_description}")
+        if self.scenario_keywords:
+            lines.append(f"场景关键词: {', '.join(self.scenario_keywords)}")
         lines.append(f"执行次数: {self.execution_count}")
         lines.append(f"成功率: {self.success_rate:.2f}")
         if self.parameter_bindings:
             lines.append("参数绑定:")
             for pb in sorted(self.parameter_bindings, key=lambda x: -x.frequency):
-                lines.append(f"  --{pb.param_name} {pb.param_value} ({pb.frequency}次)")
+                suffix = f" - {pb.semantics}" if pb.semantics else ""
+                lines.append(f"  --{pb.param_name} {pb.param_value} ({pb.frequency}次){suffix}")
         lines.append(f"来源: {self.source_type}")
         if self.last_executed_at:
             lines.append(f"最近执行: {self.last_executed_at}")
@@ -189,7 +197,8 @@ class CLIWorkflowMemory:
         params = " ".join(
             f"--{pb.param_name}" for pb in sorted(self.parameter_bindings, key=lambda x: -x.frequency)[:5]
         )
-        summary = f"{name} [{label}] {params} ({self.execution_count}次)"
+        semantic = f" - {self.semantic_description}" if self.semantic_description else ""
+        summary = f"{name} [{label}] {params} ({self.execution_count}次){semantic}"
         return truncate_text(clean_text(summary), 200)
 
     def _execution_importance(self) -> float:
@@ -221,6 +230,8 @@ class CLIWorkflowMemory:
             "command_category": self.command_category,
             "project_id": self.project_id,
             "repo_id": self.repo_id,
+            "semantic_description": self.semantic_description,
+            "scenario_keywords": list(self.scenario_keywords),
             "parameter_bindings": [
                 {
                     "param_name": pb.param_name,
@@ -260,6 +271,13 @@ class CLIWorkflowMemory:
         command_name = _field_from_entities(entities, "command_name") or ""
         command_template = _line_value(content, "命令模板") or command_name
         command_category = _line_value(content, "分类") or "general"
+        semantic_description = _line_value(content, "语义")
+        scenario_line = _line_value(content, "场景关键词") or ""
+        scenario_keywords = [
+            clean_text(part)
+            for part in scenario_line.split(",")
+            if clean_text(part)
+        ]
         for tag in tags:
             if tag.startswith("category:") and not command_category:
                 command_category = tag.split(":", 1)[1]
@@ -283,6 +301,8 @@ class CLIWorkflowMemory:
             command_category=command_category,
             project_id=project_id,
             repo_id=repo_id,
+            semantic_description=semantic_description,
+            scenario_keywords=scenario_keywords,
             parameter_bindings=parameter_bindings,
             execution_count=execution_count,
             last_executed_at=data.get("updated_at") or data.get("created_at"),
