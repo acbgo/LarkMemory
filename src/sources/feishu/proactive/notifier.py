@@ -3,7 +3,13 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from .cards import build_candidate_confirmation_card, build_decision_context_card, build_review_reminder_card, build_team_memory_created_card
+from .cards import (
+    build_candidate_confirmation_card,
+    build_decision_context_card,
+    build_review_reminder_card,
+    build_team_memory_created_card,
+    build_team_memory_strengthened_card,
+)
 
 
 class FeishuNotifier:
@@ -31,6 +37,10 @@ class FeishuNotifier:
     def send_team_memory_created(self, chat_id: str, suggestion: dict[str, Any]) -> Any:
         """Render and send a team-retention memory created card."""
         return self.send_interactive_card(chat_id, build_team_memory_created_card(suggestion))
+
+    def send_team_memory_strengthened(self, chat_id: str, suggestion: dict[str, Any]) -> Any:
+        """Render and send a team-retention memory strengthened card."""
+        return self.send_interactive_card(chat_id, build_team_memory_strengthened_card(suggestion))
 
     def send_candidate_confirmation(self, chat_id: str, suggestion: dict[str, Any]) -> Any:
         """Render and send a candidate confirmation card."""

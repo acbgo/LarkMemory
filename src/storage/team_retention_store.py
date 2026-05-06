@@ -385,6 +385,31 @@ class TeamRetentionStore(SQLiteStore):
             raise ValueError(f"team retention memory not found: {memory_id}")
         return self.mark_reviewed(memory_id, reviewed_at=observed_at)
 
+    def reinforce_memory_without_schedule(self, memory_id: str, *, observed_at: str | None = None) -> str:
+        """强化尚未创建复习排期的候选记忆，写回下次复习建议时间并返回。"""
+        memory = self.get_memory(memory_id)
+        if memory is None:
+            raise ValueError(f"team retention memory not found: {memory_id}")
+        effective_observed_at = observed_at or utc_now_iso()
+        next_review_at = self.next_review_time(
+            effective_observed_at,
+            review_count=memory.review_count + 1,
+            risk_level=memory.risk_level,
+            review_policy=memory.review_policy,
+        )
+        self.execute(
+            """
+            UPDATE memory_team_retention
+            SET last_review_at = ?,
+                next_review_at = ?,
+                review_count = review_count + 1,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE memory_id = ?
+            """,
+            (effective_observed_at, next_review_at, memory_id),
+        )
+        return next_review_at
+
     def snooze_review(self, memory_id: str, *, days: int = 1, now: str | None = None) -> str:
         """将指定记忆复习时间顺延 days 天，返回新的下次复习时间。"""
         if days <= 0:

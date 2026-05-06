@@ -181,12 +181,16 @@ class FakeNotifier:
     def __init__(self) -> None:
         self.created_cards: list[tuple[str, dict[str, Any]]] = []
         self.candidate_cards: list[tuple[str, dict[str, Any]]] = []
+        self.strengthened_cards: list[tuple[str, dict[str, Any]]] = []
 
     def send_team_memory_created(self, chat_id: str, suggestion: dict[str, Any]) -> None:
         self.created_cards.append((chat_id, suggestion))
 
     def send_candidate_confirmation(self, chat_id: str, suggestion: dict[str, Any]) -> None:
         self.candidate_cards.append((chat_id, suggestion))
+
+    def send_team_memory_strengthened(self, chat_id: str, suggestion: dict[str, Any]) -> None:
+        self.strengthened_cards.append((chat_id, suggestion))
 
 
 def _stores() -> tuple[MemoryCoreStore, TeamRetentionStore, Path]:
@@ -778,6 +782,40 @@ def test_active_ingest_card_includes_computed_next_review_time() -> None:
         shutil.rmtree(temp_dir, ignore_errors=True)
 
 
+def test_active_ingest_card_computes_due_at_when_memory_lacks_next_review() -> None:
+    memory_store, team_store, temp_dir = _stores()
+    try:
+        notifier = FakeNotifier()
+        memory = TeamRetentionMemory(
+            retention_id="mem-active-card",
+            team_id="team-1",
+            project_id="project-1",
+            workspace_id="workspace-1",
+            fact_type="customer_preference",
+            fact_value="星河客户生产数据导出必须使用 xlsx，不接受 csv。",
+            risk_level="high",
+            confidence=1.0,
+            importance=0.8,
+            created_at="2026-04-30T00:00:00Z",
+        )
+        memory_store.insert_memory_core(memory.to_memory_core())
+        handler = TeamRetentionDomainHandler(
+            memory_store,
+            team_store,
+            notifier=notifier,
+            chat_id="oc-demo",
+        )
+
+        handler._maybe_send_ingest_card(memory, "active")
+
+        assert len(notifier.created_cards) == 1
+        _chat_id, suggestion = notifier.created_cards[0]
+        assert suggestion["due_at"]
+        assert suggestion["due_at"] != "待计算"
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+
 def test_acknowledge_action_is_noop_success_for_created_card() -> None:
     memory_store, team_store, temp_dir = _stores()
     try:
@@ -788,6 +826,148 @@ def test_acknowledge_action_is_noop_success_for_created_card() -> None:
         assert result is not None
         assert result.updated is True
         assert result.message == "acknowledged"
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+def test_promote_candidate_to_active_sends_created_review_card() -> None:
+    memory_store, team_store, temp_dir = _stores()
+    try:
+        notifier = FakeNotifier()
+        memory = TeamRetentionMemory(
+            retention_id="mem-candidate-card",
+            team_id="team-1",
+            project_id="project-1",
+            workspace_id="workspace-1",
+            fact_type="customer_preference",
+            fact_value="星河客户生产数据导出使用 csv 格式。",
+            risk_level="low",
+            confidence=1.0,
+            importance=0.4,
+            created_at="2026-04-30T00:00:00Z",
+        )
+        core = memory.to_memory_core()
+        core.status = "candidate"  # type: ignore[assignment]
+        memory_store.insert_memory_core(core)
+        team_store.insert_memory(memory)
+        handler = TeamRetentionDomainHandler(
+            memory_store,
+            team_store,
+            notifier=notifier,
+            chat_id="oc-demo",
+        )
+
+        result = handler.update_memory("promote_to_active", memory_id="mem-candidate-card")
+
+        assert result is not None
+        assert result.updated is True
+        assert memory_store.get_memory("mem-candidate-card")["status"] == "active"
+        assert team_store.get_review_schedule("mem-candidate-card") is not None
+        assert len(notifier.created_cards) == 1
+        _chat_id, suggestion = notifier.created_cards[0]
+        assert suggestion["memory_id"] == "mem-candidate-card"
+        assert suggestion["due_at"] != "待计算"
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+def test_dismiss_candidate_forgets_without_sending_card() -> None:
+    memory_store, team_store, temp_dir = _stores()
+    try:
+        notifier = FakeNotifier()
+        memory = TeamRetentionMemory(
+            retention_id="mem-dismiss-card",
+            team_id="team-1",
+            project_id="project-1",
+            workspace_id="workspace-1",
+            fact_type="customer_preference",
+            fact_value="星河客户生产数据导出使用 csv 格式。",
+            risk_level="low",
+        )
+        core = memory.to_memory_core()
+        core.status = "candidate"  # type: ignore[assignment]
+        memory_store.insert_memory_core(core)
+        team_store.insert_memory(memory)
+        handler = TeamRetentionDomainHandler(
+            memory_store,
+            team_store,
+            notifier=notifier,
+            chat_id="oc-demo",
+        )
+
+        result = handler.update_memory("dismiss_candidate", memory_id="mem-dismiss-card")
+
+        assert result is not None
+        assert result.updated is True
+        assert memory_store.get_memory("mem-dismiss-card")["status"] == "forgotten"
+        assert notifier.created_cards == []
+        assert notifier.candidate_cards == []
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+def test_duplicate_candidate_reinforces_existing_and_sends_strengthened_card() -> None:
+    memory_store, team_store, temp_dir = _stores()
+    try:
+        notifier = FakeNotifier()
+        existing = TeamRetentionMemory(
+            retention_id="mem-repeat-candidate",
+            team_id="team-1",
+            project_id="project-1",
+            workspace_id="workspace-1",
+            fact_type="customer_preference",
+            fact_value="星河客户生产数据导出使用 csv 格式。",
+            risk_level="low",
+            version_group="team-1:customer_preference:xinghe:production-data-export-format",
+            confidence=1.0,
+            importance=0.4,
+            created_at="2026-04-30T00:00:00Z",
+            metadata={
+                "primary_entity": {
+                    "type": "customer",
+                    "name": "星河客户",
+                    "normalized_key": "xinghe",
+                }
+            },
+        )
+        core = existing.to_memory_core()
+        core.status = "candidate"  # type: ignore[assignment]
+        memory_store.insert_memory_core(core)
+        team_store.insert_memory(existing)
+        llm = FakeLLMClient(
+            _extraction_response(
+                fact_value="星河客户生产数据导出使用 csv 格式。",
+                risk_level="low",
+                primary_entity={
+                    "type": "customer",
+                    "name": "星河客户",
+                    "normalized_key": "xinghe",
+                },
+                topic_key="production-data-export-format",
+            )
+        )
+        handler = TeamRetentionDomainHandler(
+            memory_store,
+            team_store,
+            llm_client=llm,
+            notifier=notifier,
+            chat_id="oc-demo",
+        )
+        runtime = DomainRuntime(memory_store=memory_store, add_memory=memory_store.insert_memory_core)
+
+        result = handler.ingest_event(_event("星河客户生产数据导出使用 csv 格式。"), runtime)
+
+        assert result.memory_ids == ["mem-repeat-candidate"]
+        assert memory_store.get_memory("mem-repeat-candidate")["status"] == "candidate"
+        reinforced = team_store.get_memory("mem-repeat-candidate")
+        assert reinforced is not None
+        assert reinforced.next_review_at is not None
+        assert reinforced.review_count == 1
+        assert team_store.get_review_schedule("mem-repeat-candidate") is None
+        assert len(notifier.strengthened_cards) == 1
+        _chat_id, suggestion = notifier.strengthened_cards[0]
+        assert suggestion["memory_id"] == "mem-repeat-candidate"
+        assert suggestion["due_at"] == reinforced.next_review_at
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
 
@@ -869,6 +1049,46 @@ def test_conflicting_lower_certainty_fact_becomes_candidate_without_review_card(
         assert len(notifier.created_cards) == 1
         assert len(notifier.candidate_cards) == 1
         assert notifier.candidate_cards[0][1]["memory_id"] == new_id
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+def test_conflict_candidate_when_llm_entity_keys_differ_but_names_match() -> None:
+    memory_store, team_store, temp_dir = _stores()
+    try:
+        llm = SequenceLLMClient(
+            [
+                _extraction_response(
+                    fact_value="星河客户生产数据导出必须使用 xlsx，不接受 csv。",
+                    risk_level="high",
+                    primary_entity={
+                        "type": "customer",
+                        "name": "星河客户",
+                        "normalized_key": "customer-xinghe-production-export",
+                    },
+                    topic_key="production-data-export-format",
+                ),
+                _extraction_response(
+                    fact_value="星河客户生产数据导出使用 csv 格式",
+                    risk_level="low",
+                    primary_entity={
+                        "type": "customer",
+                        "name": "星河客户",
+                        "normalized_key": "xinghe",
+                    },
+                    topic_key="production-data-export-format",
+                ),
+            ]
+        )
+        handler = TeamRetentionDomainHandler(memory_store, team_store, llm_client=llm)
+        runtime = DomainRuntime(memory_store=memory_store, add_memory=memory_store.insert_memory_core)
+
+        first = handler.ingest_event(_event("星河客户生产数据导出必须使用 xlsx，不接受 csv。"), runtime)
+        second = handler.ingest_event(_event("星河客户生产数据导出使用csv格式"), runtime)
+
+        assert memory_store.get_memory(first.memory_ids[0])["status"] == "active"
+        assert memory_store.get_memory(second.memory_ids[0])["status"] == "candidate"
+        assert team_store.get_review_schedule(second.memory_ids[0]) is None
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
 

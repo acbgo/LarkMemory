@@ -5,7 +5,12 @@ from unittest.mock import patch
 
 from src.sources.feishu.events.models import FeishuCardActionEvent
 from src.sources.feishu.proactive.callbacks import FeishuCardActionHandler, parse_card_action
-from src.sources.feishu.proactive.cards import build_decision_context_card, build_review_reminder_card
+from src.sources.feishu.proactive.cards import (
+    build_decision_context_card,
+    build_review_reminder_card,
+    build_team_memory_strengthened_card,
+    build_team_memory_created_card,
+)
 from src.sources.feishu.proactive.notifier import FeishuNotifier
 
 
@@ -39,6 +44,35 @@ class TestFeishuProactive(unittest.TestCase):
         self.assertEqual(actions[0]["value"]["action"], "reviewed")
         self.assertEqual(actions[1]["value"]["action"], "snooze")
         self.assertEqual(actions[2]["value"]["action"], "expire")
+
+    def test_cards_render_due_at_as_beijing_time(self) -> None:
+        card = build_team_memory_created_card(
+            {
+                "memory_id": "mem-1",
+                "content": "客户 A 要求导出 xlsx",
+                "due_at": "2026-05-07T22:04:28Z",
+                "metadata": {"risk_level": "high"},
+            }
+        )
+
+        markdown = card["elements"][0]["content"]
+        self.assertIn("北京时间 2026-05-08 06:04", markdown)
+        self.assertNotIn("2026-05-07T22:04:28Z", markdown)
+
+    def test_build_strengthened_card_contains_next_review(self) -> None:
+        card = build_team_memory_strengthened_card(
+            {
+                "memory_id": "mem-1",
+                "content": "星河客户生产数据导出使用 csv 格式。",
+                "due_at": "2026-05-07T22:04:28Z",
+                "metadata": {"risk_level": "low"},
+            }
+        )
+
+        self.assertEqual(card["header"]["title"]["content"], "已强化团队记忆")
+        markdown = card["elements"][0]["content"]
+        self.assertIn("北京时间 2026-05-08 06:04", markdown)
+        self.assertIn("下次复习", markdown)
 
     def test_parse_card_action_reads_value(self) -> None:
         event = parse_card_action(

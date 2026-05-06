@@ -1,6 +1,21 @@
 from __future__ import annotations
 
+from datetime import timedelta
 from typing import Any
+
+from src.utils.time import parse_iso
+
+
+def _display_datetime(value: Any) -> str:
+    """Render ISO datetimes as Beijing local time for Feishu cards."""
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    try:
+        beijing_time = parse_iso(text) + timedelta(hours=8)
+    except ValueError:
+        return text
+    return f"北京时间 {beijing_time.strftime('%Y-%m-%d %H:%M')}"
 
 
 def build_decision_context_card(suggestion: dict[str, Any]) -> dict[str, Any]:
@@ -49,7 +64,7 @@ def build_review_reminder_card(suggestion: dict[str, Any]) -> dict[str, Any]:
     """Render a team-retention review suggestion as a Feishu interactive card."""
     memory_id = str(suggestion.get("memory_id") or "")
     risk_level = str((suggestion.get("metadata") or {}).get("risk_level") or "normal")
-    due_at = suggestion.get("due_at") or "unknown"
+    due_at = _display_datetime(suggestion.get("due_at")) or "unknown"
     content = suggestion.get("content") or ""
     template = "red" if risk_level == "high" else "orange"
     return {
@@ -106,7 +121,7 @@ def build_team_memory_created_card(suggestion: dict[str, Any]) -> dict[str, Any]
     memory_id = str(suggestion.get("memory_id") or "")
     content = suggestion.get("content") or ""
     risk_level = str((suggestion.get("metadata") or {}).get("risk_level") or "normal")
-    next_review = suggestion.get("due_at") or "待计算"
+    next_review = _display_datetime(suggestion.get("due_at")) or "待计算"
     return {
         "config": {"wide_screen_mode": True},
         "header": {
@@ -121,6 +136,46 @@ def build_team_memory_created_card(suggestion: dict[str, Any]) -> dict[str, Any]
                     f"风险等级：{risk_level}\n"
                     f"下次复习：{next_review}\n\n"
                     "系统将按遗忘曲线定期提醒复习。"
+                ),
+            },
+            {
+                "tag": "action",
+                "actions": [
+                    {
+                        "tag": "button",
+                        "text": {"tag": "plain_text", "content": "知道了"},
+                        "type": "primary",
+                        "value": {
+                            "source": "larkmemory",
+                            "action": "acknowledge",
+                            "memory_id": memory_id,
+                        },
+                    },
+                ],
+            },
+        ],
+    }
+
+
+def build_team_memory_strengthened_card(suggestion: dict[str, Any]) -> dict[str, Any]:
+    memory_id = str(suggestion.get("memory_id") or "")
+    content = suggestion.get("content") or ""
+    risk_level = str((suggestion.get("metadata") or {}).get("risk_level") or "normal")
+    next_review = _display_datetime(suggestion.get("due_at")) or "待计算"
+    return {
+        "config": {"wide_screen_mode": True},
+        "header": {
+            "template": "green",
+            "title": {"tag": "plain_text", "content": "已强化团队记忆"},
+        },
+        "elements": [
+            {
+                "tag": "markdown",
+                "content": (
+                    f"**{content}**\n\n"
+                    f"风险等级：{risk_level}\n"
+                    f"下次复习：{next_review}\n\n"
+                    "系统检测到该知识重复出现，已强化记忆权重。"
                 ),
             },
             {

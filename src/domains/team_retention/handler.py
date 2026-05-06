@@ -13,6 +13,7 @@ from src.schemas import NormalizedEvent
 from src.storage import EmbeddingStore, MemoryCoreStore, TeamRetentionStore
 from src.utils.ids import new_id
 from src.utils.text import clean_text
+from src.utils.time import utc_now_iso
 
 from .admission import TeamRetentionAdmissionDecision, TeamRetentionAdmissionDecider
 from .embedding import TeamRetentionEmbeddingIndexer
@@ -221,7 +222,8 @@ class TeamRetentionDomainHandler:
                     "action=final_decision event_id=%s decision=strengthen target=%s reason=%s",
                     event.event_id, arbitration.target_memory_id, arbitration.reason,
                 )
-                self._reinforce_existing(arbitration.target_memory_id, observed_at=event.occurred_at)
+                strengthened = self._reinforce_existing(arbitration.target_memory_id, observed_at=event.occurred_at)
+                self._maybe_send_strengthened_card(strengthened)
                 self.embedding_indexer.upsert(memory, status="active")
                 return DomainIngestResult(
                     memory_ids=[arbitration.target_memory_id],
@@ -249,12 +251,23 @@ class TeamRetentionDomainHandler:
 
         final_status = admission.status
 
+        duplicate_id = self._find_duplicate(memory, allowed_statuses={"active", "candidate"})
+        if duplicate_id is not None:
+            strengthened = self._reinforce_existing(duplicate_id, observed_at=event.occurred_at)
+            self._maybe_send_strengthened_card(strengthened)
+            return DomainIngestResult(
+                memory_ids=[duplicate_id],
+                candidate_count=1,
+                message="team_retention reinforced duplicate",
+            )
+
         memory_core = memory.to_memory_core()
         memory_core.status = final_status
         memory_id = runtime.add_memory(memory_core)
 
         if memory_id != memory.retention_id:
-            self._reinforce_existing(memory_id, observed_at=event.occurred_at)
+            strengthened = self._reinforce_existing(memory_id, observed_at=event.occurred_at)
+            self._maybe_send_strengthened_card(strengthened)
             return DomainIngestResult(memory_ids=[memory_id], candidate_count=1, message="team_retention reinforced")
 
         self.team_retention_store.insert_memory(memory)
@@ -278,7 +291,7 @@ class TeamRetentionDomainHandler:
     def _maybe_send_ingest_card(self, memory: TeamRetentionMemory, status: str) -> None:
         if self.notifier is None or not self.chat_id:
             return
-        suggestion = self._build_ingest_suggestion(memory)
+        suggestion = self._build_ingest_suggestion(memory, status=status)
         if not suggestion:
             return
         try:
@@ -294,14 +307,37 @@ class TeamRetentionDomainHandler:
                 exc_info=True,
             )
 
-    def _build_ingest_suggestion(self, memory: TeamRetentionMemory) -> dict[str, Any] | None:
+    def _maybe_send_strengthened_card(self, memory: TeamRetentionMemory) -> None:
+        if self.notifier is None or not self.chat_id:
+            return
+        suggestion = self._build_ingest_suggestion(memory, status="active")
+        if not suggestion:
+            return
+        try:
+            self.notifier.send_team_memory_strengthened(self.chat_id, suggestion)
+        except Exception:
+            logger.warning(
+                "action=strengthened_card_failed memory_id=%s",
+                memory.retention_id,
+                exc_info=True,
+            )
+
+    def _build_ingest_suggestion(self, memory: TeamRetentionMemory, *, status: str) -> dict[str, Any] | None:
         row = self.memory_store.get_memory(memory.retention_id)
         if row is None:
             return None
+        due_at = memory.next_review_at
+        if status == "active" and not due_at:
+            due_at = self.team_retention_store.next_review_time(
+                memory.created_at or utc_now_iso(),
+                review_count=memory.review_count,
+                risk_level=memory.risk_level,
+                review_policy=memory.review_policy,
+            )
         return {
             "memory_id": memory.retention_id,
             "content": memory.fact_value,
-            "due_at": memory.next_review_at or "待计算",
+            "due_at": due_at,
             "metadata": {
                 "risk_level": memory.risk_level,
                 "fact_type": memory.fact_type,
@@ -386,22 +422,40 @@ class TeamRetentionDomainHandler:
         topic = extraction.topic_key or extraction.version_group_hint or extraction.fact_type
         return f"{scope}:{extraction.fact_type}:{entity}:{topic}".lower()
 
-    def _reinforce_existing(self, memory_id: str, *, observed_at: str | None = None) -> None:
+    def _reinforce_existing(self, memory_id: str, *, observed_at: str | None = None) -> TeamRetentionMemory:
         existing = self.team_retention_store.get_memory(memory_id)
         if existing is None:
             raise ValueError(f"team retention memory not found: {memory_id}")
         if self.team_retention_store.get_review_schedule(memory_id) is not None:
-            self.team_retention_store.reinforce_review(memory_id, observed_at=observed_at)
-            return
+            next_review_at = self.team_retention_store.reinforce_review(memory_id, observed_at=observed_at)
+            existing.next_review_at = next_review_at
+            existing.last_review_at = observed_at
+            existing.review_count += 1
+            return existing
+        next_review_at = self.team_retention_store.reinforce_memory_without_schedule(
+            memory_id,
+            observed_at=observed_at,
+        )
         metadata = dict(existing.metadata)
         metadata["reinforce_count"] = int(metadata.get("reinforce_count") or 0) + 1
         if observed_at is not None:
             metadata["last_reinforced_at"] = observed_at
         self.team_retention_store.update_memory_metadata(memory_id, metadata)
+        existing.metadata = metadata
+        existing.next_review_at = next_review_at
+        existing.last_review_at = observed_at
+        existing.review_count += 1
+        return existing
 
-    def _find_duplicate(self, memory: TeamRetentionMemory) -> str | None:
+    def _find_duplicate(
+        self,
+        memory: TeamRetentionMemory,
+        *,
+        allowed_statuses: set[str] | None = None,
+    ) -> str | None:
         if not memory.version_group:
             return None
+        statuses = allowed_statuses or {"active"}
         existing = self.team_retention_store.list_memories(
             team_id=memory.team_id,
             project_id=memory.project_id,
@@ -413,7 +467,7 @@ class TeamRetentionDomainHandler:
         for item in existing:
             if item.fact_value.strip() == memory.fact_value.strip():
                 row = self.memory_store.get_memory(item.retention_id)
-                if row is not None and row.get("status") == "active":
+                if row is not None and row.get("status") in statuses:
                     return item.retention_id
         return None
 
@@ -490,6 +544,7 @@ class TeamRetentionDomainHandler:
             memory = self.team_retention_store.get_memory(memory_id)
             if memory is not None:
                 self.team_retention_store.create_review_schedule(memory)
+                self._maybe_send_ingest_card(memory, "active")
             return DomainUpdateResult(
                 action=action,
                 memory_id=memory_id,
@@ -635,21 +690,36 @@ def _related_fact_type(left: str, right: str) -> bool:
 
 
 def _same_primary_entity(left: TeamRetentionMemory, right: TeamRetentionMemory) -> bool:
-    """Compare explicit primary_entity metadata first, then fall back to customer names in text."""
-    left_entity = _entity_key(left)
-    right_entity = _entity_key(right)
-    if left_entity and right_entity:
-        return left_entity == right_entity
+    """Compare primary_entity metadata and customer names with tolerant normalized keys."""
+    left_entities = _entity_keys(left)
+    right_entities = _entity_keys(right)
+    if left_entities and right_entities:
+        for left_entity in left_entities:
+            for right_entity in right_entities:
+                if (
+                    left_entity == right_entity
+                    or left_entity in right_entity
+                    or right_entity in left_entity
+                ):
+                    return True
     return False
 
 
-def _entity_key(memory: TeamRetentionMemory) -> str | None:
+def _entity_keys(memory: TeamRetentionMemory) -> set[str]:
+    keys: set[str] = set()
     primary = memory.metadata.get("primary_entity") if memory.metadata else None
     if isinstance(primary, dict):
-        value = primary.get("normalized_key") or primary.get("name")
-        if isinstance(value, str) and value.strip():
-            return _normalize_entity(value)
-    return _extract_customer_key(memory.fact_value)
+        for field_name in ("normalized_key", "name"):
+            value = primary.get(field_name)
+            if isinstance(value, str) and value.strip():
+                keys.add(_normalize_entity(value))
+                extracted = _extract_customer_key(value)
+                if extracted:
+                    keys.add(extracted)
+    extracted_from_fact = _extract_customer_key(memory.fact_value)
+    if extracted_from_fact:
+        keys.add(extracted_from_fact)
+    return {key for key in keys if key}
 
 
 def _extract_customer_key(text: str) -> str | None:
@@ -666,8 +736,11 @@ def _extract_customer_key(text: str) -> str | None:
 def _normalize_entity(value: str) -> str:
     normalized = clean_text(value).lower()
     normalized = normalized.replace("customer-", "")
+    normalized = normalized.replace("-customer", "")
+    normalized = normalized.replace("customer_", "")
+    normalized = normalized.replace("_customer", "")
     normalized = normalized.replace("客户", "")
-    normalized = re.sub(r"\s+", "", normalized)
+    normalized = re.sub(r"[\s_-]+", "", normalized)
     return normalized
 
 
