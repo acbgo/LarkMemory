@@ -372,6 +372,13 @@ class TeamRetentionDomainHandler:
 
     def update_memory(self, action: str, **kwargs: Any) -> DomainUpdateResult | None:
         memory_id = kwargs.get("memory_id")
+        if action == "acknowledge":
+            return DomainUpdateResult(
+                action=action,
+                memory_id=memory_id,
+                updated=True,
+                message="acknowledged",
+            )
         if action in {"expire", "forget"} and memory_id:
             self.team_retention_store.deactivate_review(memory_id)
             return None

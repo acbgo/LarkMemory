@@ -147,6 +147,18 @@ class RaisingEmbeddingClient:
         raise RuntimeError("embedding model down")
 
 
+class FakeNotifier:
+    def __init__(self) -> None:
+        self.created_cards: list[tuple[str, dict[str, Any]]] = []
+        self.candidate_cards: list[tuple[str, dict[str, Any]]] = []
+
+    def send_team_memory_created(self, chat_id: str, suggestion: dict[str, Any]) -> None:
+        self.created_cards.append((chat_id, suggestion))
+
+    def send_candidate_confirmation(self, chat_id: str, suggestion: dict[str, Any]) -> None:
+        self.candidate_cards.append((chat_id, suggestion))
+
+
 def _stores() -> tuple[MemoryCoreStore, TeamRetentionStore, Path]:
     root = Path.cwd() / ".tmp-tests"
     root.mkdir(exist_ok=True)
@@ -705,6 +717,47 @@ def test_embedding_failure_does_not_break_ingest() -> None:
         assert memory_store.get_memory(result.memory_ids[0])["status"] == "active"
         assert team_store.get_memory(result.memory_ids[0]) is not None
         assert team_store.get_review_schedule(result.memory_ids[0]) is not None
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+def test_active_ingest_card_includes_computed_next_review_time() -> None:
+    memory_store, team_store, temp_dir = _stores()
+    try:
+        notifier = FakeNotifier()
+        llm = FakeLLMClient(_extraction_response(risk_level="high"))
+        handler = TeamRetentionDomainHandler(
+            memory_store,
+            team_store,
+            llm_client=llm,
+            notifier=notifier,
+            chat_id="oc-demo",
+        )
+        runtime = DomainRuntime(memory_store=memory_store, add_memory=memory_store.insert_memory_core)
+
+        result = handler.ingest_event(_event(), runtime)
+
+        assert len(result.memory_ids) == 1
+        assert len(notifier.created_cards) == 1
+        _chat_id, suggestion = notifier.created_cards[0]
+        schedule = team_store.get_review_schedule(result.memory_ids[0])
+        assert schedule is not None
+        assert suggestion["due_at"] == schedule.next_review_at
+        assert suggestion["due_at"] != "待计算"
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+def test_acknowledge_action_is_noop_success_for_created_card() -> None:
+    memory_store, team_store, temp_dir = _stores()
+    try:
+        handler = TeamRetentionDomainHandler(memory_store, team_store)
+
+        result = handler.update_memory("acknowledge", memory_id="mem-any")
+
+        assert result is not None
+        assert result.updated is True
+        assert result.message == "acknowledged"
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
 
