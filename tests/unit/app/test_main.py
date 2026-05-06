@@ -83,6 +83,15 @@ class TestMain(unittest.TestCase):
     def test_lifespan_starts_and_closes_feishu_ws_when_enabled(self) -> None:
         settings = FeishuSettings(app_id="app-id", app_secret="app-secret", enable_ws=True)
         calls: list[str] = []
+        loops: list[object] = []
+        class FakeLoop:
+            def __init__(self) -> None:
+                self.closed = False
+
+            def close(self) -> None:
+                self.closed = True
+
+        fake_loop = FakeLoop()
 
         class FakeClient:
             def start(self) -> None:
@@ -94,6 +103,12 @@ class TestMain(unittest.TestCase):
         with patch("src.app.main.load_feishu_settings", return_value=settings), patch(
             "src.app.main.get_memory_service",
             return_value=object(),
+        ), patch(
+            "src.app.main.asyncio.new_event_loop",
+            return_value=fake_loop,
+        ), patch(
+            "src.app.main.asyncio.set_event_loop",
+            side_effect=lambda loop: loops.append(loop),
         ), patch(
             "src.app.main.build_api_client",
             return_value=object(),
@@ -112,3 +127,5 @@ class TestMain(unittest.TestCase):
 
         self.assertIn("start", calls)
         self.assertIn("close", calls)
+        self.assertEqual(loops, [fake_loop])
+        self.assertTrue(fake_loop.closed)

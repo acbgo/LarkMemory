@@ -79,29 +79,28 @@ def _start_feishu_ws_listener(app: FastAPI) -> None:
         logger.info("action=feishu_ws_skipped reason=disabled")
         return
 
-    try:
-        api_client = build_api_client(feishu_settings)
-        source_state_store = SourceStateStore()
-        source_state_store.create_table()
-        handler = build_event_handler(
-            memory_service=get_memory_service(),
-            settings=feishu_settings,
-            source_state_store=source_state_store,
-            vc_client=FeishuVcClient(api_client),
-            doc_client=FeishuDocClient(api_client),
-        )
-        client = build_ws_client(feishu_settings, handler)
-        setattr(app.state, _FEISHU_WS_CLIENT_ATTR, client)
-    except Exception:
-        logger.warning("action=feishu_ws_listener_init_failed", exc_info=True)
-        return
-
     def run_listener() -> None:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
         try:
+            api_client = build_api_client(feishu_settings)
+            source_state_store = SourceStateStore()
+            source_state_store.create_table()
+            handler = build_event_handler(
+                memory_service=get_memory_service(),
+                settings=feishu_settings,
+                source_state_store=source_state_store,
+                vc_client=FeishuVcClient(api_client),
+                doc_client=FeishuDocClient(api_client),
+            )
+            client = build_ws_client(feishu_settings, handler)
+            setattr(app.state, _FEISHU_WS_CLIENT_ATTR, client)
             logger.info("action=feishu_ws_listener_started")
             client.start()
         except Exception:
             logger.warning("action=feishu_ws_listener_failed", exc_info=True)
+        finally:
+            loop.close()
 
     thread = threading.Thread(
         target=run_listener,

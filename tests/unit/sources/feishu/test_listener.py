@@ -132,6 +132,7 @@ def test_main_passes_settings_to_event_handler(monkeypatch) -> None:
 
     monkeypatch.setattr("src.sources.feishu.client.listener.load_feishu_settings", lambda: settings)
     monkeypatch.setattr("src.sources.feishu.client.listener.get_memory_service", lambda: _DummyService())
+    monkeypatch.setattr("src.sources.feishu.client.sdk.build_api_client", lambda _settings: object())
     monkeypatch.setattr("src.sources.feishu.client.listener.build_ws_client", fake_build_ws_client)
 
     from src.sources.feishu.client.listener import main
