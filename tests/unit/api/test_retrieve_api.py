@@ -22,7 +22,14 @@ class TestRetrieveApi(unittest.TestCase):
         self.temp_dir = root / f"api-retrieve-{uuid.uuid4().hex}"
         self.temp_dir.mkdir()
         self.db_path = str(self.temp_dir / "retrieve.db")
-        self.env = patch.dict(os.environ, {"LARKMEMORY_SQLITE_PATH": self.db_path}, clear=True)
+        self.env = patch.dict(
+            os.environ,
+            {
+                "LARKMEMORY_CONFIG_FILE": "",
+                "LARKMEMORY_SQLITE_PATH": self.db_path,
+            },
+            clear=True,
+        )
         self.env.start()
         reset_dependency_cache()
         self.client = TestClient(create_app())
@@ -85,6 +92,49 @@ class TestRetrieveApi(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(len(body["results"]), 1)
         self.assertEqual(body["results"][0]["memory_id"], "memory-1")
+
+    def test_retrieve_logs_each_hit_on_separate_line(self) -> None:
+        store = get_memory_core_store()
+        store.insert_memory_core(
+            MemoryCore(
+                memory_id="memory-1",
+                domain="project_decision",
+                memory_type="decision",
+                scope="project",
+                source_type="feishu_chat",
+                source_ref="event-1",
+                content_text="We chose SQLite for local demo storage",
+                importance=0.8,
+                confidence=0.9,
+                tags=["sqlite"],
+            )
+        )
+        store.insert_memory_core(
+            MemoryCore(
+                memory_id="memory-2",
+                domain="project_decision",
+                memory_type="decision",
+                scope="project",
+                source_type="feishu_chat",
+                source_ref="event-2",
+                content_text="SQLite migration should use native migration scripts",
+                importance=0.7,
+                confidence=0.8,
+                tags=["sqlite"],
+            )
+        )
+
+        with self.assertLogs("src.api.retrieve", level="INFO") as captured:
+            response = self.client.post(
+                "/api/v1/retrieve",
+                json={"query_text": "sqlite storage migration", "top_k": 2},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        hit_logs = [line for line in captured.output if "action=retrieve_hit " in line]
+        self.assertEqual(len(hit_logs), 2)
+        self.assertIn("memory_id=memory-1", "\n".join(hit_logs))
+        self.assertIn("memory_id=memory-2", "\n".join(hit_logs))
 
     def test_search_alias_is_available(self) -> None:
         response = self.client.post(

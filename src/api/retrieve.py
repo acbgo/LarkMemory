@@ -62,6 +62,21 @@ async def retrieve_memories(
         )
         for ranked in result.ranked_memories
     ]
+    for hit in hits:
+        logger.info(
+            "action=retrieve_hit query_id=%s rank=%s memory_id=%s domain=%s memory_type=%s score=%.4f scope=%s "
+            "source_ref=%s score_breakdown=%s content_preview=%r",
+            result.query_id,
+            hit.rank,
+            hit.memory_id,
+            hit.domain,
+            hit.memory_type,
+            hit.score,
+            hit.scope,
+            hit.source_ref,
+            hit.score_breakdown,
+            _content_preview(hit.content_text),
+        )
     logger.info(
         "action=retrieve_response_ready query_id=%s result_count=%s",
         result.query_id,
@@ -84,3 +99,11 @@ async def search_memories_alias(
     """兼容 `/memories/search` 别名路由，输入输出与 `retrieve_memories` 相同。"""
     logger.info("action=retrieve_alias_delegate")
     return await retrieve_memories(request, memory_service)
+
+
+def _content_preview(text: str, *, limit: int = 120) -> str:
+    """生成单行内容预览，避免 retrieve 命中日志过长或被换行打散。"""
+    compact = " ".join(text.split())
+    if len(compact) <= limit:
+        return compact
+    return f"{compact[: limit - 3]}..."
