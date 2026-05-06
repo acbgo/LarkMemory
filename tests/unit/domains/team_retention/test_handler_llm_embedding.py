@@ -972,6 +972,73 @@ def test_duplicate_candidate_reinforces_existing_and_sends_strengthened_card() -
         shutil.rmtree(temp_dir, ignore_errors=True)
 
 
+def test_conflict_sequence_creates_candidate_then_strengthens_without_extra_created_card() -> None:
+    memory_store, team_store, temp_dir = _stores()
+    try:
+        notifier = FakeNotifier()
+        llm = SequenceLLMClient(
+            [
+                _extraction_response(
+                    fact_value="D演示-0507 星河客户生产数据导出必须使用 xlsx，不接受 csv。负责人张三。原因是客户审计要求，忘记会导致返工和合规风险。",
+                    risk_level="high",
+                    primary_entity={
+                        "type": "customer",
+                        "name": "星河客户",
+                        "normalized_key": "customer-xinghe",
+                    },
+                    topic_key="production-data-export-format",
+                ),
+                _extraction_response(
+                    fact_value="星河客户生产数据导出使用 csv 格式。",
+                    risk_level="low",
+                    primary_entity={
+                        "type": "customer",
+                        "name": "星河客户",
+                        "normalized_key": "xinghe-customer-export",
+                    },
+                    topic_key="export-format",
+                ),
+                _extraction_response(
+                    fact_value="星河客户生产数据导出使用 csv 格式。",
+                    risk_level="low",
+                    primary_entity={
+                        "type": "customer",
+                        "name": "星河客户",
+                        "normalized_key": "xinghe",
+                    },
+                    topic_key="production-data-export-format",
+                ),
+            ]
+        )
+        handler = TeamRetentionDomainHandler(
+            memory_store,
+            team_store,
+            llm_client=llm,
+            notifier=notifier,
+            chat_id="oc-demo",
+        )
+        runtime = DomainRuntime(memory_store=memory_store, add_memory=memory_store.insert_memory_core)
+
+        first = handler.ingest_event(
+            _event("请团队长期记住，D演示-0507 星河客户生产数据导出必须使用 xlsx，不接受 csv。负责人张三。原因是客户审计要求，忘记会导致返工和合规风险。"),
+            runtime,
+        )
+        second = handler.ingest_event(_event("星河客户生产数据导出使用 csv 格式。"), runtime)
+        third = handler.ingest_event(_event("星河客户生产数据导出使用 csv 格式。"), runtime)
+
+        assert len(notifier.created_cards) == 1
+        assert notifier.created_cards[0][1]["memory_id"] == first.memory_ids[0]
+        assert len(notifier.candidate_cards) == 1
+        assert notifier.candidate_cards[0][1]["memory_id"] == second.memory_ids[0]
+        assert len(notifier.strengthened_cards) == 1
+        assert notifier.strengthened_cards[0][1]["memory_id"] == second.memory_ids[0]
+        assert third.memory_ids == second.memory_ids
+        assert memory_store.get_memory(first.memory_ids[0])["status"] == "active"
+        assert memory_store.get_memory(second.memory_ids[0])["status"] == "candidate"
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+
 def test_team_retention_question_is_not_ingested_or_carded() -> None:
     memory_store, team_store, temp_dir = _stores()
     try:
