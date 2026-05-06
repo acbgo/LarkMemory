@@ -117,6 +117,13 @@ function apiUrl(config: PluginConfig, path: string): string {
   return `${config.memoryApiBase}/api/v1${path}`;
 }
 
+function extractFeishuPromptBody(text: string): string {
+  const match = text.match(
+    /[\s\S]*}\s*```\s*([\s\S]*?)(?=\s+top_k=\d+\s+include_trace=(?:true|false)\b)/i,
+  );
+  return match?.[1]?.trim() || text.trim();
+}
+
 function extractText(event: unknown): string {
   const evt = asRecord(event);
   const candidates = [
@@ -129,7 +136,7 @@ function extractText(event: unknown): string {
   ];
   for (const candidate of candidates) {
     if (typeof candidate === "string" && candidate.trim()) {
-      return candidate.trim();
+      return extractFeishuPromptBody(candidate);
     }
   }
 
@@ -139,7 +146,7 @@ function extractText(event: unknown): string {
     const role = String(message.role ?? "");
     const content = message.content;
     if ((role === "user" || !role) && typeof content === "string" && content.trim()) {
-      return content.trim();
+      return extractFeishuPromptBody(content);
     }
   }
 
