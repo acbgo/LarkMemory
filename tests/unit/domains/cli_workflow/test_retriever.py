@@ -309,6 +309,98 @@ class TestCLIWorkflowRetriever:
         assert suggestion["parameter_bindings"][0]["param_value"] == "staging"
         assert "taught_param:env" in results[0].matched_fields
 
+    def test_direct_sub_command_query_uses_frequency_pattern_without_semantic_hit(self, temp_dir):
+        db_path = str(temp_dir / "test_direct_subcommand_frequency.db")
+        memory_store = MemoryCoreStore(db_path)
+        memory_store.create_table()
+        cli_store = CLIWorkflowStore(db_path)
+        cli_store.create_table()
+        observed = CLIWorkflowMemory(
+            workflow_id="mem-cli-dummy",
+            user_id="u_1",
+            command_template=(
+                "python C:\\repo\\.tmp-demo\\cli_dummy.py "
+                "--env {env} --region {region} --canary {canary}"
+            ),
+            command_name="python C:\\repo\\.tmp-demo\\cli_dummy.py",
+            command_category="script",
+            project_id="backend",
+            parameter_bindings=[
+                ParameterBinding(param_name="env", param_value="prod", frequency=8),
+                ParameterBinding(param_name="region", param_value="cn-east", frequency=7),
+                ParameterBinding(param_name="canary", param_value="5", frequency=6),
+            ],
+            execution_count=8,
+            success_count=8,
+            source_type="shell",
+        )
+        cli_store.upsert_pattern(observed, memory_id_value=observed.workflow_id)
+        retriever = CLIWorkflowRetriever(memory_store, cli_store=cli_store)
+
+        results = retriever.retrieve(
+            RetrievalQuery(
+                query_text="python .tmp-demo/cli_dummy.py 这个命令参数怎么推荐",
+                user_id="u_1",
+                project_id="backend",
+            ),
+            limit=5,
+        )
+        suggestion = results[0].to_suggestion()
+
+        assert results[0].memory.workflow_id == "mem-cli-dummy"
+        assert "direct_sub_command" in results[0].matched_fields
+        assert suggestion["parameter_bindings"][0]["param_name"] == "env"
+        assert suggestion["parameter_bindings"][0]["param_value"] == "prod"
+
+    def test_direct_sub_command_query_prefers_taught_param_over_frequency(self, temp_dir):
+        db_path = str(temp_dir / "test_direct_subcommand_taught_param.db")
+        memory_store = MemoryCoreStore(db_path)
+        memory_store.create_table()
+        cli_store = CLIWorkflowStore(db_path)
+        cli_store.create_table()
+        observed = CLIWorkflowMemory(
+            workflow_id="mem-cli-dummy",
+            user_id="u_1",
+            command_template="python C:\\repo\\.tmp-demo\\cli_dummy.py --env {env} --tenant {tenant}",
+            command_name="python C:\\repo\\.tmp-demo\\cli_dummy.py",
+            command_category="script",
+            project_id="backend",
+            parameter_bindings=[
+                ParameterBinding(param_name="env", param_value="prod", frequency=20),
+                ParameterBinding(param_name="tenant", param_value="demo-a", frequency=20),
+            ],
+            execution_count=20,
+            success_count=20,
+            source_type="shell",
+        )
+        pattern_id = cli_store.upsert_pattern(observed, memory_id_value=observed.workflow_id)
+        cli_store.upsert_parameter_policy(
+            scenario_text="记住部署 demo-a 时 env=staging",
+            scenario_signature="部署 demo-a",
+            semantic_description="部署 demo-a 时 env 使用 staging",
+            target_sub_command="python C:\\repo\\.tmp-demo\\cli_dummy.py",
+            target_pattern_id=pattern_id,
+            param_name="env",
+            param_value="staging",
+            user_id="u_1",
+            project_id="backend",
+        )
+        retriever = CLIWorkflowRetriever(memory_store, cli_store=cli_store)
+
+        results = retriever.retrieve(
+            RetrievalQuery(
+                query_text="python .tmp-demo/cli_dummy.py 给 demo-a 推荐参数",
+                user_id="u_1",
+                project_id="backend",
+            ),
+            limit=5,
+        )
+        suggestion = results[0].to_suggestion()
+
+        assert suggestion["parameter_bindings"][0]["param_name"] == "env"
+        assert suggestion["parameter_bindings"][0]["param_value"] == "staging"
+        assert "taught_param:env" in results[0].matched_fields
+
     def test_llm_keywords_drive_bm25_recall(self, temp_dir):
         db_path = str(temp_dir / "test_bm25_recall.db")
         memory_store = MemoryCoreStore(db_path)
@@ -354,6 +446,16 @@ class TestCLIWorkflowRetriever:
 
     def test_low_confidence_returns_empty(self, memory_store_with_data):
         retriever = CLIWorkflowRetriever(memory_store_with_data, min_relevance_score=2.0)
+
+        results = retriever.retrieve(
+            RetrievalQuery(query_text="完全无关的问题", user_id="u_1", project_id="backend"),
+            limit=5,
+        )
+
+        assert results == []
+
+    def test_low_confidence_requires_strong_signal_for_non_empty_query(self, memory_store_with_data):
+        retriever = CLIWorkflowRetriever(memory_store_with_data)
 
         results = retriever.retrieve(
             RetrievalQuery(query_text="完全无关的问题", user_id="u_1", project_id="backend"),

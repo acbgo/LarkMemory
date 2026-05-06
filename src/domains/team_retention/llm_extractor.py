@@ -111,7 +111,7 @@ def _system_prompt() -> str:
 
 字段填写规则：
 - fact_type：api_key / customer_preference / competitor_update / compliance / deadline / risk / team_fact。
-- fact_value：一句话写清核心事实，要求具体、可检索、不得编造。
+- fact_value：写清核心事实，要求具体、可检索、不得编造。完整保留输入中的全部语义信息和实体信息。具体要求：1）保留所有具体数值、百分比、版本号、数量词（如"0篇""15条""3台"）；2）保留所有专有名词、技术术语、产品名、人名；3）保留所有列举项和分类标签（如"前端、后端、DevOps、数据库、安全"）；4）保留所有否定和缺失表述（如"没有""缺失""0条""不完整"）；5）不得替换、泛化、省略或改写原文中的具体信息。用中文连贯通顺地组织，但语义和实体信息不得缺失。
 - certainty：explicit 表示明确陈述；inferred 表示合理推断；speculative 表示猜测或未确认。
 - evidence_quality：direct_quote 表示有直接原文；paraphrased 表示可转述；implied 表示主要靠上下文推断。
 - fact_specificity：specific 表示对象/时间/约束/范围明确；general 表示信息较完整但缺细节；vague 表示模糊。

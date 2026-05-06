@@ -140,10 +140,7 @@ def score_old_value_suppression(ctx: ScoringContext) -> float:
     forbidden.extend(inactive)
     if not forbidden:
         return 1.0
-<<<<<<< HEAD
     # Allow historical mentions: only check the top-ranked active answer
-=======
->>>>>>> 77203baa09589dfcf6fde6ffb8d81fffff7a41b4
     if ctx.case.expected.get("allow_historical_mention"):
         current = ctx.case.expected.get("current_value", "")
         if not current:

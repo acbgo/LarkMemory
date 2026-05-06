@@ -130,7 +130,7 @@ class TeamRetentionDomainHandler:
                 "needs_confirmation": admission.status == "candidate",
                 "primary_entity": dict(extraction.primary_entity),
                 "topic_key": extraction.topic_key,
-                "evidence_text": extraction.evidence_text,
+                "evidence_text": extraction.evidence_text or preprocess.raw_text,
             }
         )
 

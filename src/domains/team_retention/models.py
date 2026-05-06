@@ -134,6 +134,9 @@ class TeamRetentionMemory:
             f"Fact: {self.fact_value}",
             f"Risk: {self.risk_level}",
         ]
+        evidence = self.metadata.get("evidence_text", "") if self.metadata else ""
+        if evidence:
+            lines.append(f"Evidence: {evidence}")
         if self.owner:
             lines.append(f"Owner: {self.owner}")
         if self.remember_reason:

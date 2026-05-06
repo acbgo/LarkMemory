@@ -354,6 +354,44 @@ class CLIWorkflowStore(SQLiteStore):
         )
         return [deserialize_pattern(row) for row in rows]
 
+    def find_top_command_pattern_for_text(
+        self,
+        *,
+        user_id: str,
+        project_id: str | None,
+        text: str,
+        limit: int = 50,
+    ) -> dict[str, Any] | None:
+        """Find the active command pattern whose scenario text best matches a teaching sentence."""
+        query_terms = _signature_terms(infer_scenario_signature(text) or text)
+        if not query_terms:
+            return None
+        best: tuple[float, dict[str, Any]] | None = None
+        for pattern in self.list_patterns(user_id=user_id, project_id=project_id, limit=limit):
+            searchable = " ".join(
+                str(part)
+                for part in (
+                    pattern.get("semantic_description"),
+                    pattern.get("full_command"),
+                    pattern.get("command_template"),
+                    pattern.get("sub_command"),
+                    pattern.get("base_command"),
+                )
+                if part
+            )
+            pattern_terms = _signature_terms(searchable)
+            if not pattern_terms:
+                continue
+            overlap = query_terms & pattern_terms
+            if not overlap:
+                continue
+            score = len(overlap) / max(len(query_terms), 1)
+            score += min(float(pattern.get("active_priority") or 0.0), 1.0) * 0.2
+            score += min(int(pattern.get("execution_count") or 0), 20) / 200
+            if best is None or score > best[0]:
+                best = (score, pattern)
+        return best[1] if best else None
+
     def list_parameter_policies(
         self,
         *,
@@ -430,6 +468,40 @@ class CLIWorkflowStore(SQLiteStore):
             (status, superseded_by, utc_now_iso(), policy_id),
         )
 
+    def mark_command_pattern_status(
+        self,
+        pattern_id: str,
+        *,
+        status: str,
+    ) -> None:
+        """Update a command pattern status when explicit memory decisions forget it."""
+        self.execute(
+            """
+            UPDATE cli_command_pattern
+            SET status = ?,
+                updated_at = ?
+            WHERE pattern_id = ?
+            """,
+            (status, utc_now_iso(), pattern_id),
+        )
+
+    def mark_command_patterns_by_memory_id(
+        self,
+        memory_id_value: str,
+        *,
+        status: str,
+    ) -> None:
+        """Update all command pattern rows linked to a MemoryCore id."""
+        self.execute(
+            """
+            UPDATE cli_command_pattern
+            SET status = ?,
+                updated_at = ?
+            WHERE memory_id = ?
+            """,
+            (status, utc_now_iso(), memory_id_value),
+        )
+
     def sub_command_frequency(
         self,
         *,
@@ -496,6 +568,7 @@ def extract_parameter_policies(text: str) -> list[dict[str, str]]:
     patterns = [
         r"参数\s*([A-Za-z0-9_.-]+)\s*(?:设置为|设为|=|用)\s*([A-Za-z0-9_.:/-]+)",
         r"--([A-Za-z0-9_.-]+)\s*(?:设置为|设为|=|用)\s*([A-Za-z0-9_.:/-]+)",
+        r"\b([A-Za-z][A-Za-z0-9_.-]*)\s*(?:设置为|设为|=)\s*([A-Za-z0-9_.:/-]+)",
     ]
     result: list[dict[str, str]] = []
     seen: set[tuple[str, str]] = set()
@@ -514,12 +587,14 @@ def infer_scenario_signature(text: str) -> str:
     cleaned = clean_text(text)
     if not cleaned:
         return ""
+    cleaned = re.sub(r"[\"'“”‘’`]+", " ", cleaned)
+    cleaned = re.sub(r"(发布|上线)", "部署", cleaned)
     for item in extract_parameter_policies(cleaned):
         cleaned = cleaned.replace(item["param_name"], " ")
         cleaned = cleaned.replace(item["param_value"], " ")
-    cleaned = re.sub(r"(参数|设置为|设为|记住|以后|下次|的时候|时|用|=|--)", " ", cleaned)
+    cleaned = re.sub(r"(参数|设置为|设为|记住|以后|下次|的时候|时候|时|用|命令|帮我|请|利用|实现|=|--)", " ", cleaned)
     tokens = re.findall(r"[\u4e00-\u9fff]{2,}|[A-Za-z0-9_.-]+", cleaned)
-    stop = {"参数", "设置", "记住", "以后", "下次", "时候"}
+    stop = {"参数", "设置", "记住", "以后", "下次", "时候", "命令", "帮我", "请"}
     result: list[str] = []
     for token in tokens:
         if token in stop:
@@ -527,6 +602,16 @@ def infer_scenario_signature(text: str) -> str:
         if token not in result:
             result.append(token)
     return " ".join(result[:8])
+
+
+def _signature_terms(text: str) -> set[str]:
+    """Tokenize command/scenario text for lightweight structured matching."""
+    cleaned = infer_scenario_signature(text) if text else ""
+    return {
+        token.lower()
+        for token in re.findall(r"[\u4e00-\u9fff]{2,}|[A-Za-z0-9_.-]+", cleaned)
+        if token.strip()
+    }
 
 
 def deserialize_pattern(row: dict[str, Any]) -> dict[str, Any]:

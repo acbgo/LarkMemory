@@ -39,6 +39,26 @@ _POLICY_DECISION_SCHEMA: dict[str, Any] = {
     },
 }
 
+_COMMAND_DECISION_SYSTEM = (
+    "你是 CLI 主动命令记忆的写入决策器。"
+    "给定用户新输入抽取出的命令记忆，以及检索出的 top1 旧命令记忆，"
+    "判断应该执行 ADD、UPDATE、DELETE、NONE。"
+    "ADD 表示新增不同场景命令；UPDATE 表示同一场景命令发生更新；"
+    "DELETE 表示用户明确要求忘记/删除旧命令；NONE 表示重复、非教学或不应写入。"
+    "只返回 JSON。"
+)
+
+_COMMAND_DECISION_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "required": ["operation", "confidence", "reason"],
+    "properties": {
+        "operation": {"type": "string", "enum": ["ADD", "UPDATE", "DELETE", "NONE"]},
+        "confidence": {"type": "number"},
+        "reason": {"type": "string"},
+        "conflict_fields": {"type": "array", "items": {"type": "string"}},
+    },
+}
+
 
 class CLIWorkflowDomainHandler:
     domain = "cli_workflow"
@@ -80,16 +100,17 @@ class CLIWorkflowDomainHandler:
             event.source_type,
         )
         candidates = self.extractor.extract(event)
-        policy_ids = self._store_openclaw_parameter_policies(event)
+        forgotten_command_ids = self._handle_openclaw_command_delete(event, candidates)
+        policy_ids = self._store_openclaw_parameter_policies(event, candidates)
         if not candidates:
             logger.info(
                 "action=done event_id=%s reason=no_candidates policy_count=%s",
                 event.event_id,
-                len(policy_ids),
+                len(policy_ids) + len(forgotten_command_ids),
             )
             return DomainIngestResult(
-                candidate_count=len(policy_ids),
-                message="cli parameter policy stored" if policy_ids else "no cli workflow candidates extracted",
+                candidate_count=len(policy_ids) + len(forgotten_command_ids),
+                message="cli policy updated" if policy_ids or forgotten_command_ids else "no cli workflow candidates extracted",
             )
 
         memory_ids: list[str] = []
@@ -102,6 +123,35 @@ class CLIWorkflowDomainHandler:
                 )
                 continue
             version_decision = self.version_manager.detect_update(candidate.memory)
+            command_operation = (
+                self._decide_command_memory_operation(
+                    text=event.content_text or "",
+                    candidate=candidate,
+                    existing=version_decision.old_memory,
+                )
+                if event.source_type == "openclaw"
+                else "UPDATE"
+            )
+            if command_operation == "NONE":
+                logger.info(
+                    "action=command_write_skipped event_id=%s command=%s",
+                    event.event_id,
+                    candidate.memory.command_name,
+                )
+                continue
+            if command_operation == "DELETE":
+                old_id = version_decision.old_memory_id
+                if old_id:
+                    self.memory_store.update_memory_status(old_id, "forgotten")
+                    if self.cli_store is not None:
+                        self.cli_store.mark_command_patterns_by_memory_id(old_id, status="forgotten")
+                    forgotten_command_ids.append(old_id)
+                continue
+            if command_operation == "ADD":
+                version_decision.should_reinforce = False
+                version_decision.should_supersede = False
+                version_decision.old_memory_id = None
+                version_decision.old_memory = None
 
             if version_decision.should_reinforce and version_decision.old_memory_id:
                 self.version_manager.apply_reinforce(
@@ -153,13 +203,15 @@ class CLIWorkflowDomainHandler:
         )
         return DomainIngestResult(
             memory_ids=memory_ids,
-            candidate_count=len(candidates) + len(policy_ids),
+            candidate_count=len(candidates) + len(policy_ids) + len(forgotten_command_ids),
             message="cli_workflow extractor enabled" if candidates else None,
         )
 
-    def _store_openclaw_parameter_policies(self, event: NormalizedEvent) -> list[str]:
+    def _store_openclaw_parameter_policies(self, event: NormalizedEvent, candidates: list[Any]) -> list[str]:
         """从 OpenClaw 主动教学文本中记录显式参数策略。"""
         if self.cli_store is None or event.source_type != "openclaw":
+            return []
+        if any(self._is_full_command_candidate(candidate) for candidate in candidates):
             return []
         user_id = event.context.user_id or ""
         if not user_id:
@@ -167,6 +219,11 @@ class CLIWorkflowDomainHandler:
         text = event.content_text or ""
         policy_items = extract_parameter_policies(text)
         ids: list[str] = []
+        target = self.cli_store.find_top_command_pattern_for_text(
+            user_id=user_id,
+            project_id=event.context.project_id,
+            text=text,
+        )
         for item in policy_items:
             scenario_signature = infer_scenario_signature(text)
             top1 = self.cli_store.find_top_parameter_policy(
@@ -174,6 +231,7 @@ class CLIWorkflowDomainHandler:
                 project_id=event.context.project_id,
                 param_name=item["param_name"],
                 scenario_signature=scenario_signature,
+                target_sub_command=str(target.get("sub_command") or "") if target else None,
             )
             operation = self._decide_parameter_policy_operation(
                 text=text,
@@ -182,6 +240,7 @@ class CLIWorkflowDomainHandler:
                     "param_name": item["param_name"],
                     "param_value": item["param_value"],
                     "project_id": event.context.project_id,
+                    "target_sub_command": target.get("sub_command") if target else None,
                 },
                 existing=top1,
             )
@@ -200,9 +259,46 @@ class CLIWorkflowDomainHandler:
                     user_id=user_id,
                     project_id=event.context.project_id,
                     semantic_description=text,
+                    target_base_command=str(target.get("base_command") or "") if target else None,
+                    target_sub_command=str(target.get("sub_command") or "") if target else None,
+                    target_pattern_id=str(target.get("pattern_id") or "") if target else None,
                 )
             )
         return ids
+
+    def _handle_openclaw_command_delete(self, event: NormalizedEvent, candidates: list[Any]) -> list[str]:
+        """Forget the top matched taught command when OpenClaw explicitly asks deletion."""
+        if (
+            self.cli_store is None
+            or event.source_type != "openclaw"
+            or not _looks_like_delete_request(event.content_text or "")
+            or candidates
+        ):
+            return []
+        user_id = event.context.user_id or ""
+        if not user_id:
+            return []
+        target = self.cli_store.find_top_command_pattern_for_text(
+            user_id=user_id,
+            project_id=event.context.project_id,
+            text=event.content_text or "",
+        )
+        if not target:
+            return []
+        operation = self._decide_command_memory_operation(
+            text=event.content_text or "",
+            candidate=None,
+            existing={"memory_id": target.get("memory_id"), **target},
+        )
+        if operation != "DELETE":
+            return []
+        memory_id_value = str(target.get("memory_id") or "")
+        if memory_id_value:
+            self.memory_store.update_memory_status(memory_id_value, "forgotten")
+            self.cli_store.mark_command_patterns_by_memory_id(memory_id_value, status="forgotten")
+            return [memory_id_value]
+        self.cli_store.mark_command_pattern_status(str(target["pattern_id"]), status="forgotten")
+        return [str(target["pattern_id"])]
 
     def _decide_parameter_policy_operation(
         self,
@@ -244,6 +340,56 @@ class CLIWorkflowDomainHandler:
         if operation not in {"ADD", "UPDATE", "DELETE", "NONE"} or confidence < 0.5:
             return "UPDATE" if existing.get("param_value") != candidate.get("param_value") else "NONE"
         return operation
+
+    def _decide_command_memory_operation(
+        self,
+        *,
+        text: str,
+        candidate: Any | None,
+        existing: dict[str, Any] | None,
+    ) -> str:
+        """Ask LLM to judge ADD/UPDATE/DELETE/NONE before writing a taught command."""
+        if existing is None:
+            return "DELETE" if _looks_like_delete_request(text) else "ADD"
+        if self.llm_client is None:
+            if _looks_like_delete_request(text):
+                return "DELETE"
+            return "UPDATE" if candidate is not None else "NONE"
+        try:
+            raw = _run_async(
+                self.llm_client.ajson(
+                    _COMMAND_DECISION_SYSTEM,
+                    json.dumps(
+                        {
+                            "user_text": text,
+                            "candidate": candidate.memory.to_dict() if candidate is not None else None,
+                            "top1_existing": dict(existing),
+                        },
+                        ensure_ascii=False,
+                    ),
+                    schema=_COMMAND_DECISION_SCHEMA,
+                    temperature=0,
+                    max_tokens=256,
+                )
+            )
+        except Exception:
+            if _looks_like_delete_request(text):
+                return "DELETE"
+            return "UPDATE" if candidate is not None else "NONE"
+        operation = str(raw.get("operation") or "").upper()
+        confidence = float(raw.get("confidence") or 0.0)
+        if operation not in {"ADD", "UPDATE", "DELETE", "NONE"} or confidence < 0.5:
+            return "UPDATE" if candidate is not None else "NONE"
+        return operation
+
+    @staticmethod
+    def _is_full_command_candidate(candidate: Any) -> bool:
+        """Return true when OpenClaw provided a complete command rather than a param-only policy."""
+        return (
+            getattr(candidate.memory, "source_type", "") == "openclaw"
+            and bool(getattr(candidate.memory, "command_template", ""))
+            and "partial_template" not in list(getattr(candidate, "signals", []) or [])
+        )
 
     def _store_command_pattern(
         self,

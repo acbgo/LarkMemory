@@ -1,10 +1,60 @@
 from __future__ import annotations
 
 import json
+import shutil
+import uuid
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+from src.domains.cli_workflow.models import CLIWorkflowMemory, ParameterBinding
 from src.sources.cli.retrieve import _hit_to_workflow, _format_suggest, run_complete, run_suggest
+from src.storage.cli_workflow_store import CLIWorkflowStore
+
+
+@pytest.fixture
+def local_tmp_dir():
+    root = Path.cwd() / ".tmp-tests" / f"cli-source-retrieve-{uuid.uuid4().hex}"
+    root.mkdir(parents=True)
+    yield root
+    shutil.rmtree(root, ignore_errors=True)
+
+
+def _use_cli_db(monkeypatch, local_tmp_dir: Path) -> CLIWorkflowStore:
+    db_path = local_tmp_dir / "cli.db"
+    monkeypatch.setenv("LARKMEMORY_SQLITE_PATH", str(db_path))
+    store = CLIWorkflowStore(str(db_path))
+    store.create_table()
+    return store
+
+
+def _seed_pattern(
+    store: CLIWorkflowStore,
+    *,
+    memory_id: str,
+    command_template: str,
+    command_name: str,
+    params: list[tuple[str, str, int]],
+    execution_count: int,
+    project_id: str = "repo",
+) -> None:
+    store.upsert_pattern(
+        CLIWorkflowMemory(
+            workflow_id=memory_id,
+            user_id="testuser",
+            project_id=project_id,
+            command_template=command_template,
+            command_name=command_name,
+            command_category="script",
+            parameter_bindings=[
+                ParameterBinding(name, value, frequency=frequency)
+                for name, value, frequency in params
+            ],
+            execution_count=execution_count,
+            success_count=execution_count,
+        ),
+        memory_id_value=memory_id,
+    )
 
 
 class TestHitToWorkflow:
@@ -70,17 +120,26 @@ class TestRunSuggest:
         output = run_suggest("")
         assert "用法" in output
 
-    def test_suggest_calls_api(self, monkeypatch):
+    def test_suggest_reads_local_frequency_store_without_retrieve_api(self, monkeypatch, local_tmp_dir):
         monkeypatch.setenv("USER", "testuser")
-        mock_resp = MagicMock()
-        mock_resp.read.return_value = json.dumps({"results": []}).encode("utf-8")
-        with patch("urllib.request.urlopen", return_value=mock_resp):
-            output = run_suggest("deploy")
-            assert "未找到" in output
+        store = _use_cli_db(monkeypatch, local_tmp_dir)
+        _seed_pattern(
+            store,
+            memory_id="mem-python",
+            command_template="python C:\\repo\\.tmp-demo\\cli_dummy.py --env {env}",
+            command_name="python C:\\repo\\.tmp-demo\\cli_dummy.py",
+            params=[("env", "staging", 3)],
+            execution_count=3,
+        )
+        with patch("src.sources.cli.retrieve.post_retrieve", side_effect=AssertionError("retrieve API should not be used")):
+            output = run_suggest("python", cwd="C:\\repo")
+
+        assert "cli_dummy.py" in output
+        assert "--env staging" in output
 
     def test_suggest_handles_failure(self, monkeypatch):
         monkeypatch.setenv("USER", "testuser")
-        with patch("urllib.request.urlopen", side_effect=Exception("timeout")):
+        with patch("src.sources.cli.retrieve.CLIWorkflowStore", side_effect=Exception("db down")):
             output = run_suggest("deploy")
             assert "失败" in output
 
@@ -91,171 +150,138 @@ class TestRunComplete:
 
     def test_complete_silent_on_failure(self, monkeypatch):
         monkeypatch.setenv("USER", "testuser")
-        with patch("urllib.request.urlopen", side_effect=Exception("timeout")):
+        with patch("src.sources.cli.retrieve.CLIWorkflowStore", side_effect=Exception("db down")):
             assert run_complete("lark deploy --", "--") == ""
 
-    def test_complete_returns_candidates(self, monkeypatch):
+    def test_complete_returns_candidates(self, monkeypatch, local_tmp_dir):
         monkeypatch.setenv("USER", "testuser")
-        mock_resp = MagicMock()
-        mock_resp.read.return_value = json.dumps({
-            "results": [{
-                "memory_id": "mem-1",
-                "domain": "cli_workflow",
-                "content_text": "命令模板: lark project deploy --env {env}\n命令: lark project deploy\n"
-                                "分类: deploy\n执行次数: 10\n成功率: 1.00\n"
-                                "参数绑定:\n  --env prod (10次)\n  --region cn-shanghai (5次)\n来源: shell",
-                "tags": ["cli_workflow", "param:env=prod", "param:region=cn-shanghai", "source:shell"],
-                "entities": ["user_id:u_1", "command_name:lark project deploy"],
-                "score": 0.9,
-            }]
-        }).encode("utf-8")
-        with patch("urllib.request.urlopen", return_value=mock_resp):
+        store = _use_cli_db(monkeypatch, local_tmp_dir)
+        _seed_pattern(
+            store,
+            memory_id="mem-1",
+            command_template="lark project deploy --env {env} --region {region}",
+            command_name="lark project deploy",
+            params=[("env", "prod", 10), ("region", "cn-shanghai", 5)],
+            execution_count=10,
+        )
+        with patch("src.sources.cli.retrieve.post_retrieve", side_effect=AssertionError("retrieve API should not be used")):
             output = run_complete("lark project deploy --", "--")
-            assert "--env" in output
+        assert "--env" in output
 
     def test_complete_requests_enough_candidates_when_top_hits_are_exhausted(self, monkeypatch):
         monkeypatch.setenv("USER", "testuser")
-        captured = {}
-
-        def fake_post_retrieve(payload):
-            captured.update(payload)
-            return []
-
-        with patch("src.sources.cli.retrieve.post_retrieve", side_effect=fake_post_retrieve):
+        with patch("src.sources.cli.retrieve.post_retrieve", side_effect=AssertionError("retrieve API should not be used")):
             run_complete("python .tmp-demo/cli_dummy.py --env staging", "", cwd="C:\\repo")
+        assert True
 
-        assert captured["top_k"] >= 10
-
-    def test_complete_skips_parameter_name_already_present_with_different_value(self, monkeypatch):
+    def test_complete_skips_parameter_name_already_present_with_different_value(self, monkeypatch, local_tmp_dir):
         monkeypatch.setenv("USER", "testuser")
-        results = [{
-            "memory_id": "mem-1",
-            "domain": "cli_workflow",
-            "content_text": "命令模板: python C:\\repo\\.tmp-demo\\cli_dummy.py --env {env} --region {region}\n"
-                            "命令: python C:\\repo\\.tmp-demo\\cli_dummy.py\n分类: script\n"
-                            "执行次数: 10\n成功率: 1.00\n"
-                            "参数绑定:\n  --env prod (10次)\n  --region cn-east (8次)\n来源: shell",
-            "tags": ["cli_workflow", "param:env=prod", "param:region=cn-east", "source:shell"],
-            "entities": ["user_id:testuser", "command_name:python C:\\repo\\.tmp-demo\\cli_dummy.py"],
-            "score": 0.9,
-        }]
-        with patch("src.sources.cli.retrieve.post_retrieve", return_value=results):
+        store = _use_cli_db(monkeypatch, local_tmp_dir)
+        _seed_pattern(
+            store,
+            memory_id="mem-1",
+            command_template="python C:\\repo\\.tmp-demo\\cli_dummy.py --env {env} --region {region}",
+            command_name="python C:\\repo\\.tmp-demo\\cli_dummy.py",
+            params=[("env", "prod", 10), ("region", "cn-east", 8)],
+            execution_count=10,
+        )
+        with patch("src.sources.cli.retrieve.post_retrieve", side_effect=AssertionError("retrieve API should not be used")):
             output = run_complete("python .tmp-demo/cli_dummy.py --env staging ", "", cwd="C:\\repo")
             assert "--env" not in output
             assert "--region cn-east" in output
 
-    def test_complete_filters_candidates_to_matching_command(self, monkeypatch):
+    def test_complete_filters_candidates_to_matching_command(self, monkeypatch, local_tmp_dir):
         monkeypatch.setenv("USER", "testuser")
-        results = [
-            {
-                "memory_id": "mem-git",
-                "domain": "cli_workflow",
-                "content_text": "命令模板: git log --max-count {max-count}\n命令: git log\n"
-                                "分类: vcs\n执行次数: 99\n成功率: 1.00\n"
-                                "参数绑定:\n  --max-count 5 (99次)\n来源: shell",
-                "tags": ["cli_workflow", "param:max-count=5", "source:shell"],
-                "entities": ["user_id:testuser", "command_name:git log"],
-                "score": 0.99,
-            },
-            {
-                "memory_id": "mem-python",
-                "domain": "cli_workflow",
-                "content_text": "命令模板: python C:\\repo\\.tmp-demo\\cli_dummy.py --env {env}\n"
-                                "命令: python C:\\repo\\.tmp-demo\\cli_dummy.py\n分类: script\n"
-                                "执行次数: 2\n成功率: 1.00\n参数绑定:\n  --env staging (2次)\n来源: shell",
-                "tags": ["cli_workflow", "param:env=staging", "source:shell"],
-                "entities": ["user_id:testuser", "command_name:python C:\\repo\\.tmp-demo\\cli_dummy.py"],
-                "score": 0.5,
-            },
-        ]
-        with patch("src.sources.cli.retrieve.post_retrieve", return_value=results):
+        store = _use_cli_db(monkeypatch, local_tmp_dir)
+        _seed_pattern(
+            store,
+            memory_id="mem-git",
+            command_template="git log --max-count {max-count}",
+            command_name="git log",
+            params=[("max-count", "5", 99)],
+            execution_count=99,
+        )
+        _seed_pattern(
+            store,
+            memory_id="mem-python",
+            command_template="python C:\\repo\\.tmp-demo\\cli_dummy.py --env {env}",
+            command_name="python C:\\repo\\.tmp-demo\\cli_dummy.py",
+            params=[("env", "staging", 2)],
+            execution_count=2,
+        )
+        with patch("src.sources.cli.retrieve.post_retrieve", side_effect=AssertionError("retrieve API should not be used")):
             output = run_complete("python .tmp-demo/cli_dummy.py ", "", cwd="C:\\repo")
             assert "--env staging" in output
             assert "--max-count" not in output
 
-    def test_complete_filters_between_different_python_scripts(self, monkeypatch):
+    def test_complete_filters_between_different_python_scripts(self, monkeypatch, local_tmp_dir):
         monkeypatch.setenv("USER", "testuser")
-        results = [
-            {
-                "memory_id": "mem-other-python",
-                "domain": "cli_workflow",
-                "content_text": "命令模板: python C:\\repo\\tools\\other.py --profile {profile}\n"
-                                "命令: python C:\\repo\\tools\\other.py\n分类: script\n"
-                                "执行次数: 20\n成功率: 1.00\n参数绑定:\n  --profile prod (20次)\n来源: shell",
-                "tags": ["cli_workflow", "param:profile=prod", "source:shell"],
-                "entities": ["user_id:testuser", "command_name:python C:\\repo\\tools\\other.py"],
-                "score": 0.99,
-            },
-            {
-                "memory_id": "mem-dummy-python",
-                "domain": "cli_workflow",
-                "content_text": "命令模板: python C:\\repo\\.tmp-demo\\cli_dummy.py --env {env}\n"
-                                "命令: python C:\\repo\\.tmp-demo\\cli_dummy.py\n分类: script\n"
-                                "执行次数: 2\n成功率: 1.00\n参数绑定:\n  --env staging (2次)\n来源: shell",
-                "tags": ["cli_workflow", "param:env=staging", "source:shell"],
-                "entities": ["user_id:testuser", "command_name:python C:\\repo\\.tmp-demo\\cli_dummy.py"],
-                "score": 0.5,
-            },
-        ]
-        with patch("src.sources.cli.retrieve.post_retrieve", return_value=results):
+        store = _use_cli_db(monkeypatch, local_tmp_dir)
+        _seed_pattern(
+            store,
+            memory_id="mem-other-python",
+            command_template="python C:\\repo\\tools\\other.py --profile {profile}",
+            command_name="python C:\\repo\\tools\\other.py",
+            params=[("profile", "prod", 20)],
+            execution_count=20,
+        )
+        _seed_pattern(
+            store,
+            memory_id="mem-dummy-python",
+            command_template="python C:\\repo\\.tmp-demo\\cli_dummy.py --env {env}",
+            command_name="python C:\\repo\\.tmp-demo\\cli_dummy.py",
+            params=[("env", "staging", 2)],
+            execution_count=2,
+        )
+        with patch("src.sources.cli.retrieve.post_retrieve", side_effect=AssertionError("retrieve API should not be used")):
             output = run_complete("python .tmp-demo/cli_dummy.py ", "", cwd="C:\\repo")
             assert "--env staging" in output
             assert "--profile prod" not in output
 
-    def test_complete_specific_python_script_does_not_match_generic_python_memory(self, monkeypatch):
+    def test_complete_specific_python_script_does_not_match_generic_python_memory(self, monkeypatch, local_tmp_dir):
         monkeypatch.setenv("USER", "testuser")
-        results = [
-            {
-                "memory_id": "mem-generic-python",
-                "domain": "cli_workflow",
-                "content_text": "命令模板: python --module {module}\n命令: python\n"
-                                "分类: script\n执行次数: 50\n成功率: 1.00\n"
-                                "参数绑定:\n  --module http.server (50次)\n来源: shell",
-                "tags": ["cli_workflow", "param:module=http.server", "source:shell"],
-                "entities": ["user_id:testuser", "command_name:python"],
-                "score": 0.99,
-            },
-            {
-                "memory_id": "mem-dummy-python",
-                "domain": "cli_workflow",
-                "content_text": "命令模板: python C:\\repo\\.tmp-demo\\cli_dummy.py --env {env}\n"
-                                "命令: python C:\\repo\\.tmp-demo\\cli_dummy.py\n分类: script\n"
-                                "执行次数: 2\n成功率: 1.00\n参数绑定:\n  --env staging (2次)\n来源: shell",
-                "tags": ["cli_workflow", "param:env=staging", "source:shell"],
-                "entities": ["user_id:testuser", "command_name:python C:\\repo\\.tmp-demo\\cli_dummy.py"],
-                "score": 0.5,
-            },
-        ]
-        with patch("src.sources.cli.retrieve.post_retrieve", return_value=results):
+        store = _use_cli_db(monkeypatch, local_tmp_dir)
+        _seed_pattern(
+            store,
+            memory_id="mem-generic-python",
+            command_template="python --module {module}",
+            command_name="python",
+            params=[("module", "http.server", 50)],
+            execution_count=50,
+        )
+        _seed_pattern(
+            store,
+            memory_id="mem-dummy-python",
+            command_template="python C:\\repo\\.tmp-demo\\cli_dummy.py --env {env}",
+            command_name="python C:\\repo\\.tmp-demo\\cli_dummy.py",
+            params=[("env", "staging", 2)],
+            execution_count=2,
+        )
+        with patch("src.sources.cli.retrieve.post_retrieve", side_effect=AssertionError("retrieve API should not be used")):
             output = run_complete("python .tmp-demo/cli_dummy.py ", "", cwd="C:\\repo")
             assert "--env staging" in output
             assert "--module http.server" not in output
 
-    def test_suggest_filters_base_command_when_api_returns_other_commands(self, monkeypatch):
+    def test_suggest_filters_base_command_when_api_returns_other_commands(self, monkeypatch, local_tmp_dir):
         monkeypatch.setenv("USER", "testuser")
-        results = [
-            {
-                "memory_id": "mem-git",
-                "domain": "cli_workflow",
-                "content_text": "命令模板: git log --max-count {max-count}\n命令: git log\n"
-                                "分类: vcs\n执行次数: 99\n成功率: 1.00\n"
-                                "参数绑定:\n  --max-count 5 (99次)\n来源: shell",
-                "tags": ["cli_workflow", "param:max-count=5", "source:shell"],
-                "entities": ["user_id:testuser", "command_name:git log"],
-                "score": 0.99,
-            },
-            {
-                "memory_id": "mem-python",
-                "domain": "cli_workflow",
-                "content_text": "命令模板: python C:\\repo\\.tmp-demo\\cli_dummy.py --env {env}\n"
-                                "命令: python C:\\repo\\.tmp-demo\\cli_dummy.py\n分类: script\n"
-                                "执行次数: 2\n成功率: 1.00\n参数绑定:\n  --env staging (2次)\n来源: shell",
-                "tags": ["cli_workflow", "param:env=staging", "source:shell"],
-                "entities": ["user_id:testuser", "command_name:python C:\\repo\\.tmp-demo\\cli_dummy.py"],
-                "score": 0.5,
-            },
-        ]
-        with patch("src.sources.cli.retrieve.post_retrieve", return_value=results):
+        store = _use_cli_db(monkeypatch, local_tmp_dir)
+        _seed_pattern(
+            store,
+            memory_id="mem-git",
+            command_template="git log --max-count {max-count}",
+            command_name="git log",
+            params=[("max-count", "5", 99)],
+            execution_count=99,
+        )
+        _seed_pattern(
+            store,
+            memory_id="mem-python",
+            command_template="python C:\\repo\\.tmp-demo\\cli_dummy.py --env {env}",
+            command_name="python C:\\repo\\.tmp-demo\\cli_dummy.py",
+            params=[("env", "staging", 2)],
+            execution_count=2,
+        )
+        with patch("src.sources.cli.retrieve.post_retrieve", side_effect=AssertionError("retrieve API should not be used")):
             output = run_suggest("python", cwd="C:\\repo")
             assert "cli_dummy.py" in output
             assert "git log" not in output

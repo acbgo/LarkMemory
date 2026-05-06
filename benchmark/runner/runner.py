@@ -314,23 +314,11 @@ class BenchmarkRunner:
 # ------------------------------------------------------------------
 
 def _extract_project_id(case) -> str | None:
-<<<<<<< HEAD
     # Allow expected block to specify the query project_id (for cross_project cases)
     exp = getattr(case, 'expected', {}) or {}
     pid = exp.get("query_project_id")
     if pid:
         return pid
-=======
-    expected_ids = set(case.expected.get("evidence_event_ids", []))
-    if expected_ids:
-        for evt in case.input_events:
-            if evt.get("event_id") not in expected_ids:
-                continue
-            ctx = evt.get("context", {})
-            pid = ctx.get("project") or ctx.get("project_id")
-            if pid:
-                return pid
->>>>>>> 77203baa09589dfcf6fde6ffb8d81fffff7a41b4
     for evt in case.input_events:
         ctx = evt.get("context", {})
         pid = ctx.get("project") or ctx.get("project_id")
