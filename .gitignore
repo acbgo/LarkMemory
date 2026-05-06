@@ -150,9 +150,19 @@ celerybeat.pid
 *.sage.py
 
 # Environments
-.env
-.envrc
+# .env
+# .envrc
 larkmemory.env
+<<<<<<< HEAD
+# .venv
+# env/
+# .venv-local-tmp
+# venv/
+# ENV/
+# env.bak/
+# venv.bak/
+# .tmp-venv
+=======
  .venv/
  env/
 .venv-local-tmp
@@ -161,6 +171,7 @@ ENV/
 env.bak/
 venv.bak/
 .tmp-venv
+>>>>>>> d8564fbe05bca88589aeea60e9e4fc4a5110ad61
 
 # Spyder project settings
 .spyderproject

@@ -6,7 +6,10 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from src.sources.cli._client import post_ingest
+from src.app.config import load_settings
+from src.domains.cli_workflow.extractor import CLIWorkflowExtractor
+from src.schemas import EventContext, NormalizedEvent
+from src.storage.cli_workflow_store import CLIWorkflowStore
 from src.utils.ids import event_id as new_event_id
 from src.utils.time import utc_now_iso
 
@@ -64,6 +67,57 @@ def _detect_repo_id(cwd: str) -> str | None:
         return None
 
 
+def _get_cli_store() -> CLIWorkflowStore:
+    """Open the local structured command-frequency store used by shell hooks."""
+    settings = load_settings()
+    store = CLIWorkflowStore(settings.sqlite_path)
+    store.create_table()
+    return store
+
+
+def _event_dict_to_normalized(event: dict[str, Any]) -> NormalizedEvent:
+    """Convert the shell event payload into the internal dataclass shape."""
+    context = event.get("context") or {}
+    return NormalizedEvent(
+        event_id=str(event["event_id"]),
+        event_type=event["event_type"],
+        source_type=event["source_type"],
+        occurred_at=str(event["occurred_at"]),
+        context=EventContext(
+            user_id=context.get("user_id"),
+            project_id=context.get("project_id"),
+            repo_id=context.get("repo_id"),
+            scope=context.get("scope", "user"),
+        ),
+        content_text=event.get("content_text"),
+        payload=dict(event.get("payload") or {}),
+        raw_payload=event,
+    )
+
+
+def _store_shell_command(event: dict[str, Any]) -> int:
+    """Extract a shell command pattern and write it directly to the local table."""
+    normalized = _event_dict_to_normalized(event)
+    candidates = CLIWorkflowExtractor().extract(normalized)
+    if not candidates:
+        return 0
+
+    store = _get_cli_store()
+    stored = 0
+    cwd = str(normalized.payload.get("cwd") or "")
+    for candidate in candidates:
+        if not candidate.is_admissible():
+            continue
+        store.upsert_pattern(
+            candidate.memory,
+            memory_id_value=candidate.memory.workflow_id,
+            cwd=cwd,
+            semantic_description=candidate.memory.semantic_description,
+        )
+        stored += 1
+    return stored
+
+
 def build_event(
     command: str,
     *,
@@ -106,7 +160,6 @@ def run_from_args(args: dict[str, Any]) -> bool:
         duration_ms=int(args.get("duration", 0)),
     )
     try:
-        post_ingest(event)
-        return True
+        return _store_shell_command(event) > 0
     except Exception:
         return False

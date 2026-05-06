@@ -1,10 +1,29 @@
 from __future__ import annotations
 
-import json
-from unittest.mock import patch, MagicMock
+import shutil
+import uuid
+from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 from src.sources.cli.ingest import build_event, run_from_args
+from src.storage.cli_workflow_store import CLIWorkflowStore
+
+
+@pytest.fixture
+def local_tmp_dir():
+    root = Path.cwd() / ".tmp-tests" / f"cli-source-ingest-{uuid.uuid4().hex}"
+    root.mkdir(parents=True)
+    yield root
+    shutil.rmtree(root, ignore_errors=True)
+
+
+def _use_cli_db(monkeypatch, local_tmp_dir: Path) -> CLIWorkflowStore:
+    db_path = local_tmp_dir / "cli.db"
+    monkeypatch.setenv("LARKMEMORY_SQLITE_PATH", str(db_path))
+    store = CLIWorkflowStore(str(db_path))
+    store.create_table()
+    return store
 
 
 class TestBuildEvent:
@@ -75,27 +94,52 @@ class TestRunFromArgs:
         result = run_from_args({"command": "   ", "exit_code": 0, "cwd": "/tmp", "duration": 100})
         assert result is False
 
-    def test_sends_valid_command(self, monkeypatch):
+    def test_writes_valid_command_to_local_frequency_store(self, monkeypatch, local_tmp_dir):
         monkeypatch.setenv("USER", "testuser")
-        with patch("urllib.request.urlopen") as mock_urlopen:
-            mock_resp = MagicMock()
-            mock_urlopen.return_value = mock_resp
+        store = _use_cli_db(monkeypatch, local_tmp_dir)
+        with patch("urllib.request.urlopen", side_effect=AssertionError("ingest API should not be used")):
             result = run_from_args({
-                "command": "git push",
+                "command": "git push origin main",
                 "exit_code": 0,
-                "cwd": "/tmp",
+                "cwd": str(local_tmp_dir),
                 "duration": 100,
             })
-            assert result is True
-            mock_urlopen.assert_called_once()
+        assert result is True
+        rows = store.list_patterns(user_id="testuser")
+        assert len(rows) == 1
+        assert rows[0]["base_command"] == "git"
+        assert rows[0]["sub_command"] == "git push"
+        assert rows[0]["execution_count"] == 1
 
-    def test_silent_on_http_failure(self, monkeypatch):
+    def test_accumulates_frequency_in_local_store(self, monkeypatch, local_tmp_dir):
         monkeypatch.setenv("USER", "testuser")
-        with patch("urllib.request.urlopen", side_effect=Exception("connection refused")):
+        store = _use_cli_db(monkeypatch, local_tmp_dir)
+        args = {
+            "command": "python .tmp-demo/cli_dummy.py --env staging --tenant demo-a",
+            "exit_code": 0,
+            "cwd": str(local_tmp_dir),
+            "duration": 100,
+        }
+
+        assert run_from_args(args) is True
+        assert run_from_args(args) is True
+
+        rows = store.list_patterns(user_id="testuser")
+        assert len(rows) == 1
+        assert rows[0]["execution_count"] == 2
+        assert rows[0]["success_count"] == 2
+        assert rows[0]["parameter_bindings"][0]["param_name"] == "env"
+
+    def test_skips_trivial_command_without_http(self, monkeypatch, local_tmp_dir):
+        monkeypatch.setenv("USER", "testuser")
+        store = _use_cli_db(monkeypatch, local_tmp_dir)
+        with patch("urllib.request.urlopen", side_effect=AssertionError("ingest API should not be used")):
             result = run_from_args({
-                "command": "git push",
+                "command": "ls -la",
                 "exit_code": 0,
-                "cwd": "/tmp",
+                "cwd": str(local_tmp_dir),
                 "duration": 100,
             })
-            assert result is False
+
+        assert result is False
+        assert store.list_patterns(user_id="testuser") == []

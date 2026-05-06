@@ -285,3 +285,34 @@ class TestRunComplete:
             output = run_suggest("python", cwd="C:\\repo")
             assert "cli_dummy.py" in output
             assert "git log" not in output
+
+    def test_suggest_uses_direct_command_table_lookup(self, monkeypatch, local_tmp_dir):
+        monkeypatch.setenv("USER", "testuser")
+        store = _use_cli_db(monkeypatch, local_tmp_dir)
+        _seed_pattern(
+            store,
+            memory_id="mem-git",
+            command_template="git log --max-count {max-count}",
+            command_name="git log",
+            params=[("max-count", "5", 99)],
+            execution_count=99,
+        )
+        with patch.object(CLIWorkflowStore, "list_patterns", side_effect=AssertionError("list scan should not be used")):
+            output = run_suggest("git log", cwd="C:\\repo")
+        assert "git log" in output
+        assert "--max-count 5" in output
+
+    def test_complete_uses_direct_command_table_lookup(self, monkeypatch, local_tmp_dir):
+        monkeypatch.setenv("USER", "testuser")
+        store = _use_cli_db(monkeypatch, local_tmp_dir)
+        _seed_pattern(
+            store,
+            memory_id="mem-python",
+            command_template="python C:\\repo\\.tmp-demo\\cli_dummy.py --env {env}",
+            command_name="python C:\\repo\\.tmp-demo\\cli_dummy.py",
+            params=[("env", "staging", 2)],
+            execution_count=2,
+        )
+        with patch.object(CLIWorkflowStore, "list_patterns", side_effect=AssertionError("list scan should not be used")):
+            output = run_complete("python .tmp-demo/cli_dummy.py ", "", cwd="C:\\repo")
+        assert "--env staging" in output
