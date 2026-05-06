@@ -29,6 +29,10 @@ type PluginConfig = {
   requestTimeoutMs: number;
 };
 
+const DEFAULT_PROJECT_ID: string | undefined = undefined;
+const DEFAULT_WORKSPACE_ID: string | undefined = undefined;
+const DEFAULT_TEAM_ID = "oc_b9cef0cb9a14fe72a58793560cc4aa1c";
+
 type BackendMemoryHit = {
   memory_id?: string;
   domain?: string;
@@ -125,7 +129,7 @@ function extractText(event: unknown): string {
   ];
   for (const candidate of candidates) {
     if (typeof candidate === "string" && candidate.trim()) {
-      return candidate.trim();
+      return extractRetrieveQuery(candidate.trim());
     }
   }
 
@@ -135,11 +139,55 @@ function extractText(event: unknown): string {
     const role = String(message.role ?? "");
     const content = message.content;
     if ((role === "user" || !role) && typeof content === "string" && content.trim()) {
-      return content.trim();
+      return extractRetrieveQuery(content.trim());
+    }
+    if ((role === "user" || !role) && Array.isArray(content)) {
+      const text = extractTextFromContentBlocks(content);
+      if (text) {
+        return extractRetrieveQuery(text);
+      }
     }
   }
 
   return "";
+}
+
+function extractTextFromContentBlocks(content: unknown[]): string {
+  const parts: string[] = [];
+  for (const block of content) {
+    const record = asRecord(block);
+    if (record.type === "text" && typeof record.text === "string" && record.text.trim()) {
+      parts.push(record.text.trim());
+    }
+  }
+  return parts.join("\n").trim();
+}
+
+function extractRetrieveQuery(text: string): string {
+  const normalized = text.trim();
+  if (!normalized) {
+    return "";
+  }
+  const markers = [
+    "根据检索到的记忆告诉我：",
+    "根据检索到的记忆回答：",
+    "请根据检索到的记忆回答：",
+  ];
+  for (const marker of markers) {
+    const index = normalized.lastIndexOf(marker);
+    if (index >= 0) {
+      const extracted = normalized.slice(index + marker.length).trim();
+      if (extracted) {
+        return extracted;
+      }
+    }
+  }
+  const lastLine = normalized
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .at(-1);
+  return lastLine || normalized;
 }
 
 function extractReply(event: unknown): string {
@@ -161,10 +209,16 @@ function collectContext(event: unknown, ctx: unknown, config: PluginConfig): Jso
     ),
     session_id: stringOrUndefined(evt.sessionId ?? evt.session_id ?? asRecord(ctx).sessionId),
     project_id: stringOrUndefined(
-      evt.projectId ?? evt.project_id ?? asRecord(ctx).projectId ?? asRecord(ctx).workspaceDir,
+      evt.projectId ??
+        evt.project_id ??
+        asRecord(ctx).projectId ??
+        asRecord(ctx).workspaceDir ??
+        DEFAULT_PROJECT_ID,
     ),
-    team_id: stringOrUndefined(evt.teamId ?? evt.team_id),
-    workspace_id: stringOrUndefined(evt.workspaceId ?? evt.workspace_id),
+    team_id: stringOrUndefined(evt.teamId ?? evt.team_id ?? DEFAULT_TEAM_ID),
+    workspace_id: stringOrUndefined(
+      evt.workspaceId ?? evt.workspace_id ?? DEFAULT_WORKSPACE_ID,
+    ),
     thread_id: stringOrUndefined(evt.threadId ?? evt.thread_id ?? evt.chatId ?? evt.chat_id),
     scope: stringOrUndefined(
       evt.scope ?? evt.scope_type ?? asRecord(ctx).scope,
