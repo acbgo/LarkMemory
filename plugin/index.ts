@@ -76,6 +76,7 @@ function buildMemoryContext(memories: BackendMemoryHit[]): string {
     return `${i + 1}. [${m.domain ?? "unknown"}]${score} ${text}`;
   });
   return [
+    "larkmemory的记忆显示：",
     "LarkMemory retrieved relevant long-term memories:",
     ...lines,
     "Use these memories only when relevant to the current user request.",
