@@ -35,9 +35,8 @@ _KEYWORD_RULES: list[tuple[list[str], DomainLabel]] = [
         [
             "部署", "deploy", "构建", "build", "运行", "run", "命令",
             "command", "shell", "终端", "terminal", "排障", "debug",
-            "脚本", "script", "pipeline", "ci", "cd", "docker",
-            "kubectl", "npm", "pip", "git", "pytest", "编译",
-            "--",  # flag pattern
+            "脚本", "script", "pipeline",
+            "kubectl", "npm", "pip", "pytest", "编译", # flag pattern
         ],
         "cli_workflow",
     ),

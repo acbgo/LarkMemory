@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import shlex
 import re
 from dataclasses import dataclass, field
 from typing import Any
 
 from src.retrieval import (
     FusedCandidate,
+    MemoryDomain,
     MemoryItem,
+    MemoryScope,
     RankedMemory,
     RetrievalQuery,
     Reranker,
@@ -128,6 +131,18 @@ class CLIQueryAnalysis:
 
 
 @dataclass(slots=True)
+class CommandIdentityQuery:
+    """Structured command identity extracted from an explicit CLI query."""
+
+    base_command: str
+    sub_command: str | None = None
+    script_path: str | None = None
+    script_basename: str | None = None
+    script_suffix: str | None = None
+    has_absolute_path: bool = False
+
+
+@dataclass(slots=True)
 class CLIWorkflowSearchResult:
     memory: CLIWorkflowMemory
     memory_item: MemoryItem
@@ -204,6 +219,11 @@ class CLIWorkflowRetriever:
         if not query.user_id:
             return []
 
+        direct_identity = self._extract_explicit_command_identity(query)
+        direct_results = self._retrieve_direct_sub_command(query, direct_identity, limit=limit)
+        if direct_results:
+            return direct_results[:limit]
+
         base_command = self._extract_base_command(query.query_text)
         analysis = self._analyze_query(query)
 
@@ -213,7 +233,7 @@ class CLIWorkflowRetriever:
         scored = self._apply_structured_scores(scored, query)
         scored = self._rerank_results(scored, query, analysis, limit=limit)
         scored.sort(key=lambda r: (-r.score, -(r.memory.execution_count or 0)))
-        scored = self._filter_low_confidence(scored)
+        scored = self._filter_low_confidence(scored, query)
         return scored[:limit]
 
     def _analyze_query(self, query: RetrievalQuery) -> CLIQueryAnalysis:
@@ -239,6 +259,251 @@ class CLIWorkflowRetriever:
         keywords = _string_list(raw.get("keywords"))
         semantic_query = clean_text(str(raw.get("semantic_query") or "")) or fallback.semantic_query
         return CLIQueryAnalysis(keywords=keywords or fallback.keywords, semantic_query=semantic_query)
+
+    def _extract_explicit_command_identity(self, query: RetrievalQuery) -> CommandIdentityQuery | None:
+        """Extract an explicit command/sub-command from OpenClaw-style parameter recommendation text."""
+        try:
+            tokens = shlex.split(query.query_text.strip(), posix=False)
+        except ValueError:
+            tokens = query.query_text.strip().split()
+        command_tokens: list[str] = []
+        for token in tokens:
+            cleaned = token.strip("\"'“”‘’`，,。？?：:")
+            if not cleaned:
+                continue
+            if cleaned.startswith("-"):
+                break
+            lowered = cleaned.lower()
+            if not command_tokens:
+                if lowered not in _COMMAND_QUERY_PREFIXES:
+                    continue
+                command_tokens.append(cleaned)
+                continue
+            if re.search(r"[\u4e00-\u9fff]", cleaned):
+                break
+            command_tokens.append(cleaned)
+            if command_tokens[0].lower() in {"python", "python3", "node", "deno", "bun"}:
+                break
+            if len(command_tokens) >= 3:
+                break
+        if not command_tokens:
+            return None
+        base = command_tokens[0]
+        if base.lower() in {"python", "python3", "node", "deno", "bun"}:
+            if len(command_tokens) < 2 or not _looks_like_script_path(command_tokens[1]):
+                return None
+            return self._script_identity(base, command_tokens[1], query)
+        sub_command = " ".join(command_tokens[:3 if len(command_tokens) >= 3 else len(command_tokens)])
+        return CommandIdentityQuery(base_command=base, sub_command=sub_command)
+
+    def _script_identity(self, base: str, script_path: str, query: RetrievalQuery) -> CommandIdentityQuery:
+        """Build a script command identity, using cwd only when the query supplies one."""
+        normalized = _normalize_path_text(script_path)
+        cwd = ""
+        if isinstance(query.session_context, dict):
+            cwd = str(query.session_context.get("cwd") or "")
+        has_absolute = _is_absolute_path(normalized)
+        absolute_path = normalized
+        if cwd and not has_absolute:
+            absolute_path = _join_path_text(cwd, normalized)
+            has_absolute = True
+        parts = [part for part in normalized.split("/") if part]
+        basename = parts[-1] if parts else normalized
+        suffix = "/".join(parts[-2:]) if len(parts) >= 2 else basename
+        return CommandIdentityQuery(
+            base_command=base,
+            sub_command=f"{base} {absolute_path}" if has_absolute else f"{base} {normalized}",
+            script_path=absolute_path if has_absolute else normalized,
+            script_basename=basename,
+            script_suffix=suffix,
+            has_absolute_path=has_absolute,
+        )
+
+    def _retrieve_direct_sub_command(
+        self,
+        query: RetrievalQuery,
+        identity: CommandIdentityQuery | None,
+        *,
+        limit: int,
+    ) -> list[CLIWorkflowSearchResult]:
+        """Directly retrieve command patterns when the query names a concrete sub-command."""
+        if self.cli_store is None or identity is None or not query.user_id:
+            return []
+        patterns = self.cli_store.list_patterns(
+            user_id=query.user_id,
+            project_id=query.project_id,
+            limit=max(limit * 10, 100),
+        )
+        matches: list[tuple[float, dict[str, Any]]] = []
+        for pattern in patterns:
+            score = self._command_identity_match_score(pattern, identity, query)
+            if score <= 0:
+                continue
+            matches.append((score, pattern))
+        if not matches:
+            return []
+        policies = self.cli_store.list_parameter_policies(
+            user_id=query.user_id,
+            project_id=query.project_id,
+            limit=100,
+        )
+        results = [
+            self._pattern_to_search_result(pattern, score, policies, query)
+            for score, pattern in sorted(
+                matches,
+                key=lambda item: (
+                    -item[0],
+                    -float(item[1].get("active_priority") or 0.0),
+                    -int(item[1].get("execution_count") or 0),
+                    -float(item[1].get("success_rate") or 0.0),
+                ),
+            )
+        ]
+        return results
+
+    def _command_identity_match_score(
+        self,
+        pattern: dict[str, Any],
+        identity: CommandIdentityQuery,
+        query: RetrievalQuery,
+    ) -> float:
+        """Score direct command identity matches, degrading gracefully without cwd."""
+        if str(pattern.get("base_command") or "").lower() != identity.base_command.lower():
+            return 0.0
+        pattern_surface = _normalize_path_text(
+            " ".join(
+                str(part)
+                for part in (
+                    pattern.get("sub_command"),
+                    pattern.get("full_command"),
+                    pattern.get("command_template"),
+                )
+                if part
+            )
+        )
+        pattern_sub = _normalize_path_text(str(pattern.get("sub_command") or ""))
+        score = 0.0
+        if identity.sub_command and pattern_sub == _normalize_path_text(identity.sub_command):
+            score += 10.0
+        if identity.script_suffix and identity.script_suffix.lower() in pattern_surface.lower():
+            score += 7.0
+        if identity.script_basename and re.search(
+            rf"(^|/){re.escape(identity.script_basename.lower())}(\s|$)",
+            pattern_surface.lower(),
+        ):
+            score += 5.0
+        if not identity.script_path and identity.sub_command and _normalize_path_text(identity.sub_command).lower() in pattern_surface.lower():
+            score += 4.0
+        if query.project_id and str(pattern.get("project_id") or "") == query.project_id:
+            score += 2.0
+        score += min(int(pattern.get("execution_count") or 0), 50) / 100
+        return score
+
+    def _pattern_to_search_result(
+        self,
+        pattern: dict[str, Any],
+        score: float,
+        policies: list[dict[str, Any]],
+        query: RetrievalQuery,
+    ) -> CLIWorkflowSearchResult:
+        """Convert a structured command pattern into a retriever result."""
+        memory = self._memory_from_pattern(pattern)
+        item = MemoryItem(
+            memory_id=memory.workflow_id,
+            domain=MemoryDomain.CLI_WORKFLOW,
+            memory_type="cli_workflow",
+            content_text=memory.build_content_text(),
+            importance=min(1.0, max(0.0, memory.execution_count / 100)),
+            confidence=memory.success_rate,
+            status="active",
+            scope=MemoryScope.USER,
+            summary_text=memory.build_summary_text(),
+            tags=[f"param:{pb.param_name}={pb.param_value}" for pb in memory.parameter_bindings],
+            entities=[
+                f"user_id:{memory.user_id}",
+                *([f"project_id:{memory.project_id}"] if memory.project_id else []),
+                f"command_name:{memory.command_name}",
+            ],
+            source_ref=memory.project_id or "",
+            created_at=pattern.get("created_at"),
+            updated_at=pattern.get("updated_at"),
+        )
+        result = CLIWorkflowSearchResult(
+            memory=memory,
+            memory_item=item,
+            score=min(3.0, 1.0 + score / 10),
+            match_reason="direct_sub_command",
+            matched_fields=["direct_sub_command", "frequency_pattern"],
+        )
+        self._apply_direct_parameter_policies(result, pattern, policies, query)
+        return result
+
+    @staticmethod
+    def _memory_from_pattern(pattern: dict[str, Any]) -> CLIWorkflowMemory:
+        """Build CLIWorkflowMemory from a structured command pattern row."""
+        bindings = [
+            ParameterBinding(
+                param_name=str(item.get("param_name") or ""),
+                param_value=str(item.get("param_value") or ""),
+                frequency=int(item.get("frequency") or 1),
+                semantics=item.get("semantics"),
+            )
+            for item in pattern.get("parameter_bindings") or []
+            if item.get("param_name") and item.get("param_value")
+        ]
+        command_name = _command_name_from_pattern(pattern)
+        return CLIWorkflowMemory(
+            workflow_id=str(pattern.get("memory_id") or pattern.get("pattern_id") or ""),
+            user_id=str(pattern.get("user_id") or ""),
+            command_template=str(pattern.get("command_template") or pattern.get("full_command") or command_name),
+            command_name=command_name,
+            command_category=_infer_command_category(command_name),
+            project_id=pattern.get("project_id"),
+            semantic_description=pattern.get("semantic_description"),
+            parameter_bindings=bindings,
+            execution_count=int(pattern.get("execution_count") or 1),
+            last_executed_at=pattern.get("last_executed_at") or pattern.get("updated_at"),
+            success_count=int(pattern.get("success_count") or 0),
+            source_type=str(pattern.get("source_type") or "shell"),
+        )
+
+    def _apply_direct_parameter_policies(
+        self,
+        result: CLIWorkflowSearchResult,
+        pattern: dict[str, Any],
+        policies: list[dict[str, Any]],
+        query: RetrievalQuery,
+    ) -> None:
+        """Apply actively taught params to direct command-frequency results first."""
+        if not policies:
+            return
+        pattern_id = str(pattern.get("pattern_id") or "")
+        sub_command = _normalize_path_text(str(pattern.get("sub_command") or ""))
+        bindings_by_name = {binding.param_name: binding for binding in result.memory.parameter_bindings}
+        for policy in policies:
+            policy_pattern = str(policy.get("target_pattern_id") or "")
+            policy_sub = _normalize_path_text(str(policy.get("target_sub_command") or ""))
+            bound = (
+                (policy_pattern and pattern_id and policy_pattern == pattern_id)
+                or (policy_sub and sub_command and policy_sub == sub_command)
+                or self._semantic_match(policy, query)
+            )
+            if not bound:
+                continue
+            param_name = str(policy.get("param_name") or "")
+            param_value = str(policy.get("param_value") or "")
+            if not param_name or not param_value:
+                continue
+            bindings_by_name[param_name] = ParameterBinding(
+                param_name=param_name,
+                param_value=param_value,
+                frequency=1_000_000,
+                semantics=str(policy.get("semantic_description") or policy.get("scenario_text") or ""),
+            )
+            result.score += 2.0
+            result.matched_fields.append(f"taught_param:{param_name}")
+        result.memory.parameter_bindings = list(bindings_by_name.values())
+        result.match_reason = "、".join(result.matched_fields)
 
     def _extract_base_command(self, query_text: str) -> str | None:
         """从明确的命令/前缀查询中提取基础命令，避免自然语言被硬过滤。"""
@@ -539,13 +804,37 @@ class CLIWorkflowRetriever:
     def _filter_low_confidence(
         self,
         results: list[CLIWorkflowSearchResult],
+        query: RetrievalQuery,
     ) -> list[CLIWorkflowSearchResult]:
-        """最高分低于阈值时认为无相关 CLI 记忆。"""
+        """Filter weak matches by score and at least one meaningful relevance signal."""
         if not results:
             return []
+        if not clean_text(query.query_text):
+            return results
         if results[0].score < self.min_relevance_score:
             return []
-        return results
+        strong = [
+            result
+            for result in results
+            if result.score >= self.min_relevance_score and self._has_strong_relevance_signal(result)
+        ]
+        return strong
+
+    @staticmethod
+    def _has_strong_relevance_signal(result: CLIWorkflowSearchResult) -> bool:
+        """Return true when a candidate has a real lexical/vector/taught-command match."""
+        strong_fields = {
+            "bm25",
+            "embedding",
+            "keyword",
+            "prefix",
+            "command_name_exact",
+            "command_name_partial",
+            "taught_command",
+            "rerank",
+        }
+        fields = set(result.matched_fields)
+        return bool(fields & strong_fields) or any(field.startswith("taught_param:") for field in fields)
 
     def _apply_structured_scores(
         self,
@@ -725,6 +1014,64 @@ def _run_async(awaitable: Any) -> Any:
         import asyncio
         return asyncio.run(awaitable)
     raise RuntimeError("CLIWorkflowRetriever sync API cannot run inside an active event loop")
+
+
+def _looks_like_script_path(value: str) -> bool:
+    lowered = value.lower()
+    return (
+        "/" in value
+        or "\\" in value
+        or lowered.endswith((".py", ".js", ".ts", ".mjs", ".cjs"))
+    )
+
+
+def _command_name_from_pattern(pattern: dict[str, Any]) -> str:
+    return str(
+        pattern.get("sub_command")
+        or pattern.get("full_command")
+        or pattern.get("command_template")
+        or pattern.get("command_name")
+        or pattern.get("base_command")
+        or ""
+    )
+
+
+def _infer_command_category(command_name: str) -> str:
+    if not command_name:
+        return "general"
+    base = command_name.split()[0].lower()
+    category_map: dict[str, str] = {
+        "git": "vcs", "gh": "vcs", "glab": "vcs",
+        "docker": "container", "docker-compose": "container",
+        "kubectl": "orchestration", "k": "orchestration", "helm": "orchestration",
+        "npm": "package", "npx": "package", "yarn": "package",
+        "pnpm": "package", "bun": "package", "uv": "package",
+        "pip": "package", "pip3": "package", "poetry": "package",
+        "go": "build", "cargo": "build", "rustc": "build",
+        "make": "build", "cmake": "build", "gradle": "build", "mvn": "build",
+        "terraform": "iac", "tofu": "iac", "ansible": "iac",
+        "lark": "lark", "lark-cli": "lark",
+        "curl": "network", "wget": "network", "ssh": "network",
+        "gcloud": "cloud", "aws": "cloud", "az": "cloud",
+        "python": "script", "python3": "script", "node": "script",
+    }
+    return category_map.get(base, "general")
+
+
+def _normalize_path_text(value: str) -> str:
+    return value.replace("\\", "/").strip().strip("\"'").lower()
+
+
+def _is_absolute_path(value: str) -> bool:
+    if value and (value[0] == "/" or (len(value) >= 2 and value[1] == ":")):
+        return True
+    return False
+
+
+def _join_path_text(cwd: str, relative: str) -> str:
+    cwd_norm = _normalize_path_text(cwd)
+    rel_norm = _normalize_path_text(relative)
+    return cwd_norm.rstrip("/") + "/" + rel_norm.lstrip("/")
 
 
 def _string_list(value: Any) -> list[str]:

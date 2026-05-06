@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 from src.core.domain_handler import DomainRuntime
 from src.domains.cli_workflow.handler import CLIWorkflowDomainHandler
-from src.domains.cli_workflow.models import CLIWorkflowMemory
+from src.domains.cli_workflow.models import CLIWorkflowMemory, ParameterBinding
 from src.schemas.event import EventContext, NormalizedEvent
 from src.storage.event_store import EventStore
 from src.storage.cli_workflow_store import CLIWorkflowStore
@@ -29,6 +29,22 @@ class FakePolicyDecisionLLM:
             "confidence": self.confidence,
             "reason": "test decision",
             "conflict_fields": ["param_value"],
+        }
+
+
+class FakeCommandDecisionLLM:
+    def __init__(self, operation: str, confidence: float = 0.95) -> None:
+        self.operation = operation
+        self.confidence = confidence
+        self.calls: list[dict[str, object]] = []
+
+    async def ajson(self, system_prompt: str | None, user_prompt: str, **kwargs: object) -> dict[str, object]:
+        self.calls.append({"system_prompt": system_prompt or "", "user_prompt": user_prompt, "kwargs": kwargs})
+        return {
+            "operation": self.operation,
+            "confidence": self.confidence,
+            "reason": "test command decision",
+            "conflict_fields": ["command_template"],
         }
 
 
@@ -283,6 +299,116 @@ class TestHandlerIngest:
         assert result.candidate_count == 0
         assert active == []
         assert old["status"] == "forgotten"
+
+    def test_openclaw_parameter_policy_binds_to_top_command_pattern(self, temp_dir):
+        db_path = str(temp_dir / "test_policy_bind_target.db")
+        memory_store = MemoryCoreStore(db_path)
+        memory_store.create_table()
+        cli_store = CLIWorkflowStore(db_path)
+        cli_store.create_table()
+        deploy = CLIWorkflowMemory(
+            workflow_id="mem-deploy",
+            user_id="u_1",
+            command_template="python deploy.py --tenant {tenant} --env {env}",
+            command_name="python deploy.py",
+            command_category="deploy",
+            project_id="backend",
+            semantic_description="部署 demo-a 租户",
+            parameter_bindings=[],
+            execution_count=3,
+            success_count=3,
+        )
+        cli_store.upsert_pattern(deploy, memory_id_value=deploy.workflow_id, semantic_description=deploy.semantic_description)
+        handler = CLIWorkflowDomainHandler(memory_store, cli_store=cli_store)
+        event = NormalizedEvent(
+            event_id=event_id(),
+            event_type="memory_feedback",
+            source_type="openclaw",
+            occurred_at=utc_now_iso(),
+            context=EventContext(user_id="u_1", project_id="backend", scope="user"),
+            content_text="记住部署 demo-a 的时候 env=staging",
+            payload={"intent": "teach_command"},
+        )
+
+        handler.ingest_event(event, DomainRuntime(memory_store=memory_store, add_memory=_add_memory(memory_store)))
+        active = cli_store.list_parameter_policies(user_id="u_1", project_id="backend")
+
+        assert active[0]["target_pattern_id"]
+        assert active[0]["target_sub_command"] == "python deploy.py"
+
+    def test_openclaw_full_command_does_not_duplicate_parameter_policy(self, temp_dir):
+        db_path = str(temp_dir / "test_full_command_no_policy_duplicate.db")
+        memory_store = MemoryCoreStore(db_path)
+        memory_store.create_table()
+        cli_store = CLIWorkflowStore(db_path)
+        cli_store.create_table()
+        handler = CLIWorkflowDomainHandler(memory_store, cli_store=cli_store)
+        event = NormalizedEvent(
+            event_id=event_id(),
+            event_type="memory_feedback",
+            source_type="openclaw",
+            occurred_at=utc_now_iso(),
+            context=EventContext(user_id="u_1", project_id="backend", scope="user"),
+            content_text='记住部署 demo-a 用命令 "python deploy.py --tenant demo-a --env staging"',
+            payload={"intent": "teach_command"},
+        )
+
+        result = handler.ingest_event(event, DomainRuntime(memory_store=memory_store, add_memory=_add_memory(memory_store)))
+        policies = cli_store.list_parameter_policies(user_id="u_1", project_id="backend")
+
+        assert result.memory_ids
+        assert policies == []
+
+    def test_openclaw_command_decision_delete_forgets_existing_command(self, temp_dir):
+        db_path = str(temp_dir / "test_command_delete.db")
+        memory_store = MemoryCoreStore(db_path)
+        memory_store.create_table()
+        cli_store = CLIWorkflowStore(db_path)
+        cli_store.create_table()
+        existing = CLIWorkflowMemory(
+            workflow_id="mem-deploy",
+            user_id="u_1",
+            command_template="python deploy.py --tenant {tenant} --env {env}",
+            command_name="python deploy.py",
+            command_category="deploy",
+            project_id="backend",
+            semantic_description="部署 demo-a 租户",
+            parameter_bindings=[
+                ParameterBinding("tenant", "demo-a"),
+                ParameterBinding("env", "prod"),
+            ],
+            execution_count=3,
+            success_count=3,
+            source_type="openclaw",
+        )
+        memory_store.insert_memory_core(existing.to_memory_core())
+        pattern_id = cli_store.upsert_pattern(
+            existing,
+            memory_id_value=existing.workflow_id,
+            semantic_description=existing.semantic_description,
+        )
+        handler = CLIWorkflowDomainHandler(
+            memory_store,
+            cli_store=cli_store,
+            llm_client=FakeCommandDecisionLLM("DELETE"),
+        )
+        event = NormalizedEvent(
+            event_id=event_id(),
+            event_type="memory_feedback",
+            source_type="openclaw",
+            occurred_at=utc_now_iso(),
+            context=EventContext(user_id="u_1", project_id="backend", scope="user"),
+            content_text="忘记部署 demo-a 的命令",
+            payload={"intent": "teach_command"},
+        )
+
+        result = handler.ingest_event(event, DomainRuntime(memory_store=memory_store, add_memory=_add_memory(memory_store)))
+        old_memory = memory_store.get_memory("mem-deploy")
+        old_pattern = cli_store.fetch_one("SELECT * FROM cli_command_pattern WHERE pattern_id = ?", (pattern_id,))
+
+        assert result.candidate_count == 1
+        assert old_memory["status"] == "forgotten"
+        assert old_pattern["status"] == "forgotten"
 
 
 class TestHandlerRetrieve:

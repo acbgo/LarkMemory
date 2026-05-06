@@ -101,3 +101,64 @@ def test_extract_explicit_parameter_policy_from_text(cli_store: CLIWorkflowStore
     active = cli_store.list_parameter_policies(user_id="u_1", project_id="Demo")
     assert active[0]["param_name"] == "stage"
     assert active[0]["param_value"] == "staging"
+
+
+def test_infer_signature_ignores_param_value_conflicts(cli_store: CLIWorkflowStore) -> None:
+    first = cli_store.upsert_parameter_policy_from_text(
+        "部署 demo-a 时 env=prod",
+        user_id="u_1",
+        project_id="Demo",
+    )
+    second = cli_store.upsert_parameter_policy_from_text(
+        "记住部署 demo-a 时 env=staging",
+        user_id="u_1",
+        project_id="Demo",
+    )
+
+    assert len(first) == 1
+    assert len(second) == 1
+    active = cli_store.list_parameter_policies(user_id="u_1", project_id="Demo")
+    assert len(active) == 1
+    assert active[0]["param_value"] == "staging"
+
+
+def test_find_top_command_pattern_for_text_binds_policy_target(cli_store: CLIWorkflowStore) -> None:
+    deploy = CLIWorkflowMemory(
+        workflow_id="mem-deploy",
+        user_id="u_1",
+        project_id="Demo",
+        command_template="python deploy.py --tenant {tenant} --env {env}",
+        command_name="python deploy.py",
+        semantic_description="部署 demo-a 租户",
+        parameter_bindings=[
+            ParameterBinding("tenant", "demo-a"),
+            ParameterBinding("env", "prod"),
+        ],
+        execution_count=3,
+        success_count=3,
+    )
+    rollback = CLIWorkflowMemory(
+        workflow_id="mem-rollback",
+        user_id="u_1",
+        project_id="Demo",
+        command_template="python rollback.py --tenant {tenant} --env {env}",
+        command_name="python rollback.py",
+        semantic_description="回滚 demo-a 租户",
+        parameter_bindings=[
+            ParameterBinding("tenant", "demo-a"),
+            ParameterBinding("env", "prod"),
+        ],
+        execution_count=3,
+        success_count=3,
+    )
+    cli_store.upsert_pattern(deploy, memory_id_value=deploy.workflow_id, semantic_description=deploy.semantic_description)
+    cli_store.upsert_pattern(rollback, memory_id_value=rollback.workflow_id, semantic_description=rollback.semantic_description)
+
+    target = cli_store.find_top_command_pattern_for_text(
+        user_id="u_1",
+        project_id="Demo",
+        text="记住部署 demo-a 时 env=staging",
+    )
+
+    assert target is not None
+    assert target["memory_id"] == "mem-deploy"

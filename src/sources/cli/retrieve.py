@@ -7,6 +7,8 @@ from typing import Any
 
 from src.sources.cli._client import post_retrieve
 from src.sources.cli.ingest import _detect_project_id, _detect_user_id
+from src.app.config import load_settings
+from src.storage.cli_workflow_store import CLIWorkflowStore
 
 
 def _hit_to_workflow(hit: dict[str, Any]) -> dict[str, Any] | None:
@@ -140,6 +142,171 @@ def _filter_results_by_command(
     return filtered
 
 
+def _get_cli_store() -> CLIWorkflowStore:
+    """Open the local structured CLI store used by shell suggest/complete."""
+    settings = load_settings()
+    store = CLIWorkflowStore(settings.sqlite_path)
+    store.create_table()
+    return store
+
+
+def _pattern_to_workflow(pattern: dict[str, Any]) -> dict[str, Any]:
+    """Convert a cli_command_pattern row into the shell-facing workflow dict."""
+    bindings = []
+    for item in pattern.get("parameter_bindings") or []:
+        bindings.append(
+            {
+                "param_name": item.get("param_name"),
+                "param_value": item.get("param_value"),
+                "frequency": int(item.get("frequency") or 1),
+            }
+        )
+    return {
+        "workflow_id": pattern.get("memory_id") or pattern.get("pattern_id"),
+        "command_name": _command_name_from_pattern(pattern),
+        "command_template": pattern.get("command_template") or pattern.get("full_command") or "",
+        "command_category": _infer_command_category(str(pattern.get("sub_command") or "")),
+        "project_id": pattern.get("project_id"),
+        "parameter_bindings": bindings,
+        "execution_count": int(pattern.get("execution_count") or 0),
+        "last_executed_at": pattern.get("last_executed_at") or pattern.get("updated_at"),
+        "success_rate": float(pattern.get("success_rate") or 0.0),
+        "source_type": pattern.get("source_type") or "shell",
+    }
+
+
+def _command_name_from_pattern(pattern: dict[str, Any]) -> str:
+    """Recover a command identity from the stored template while preserving Windows paths."""
+    surface = str(pattern.get("command_template") or pattern.get("full_command") or pattern.get("sub_command") or "")
+    try:
+        tokens = shlex.split(surface, posix=False)
+    except ValueError:
+        tokens = surface.split()
+    if not tokens:
+        return str(pattern.get("sub_command") or pattern.get("base_command") or "")
+    executable = tokens[0]
+    if (
+        len(tokens) >= 2
+        and executable.lower() in {"python", "python3", "node", "deno", "bun"}
+        and _looks_like_script_path(tokens[1])
+    ):
+        return f"{executable} {tokens[1]}"
+    identity: list[str] = []
+    for token in tokens:
+        if token.startswith("-"):
+            break
+        identity.append(token)
+        if len(identity) >= 3:
+            break
+    return " ".join(identity) or str(pattern.get("sub_command") or pattern.get("base_command") or "")
+
+
+def _infer_command_category(command_name: str) -> str:
+    """Infer a small category label for local CLI suggestions."""
+    lowered = command_name.lower()
+    if "deploy" in lowered or "release" in lowered:
+        return "deploy"
+    if "test" in lowered or "pytest" in lowered:
+        return "test"
+    if "git" in lowered:
+        return "vcs"
+    return "general"
+
+
+def _format_workflows(workflows: list[dict[str, Any]]) -> str:
+    """Format already-decoded workflow rows for `lark-memory suggest`."""
+    if not workflows:
+        return "未找到匹配的命令记忆。"
+    workflows.sort(key=lambda w: (-(w.get("execution_count", 0)), -float(w.get("success_rate", 0))))
+    lines: list[str] = []
+    for i, wf in enumerate(workflows[:3]):
+        count = wf.get("execution_count", 0)
+        rate = wf.get("success_rate", 0)
+        template = wf.get("command_template", wf.get("command_name", "?"))
+        lines.append(f"\n  [{i+1}] {wf.get('command_name', '?')}  ({count}次, {rate:.0%}成功)")
+        lines.append(f"  模板: {template}")
+        bindings = wf.get("parameter_bindings") or []
+        if bindings:
+            top_bindings = sorted(bindings, key=lambda b: -b.get("frequency", 0))[:5]
+            params = "  ".join(
+                f"--{pb['param_name']} {pb['param_value']}"
+                for pb in top_bindings
+                if pb.get("param_name") and pb.get("param_value")
+            )
+            if params:
+                lines.append(f"  常用参数: {params}")
+    return "\n".join(lines)
+
+
+def _pattern_matches_suggest_query(pattern: dict[str, Any], query: str, *, cwd: str | None = None) -> bool:
+    """Match shell suggest queries by command identity or command-surface substring."""
+    wf = _pattern_to_workflow(pattern)
+    if _workflow_matches_command(wf, query, cwd=cwd):
+        return True
+    lowered = _normalize_for_compare(query)
+    if not lowered:
+        return True
+    searchable = _normalize_for_compare(
+        " ".join(
+            str(part)
+            for part in (
+                pattern.get("base_command"),
+                pattern.get("sub_command"),
+                pattern.get("full_command"),
+                pattern.get("command_template"),
+            )
+            if part
+        )
+    )
+    return lowered in searchable
+
+
+def _local_frequency_suggest(query_text: str, *, project_id: str | None, cwd: str | None) -> list[dict[str, Any]]:
+    """Return shell suggestions from cli_command_pattern ordered by observed frequency."""
+    store = _get_cli_store()
+    patterns = store.list_patterns(
+        user_id=_detect_user_id(),
+        project_id=project_id,
+        limit=100,
+    )
+    if not patterns and project_id is not None:
+        patterns = store.list_patterns(
+            user_id=_detect_user_id(),
+            project_id=None,
+            limit=100,
+        )
+    workflows = [
+        _pattern_to_workflow(pattern)
+        for pattern in patterns
+        if _pattern_matches_suggest_query(pattern, query_text, cwd=cwd)
+    ]
+    workflows.sort(key=lambda wf: (-int(wf.get("execution_count") or 0), -float(wf.get("success_rate") or 0.0)))
+    return workflows
+
+
+def _local_frequency_complete(line: str, *, project_id: str | None, cwd: str | None) -> list[dict[str, Any]]:
+    """Return command-matched workflow rows for shell completion without semantic retrieval."""
+    store = _get_cli_store()
+    patterns = store.list_patterns(
+        user_id=_detect_user_id(),
+        project_id=project_id,
+        limit=100,
+    )
+    if not patterns and project_id is not None:
+        patterns = store.list_patterns(
+            user_id=_detect_user_id(),
+            project_id=None,
+            limit=100,
+        )
+    workflows: list[dict[str, Any]] = []
+    for pattern in patterns:
+        workflow = _pattern_to_workflow(pattern)
+        if _workflow_matches_command(workflow, line, cwd=cwd):
+            workflows.append(workflow)
+    workflows.sort(key=lambda wf: (-int(wf.get("execution_count") or 0), -float(wf.get("success_rate") or 0.0)))
+    return workflows
+
+
 def _format_suggest(results: list[dict[str, Any]]) -> str:
     if not results:
         return "未找到匹配的命令记忆。"
@@ -187,21 +354,10 @@ def run_suggest(
         return "用法: lark-memory suggest <查询文本> [--project <项目>] [--command <命令>]"
 
     actual_project = project_id or _detect_project_id(cwd or os.getcwd())
-    user_id = _detect_user_id()
-
-    payload: dict[str, Any] = {
-        "query_text": query_text,
-        "user_id": user_id,
-        "top_k": 10,
-        "include_trace": False,
-    }
-    if actual_project:
-        payload["project_id"] = actual_project
 
     try:
-        results = post_retrieve(payload)
-        results = _filter_results_by_command(results, command or query_text, cwd=cwd)
-        return _format_suggest(results)
+        workflows = _local_frequency_suggest(command or query_text, project_id=actual_project, cwd=cwd)
+        return _format_workflows(workflows)
     except Exception as e:
         return f"查询失败: {e}"
 
@@ -210,33 +366,19 @@ def run_complete(line: str, cur: str, *, cwd: str | None = None) -> str:
     if not line.strip():
         return ""
 
-    user_id = _detect_user_id()
     actual_project = _detect_project_id(cwd or os.getcwd())
 
-    payload: dict[str, Any] = {
-        "query_text": line,
-        "user_id": user_id,
-        "top_k": 10,
-        "include_trace": False,
-    }
-    if actual_project:
-        payload["project_id"] = actual_project
-
     try:
-        results = post_retrieve(payload)
+        workflows = _local_frequency_complete(line, project_id=actual_project, cwd=cwd)
     except Exception:
         return ""
-    results = _filter_results_by_command(results, line, cwd=cwd)
-    if not results:
+    if not workflows:
         return ""
 
     candidates: list[str] = []
     seen: set[str] = set()
 
-    for result in results:
-        wf = _hit_to_workflow(result)
-        if not wf:
-            continue
+    for wf in workflows:
         for pb in sorted(
             wf.get("parameter_bindings") or [],
             key=lambda b: -b.get("frequency", 0),
