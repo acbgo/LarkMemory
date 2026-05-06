@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 # 4 competition direction datasets
 DIRECTION_FILES: dict[str, str] = {
     "command_memory": "command_memory.jsonl",
-    "decision_memory": "decision_memory.jsonl",
+    "decision_memory": "project_decision_strict.jsonl",
     "preference_memory": "preference_memory.jsonl",
     "knowledge_health": "knowledge_health.jsonl",
 }

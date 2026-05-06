@@ -184,6 +184,7 @@ class MemoryService:
         domain_result = handler.ingest_event(event, runtime)
         if self.proactive_engine is not None:
             try:
+                # ingest完了之后进入主动推送流程
                 self.proactive_engine.maybe_push(
                     event,
                     domain=primary_domain,
