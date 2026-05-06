@@ -188,6 +188,35 @@ def test_retrieve_uses_vector_hits_for_hybrid_recall() -> None:
         shutil.rmtree(temp_dir, ignore_errors=True)
 
 
+def test_retrieve_chinese_question_uses_table_overlap_when_bm25_misses() -> None:
+    memory_store, team_store, temp_dir = _stores()
+    try:
+        _insert(
+            memory_store,
+            team_store,
+            "mem-xinghe-format",
+            team_id="team-1",
+            fact_value="D演示-0507 星河客户生产数据导出必须使用 xlsx，不接受 csv。",
+        )
+        _insert(
+            memory_store,
+            team_store,
+            "mem-other-team",
+            team_id="team-2",
+            fact_value="星河客户生产数据导出必须使用 csv。",
+        )
+
+        results = TeamRetentionRetriever(memory_store, team_store).retrieve(
+            TeamRetentionQuery(query_text="星河客户生产数据导出应该使用什么格式？", team_id="team-1")
+        )
+
+        assert [result.memory.retention_id for result in results] == ["mem-xinghe-format"]
+        assert "table_overlap" in results[0].matched_fields
+        assert "xlsx" in results[0].memory.fact_value
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+
 def test_retrieve_uses_embedding_client_query_vector_when_available() -> None:
     memory_store, team_store, temp_dir = _stores()
     try:

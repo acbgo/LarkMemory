@@ -141,7 +141,13 @@ class TeamRetentionRetriever:
                 weight=weight,
                 filters=filters or None,
             )
-            for hits in (bm25, vec):
+            table = self._table_overlap_recall(
+                domain_query,
+                variant,
+                limit=candidate_limit,
+                weight=weight,
+            )
+            for hits in (bm25, vec, table):
                 if hits:
                     all_recall_lists.append(hits)
 
@@ -292,6 +298,50 @@ class TeamRetentionRetriever:
         return result
 
     # ------------------------------------------------------------------
+    # Table lexical recall
+    # ------------------------------------------------------------------
+
+    def _table_overlap_recall(
+        self,
+        query: TeamRetentionQuery,
+        query_text: str,
+        *,
+        limit: int,
+        weight: float = 1.0,
+    ) -> list[TeamRetentionRecallHit]:
+        rows = self.memory_store.search_memory_candidates(
+            domain="team_retention",
+            status="active",
+            limit=max(limit * 3, 100),
+        )
+        filtered = self._filter_candidates(rows, query)
+        scored: list[tuple[float, str]] = []
+        for row in filtered:
+            text = " ".join(
+                str(row.get(field) or "")
+                for field in ("summary_text", "content_text")
+            )
+            score = _lexical_overlap_score(query_text, text)
+            if score < 0.18:
+                continue
+            scored.append((score, str(row["memory_id"])))
+        scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
+        return [
+            TeamRetentionRecallHit(
+                memory_id=memory_id,
+                source="table_overlap",
+                rank=rank,
+                score=score,
+                metadata={
+                    "table_overlap_score": score,
+                    "matched_fields": ["table_overlap"],
+                    "variant_weight": weight,
+                },
+            )
+            for rank, (score, memory_id) in enumerate(scored[:limit], start=1)
+        ]
+
+    # ------------------------------------------------------------------
     # RRF fusion
     # ------------------------------------------------------------------
 
@@ -425,6 +475,8 @@ class TeamRetentionRetriever:
             for key in ("bm25_score", "vector_similarity", "vector_query"):
                 if key in metadata:
                     item.extra[key] = metadata[key]
+            if "table_overlap_score" in metadata:
+                item.extra["table_overlap_score"] = metadata["table_overlap_score"]
             match_reason = "、".join(metadata.get("matched_fields", [])) if metadata.get("matched_fields") else ("rrf" if hit is not None else "candidate_pool")
             matched_fields = list(metadata.get("matched_fields", [])) if hit is not None else ["candidate_pool"]
             results.append(
@@ -477,6 +529,30 @@ class TeamRetentionRetriever:
 def _time_decay_factor(timestamp: str | None, decay_rate: float, now_iso: str) -> float:
     if not timestamp or decay_rate <= 0:
         return 1.0
+
+
+def _lexical_overlap_score(query_text: str, memory_text: str) -> float:
+    """Score Chinese-friendly lexical overlap without relying on SQLite FTS tokenization."""
+    query_terms = _overlap_terms(query_text)
+    memory_terms = _overlap_terms(memory_text)
+    if not query_terms or not memory_terms:
+        return 0.0
+    overlap = query_terms & memory_terms
+    if not overlap:
+        return 0.0
+    return len(overlap) / len(query_terms)
+
+
+def _overlap_terms(text: str) -> set[str]:
+    cleaned = clean_text(text).lower()
+    terms = set(re.findall(r"[a-z0-9][a-z0-9_\-]{1,}", cleaned))
+    for chunk in re.findall(r"[\u4e00-\u9fff]{2,}", cleaned):
+        if len(chunk) <= 4:
+            terms.add(chunk)
+            continue
+        for size in (2, 3, 4):
+            terms.update(chunk[index:index + size] for index in range(0, len(chunk) - size + 1))
+    return terms
     try:
         ts_date = timestamp[:10]
         now_date = now_iso[:10]
