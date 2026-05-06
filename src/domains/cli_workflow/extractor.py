@@ -206,7 +206,20 @@ class CLIWorkflowExtractor:
                     rule_candidates[0].memory.scenario_keywords = enriched["scenario_keywords"]
                     rule_candidates[0].signals.append("llm_semantics")
                     logger.info(
-                        "action=llm_semantics_enriched param_count=%s",
+                        "action=llm_semantics_enriched command_template=%s command_name=%s "
+                        "semantic_description=%s scenario_keywords=%s params=%s param_count=%s",
+                        rule_candidates[0].memory.command_template,
+                        rule_candidates[0].memory.command_name,
+                        rule_candidates[0].memory.semantic_description,
+                        rule_candidates[0].memory.scenario_keywords,
+                        [
+                            {
+                                "param_name": pb.param_name,
+                                "param_value": pb.param_value,
+                                "semantics": pb.semantics,
+                            }
+                            for pb in rule_candidates[0].memory.parameter_bindings
+                        ],
                         len(enriched["parameter_bindings"]),
                     )
             else:
@@ -628,6 +641,15 @@ class CLIWorkflowExtractor:
         scenario_keywords = raw.get("scenario_keywords") or []
         full_command = raw.get("full_command")
         semantic_description = clean_text(str(raw.get("semantic_description") or "")) or None
+        logger.info(
+            "action=llm_full_extraction_raw is_teaching=%s full_command=%s "
+            "semantic_description=%s scenario_keywords=%s params=%s",
+            is_teaching,
+            full_command,
+            semantic_description,
+            scenario_keywords,
+            llm_params,
+        )
 
         if not llm_params and not full_command:
             return []
@@ -653,11 +675,28 @@ class CLIWorkflowExtractor:
                 )
                 command_template, parsed_bindings = self._parameterize(tokens, command_name)
                 if command_template:
+                    merged_bindings = _merge_parameter_semantics(parsed_bindings, param_bindings)
+                    logger.info(
+                        "action=llm_full_extraction_candidate command_name=%s command_template=%s "
+                        "semantic_description=%s scenario_keywords=%s params=%s",
+                        command_name,
+                        command_template,
+                        semantic_description,
+                        _string_list(scenario_keywords),
+                        [
+                            {
+                                "param_name": pb.param_name,
+                                "param_value": pb.param_value,
+                                "semantics": pb.semantics,
+                            }
+                            for pb in merged_bindings
+                        ],
+                    )
                     return [
                         self._build_openclaw_candidate(
                             command_template=command_template,
                             command_name=command_name,
-                            param_bindings=_merge_parameter_semantics(parsed_bindings, param_bindings),
+                            param_bindings=merged_bindings,
                             semantic_description=semantic_description,
                             scenario_keywords=_string_list(scenario_keywords),
                             text=text,

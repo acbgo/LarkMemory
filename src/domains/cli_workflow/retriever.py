@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import shlex
 import re
 from dataclasses import dataclass, field
@@ -23,6 +24,9 @@ from src.storage.memory_core_store import MemoryCoreStore
 from src.utils.text import clean_text
 
 from .models import CLIWorkflowMemory, ParameterBinding
+
+
+logger = logging.getLogger(__name__)
 
 _COMMAND_QUERY_PREFIXES: set[str] = {
     "git", "docker", "docker-compose", "kubectl", "k", "helm",
@@ -217,6 +221,25 @@ class CLIWorkflowRetriever:
         if limit < 1:
             raise ValueError("limit must be greater than 0")
         direct_identity = self._extract_explicit_command_identity(query)
+        if direct_identity is None:
+            logger.info(
+                "action=cli_direct_identity_missing query_text=%s query_user_id=%s project_id=%s",
+                query.query_text,
+                query.user_id,
+                query.project_id,
+            )
+        else:
+            logger.info(
+                "action=cli_direct_identity_extracted query_text=%s query_user_id=%s project_id=%s "
+                "base_command=%s sub_command=%s script_path=%s script_basename=%s",
+                query.query_text,
+                query.user_id,
+                query.project_id,
+                direct_identity.base_command,
+                direct_identity.sub_command,
+                direct_identity.script_path,
+                direct_identity.script_basename,
+            )
         direct_results = self._retrieve_direct_sub_command(query, direct_identity, limit=limit)
         if direct_results:
             return direct_results[:limit]
@@ -331,11 +354,22 @@ class CLIWorkflowRetriever:
             return []
         exact_sub_command = None if identity.script_path else identity.sub_command
         patterns = self.cli_store.find_patterns_by_command_identity(
-            user_id=query.user_id,
+            user_id=None,
             project_id=query.project_id,
             base_command=identity.base_command,
             sub_command=exact_sub_command,
             limit=max(limit * 10, 100),
+        )
+        logger.info(
+            "action=cli_direct_pattern_lookup query_user_id=%s user_filter_ignored=%s project_id=%s "
+            "base_command=%s sub_command=%s sql_sub_command=%s pattern_count=%s",
+            query.user_id,
+            True,
+            query.project_id,
+            identity.base_command,
+            identity.sub_command,
+            exact_sub_command,
+            len(patterns),
         )
         matches: list[tuple[float, dict[str, Any]]] = []
         for pattern in patterns:
@@ -343,6 +377,26 @@ class CLIWorkflowRetriever:
             if score <= 0:
                 continue
             matches.append((score, pattern))
+        logger.info(
+            "action=cli_direct_pattern_scored query_user_id=%s project_id=%s base_command=%s "
+            "sub_command=%s matched_count=%s top_matches=%s",
+            query.user_id,
+            query.project_id,
+            identity.base_command,
+            identity.sub_command,
+            len(matches),
+            [
+                {
+                    "user_id": pattern.get("user_id"),
+                    "project_id": pattern.get("project_id"),
+                    "sub_command": pattern.get("sub_command"),
+                    "execution_count": pattern.get("execution_count"),
+                    "command_template": pattern.get("command_template"),
+                    "score": score,
+                }
+                for score, pattern in matches[:3]
+            ],
+        )
         if not matches:
             return []
         policies = (

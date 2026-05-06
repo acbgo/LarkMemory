@@ -389,6 +389,43 @@ class TestCLIWorkflowRetriever:
         assert suggestion["parameter_bindings"][0]["param_name"] == "max-count"
         assert suggestion["parameter_bindings"][0]["param_value"] == "5"
 
+    def test_direct_sub_command_frequency_ignores_mismatched_query_user_id(self, temp_dir):
+        db_path = str(temp_dir / "test_direct_subcommand_wrong_user.db")
+        memory_store = MemoryCoreStore(db_path)
+        memory_store.create_table()
+        cli_store = CLIWorkflowStore(db_path)
+        cli_store.create_table()
+        observed = CLIWorkflowMemory(
+            workflow_id="mem-git-log",
+            user_id="shell-user",
+            command_template="git log --max-count {max-count} --oneline",
+            command_name="git log",
+            command_category="vcs",
+            project_id="LarkMemory",
+            parameter_bindings=[
+                ParameterBinding(param_name="max-count", param_value="5", frequency=3),
+            ],
+            execution_count=3,
+            success_count=3,
+            source_type="shell",
+        )
+        cli_store.upsert_pattern(observed, memory_id_value=observed.workflow_id)
+        retriever = CLIWorkflowRetriever(memory_store, cli_store=cli_store)
+
+        results = retriever.retrieve(
+            RetrievalQuery(
+                query_text="git log 命令我最经常用的参数是什么",
+                user_id="openclaw-user",
+                project_id="LarkMemory",
+            ),
+            limit=5,
+        )
+        suggestion = results[0].to_suggestion()
+
+        assert results[0].memory.workflow_id == "mem-git-log"
+        assert suggestion["parameter_bindings"][0]["param_name"] == "max-count"
+        assert suggestion["parameter_bindings"][0]["param_value"] == "5"
+
     def test_direct_sub_command_query_prefers_taught_param_over_frequency(self, temp_dir):
         db_path = str(temp_dir / "test_direct_subcommand_taught_param.db")
         memory_store = MemoryCoreStore(db_path)
