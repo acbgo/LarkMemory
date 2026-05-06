@@ -144,7 +144,7 @@ team_retention:
 - FAQ人入职和日常开发需要知道的具体操作步骤，团建活动相关事件，旧服务器或环境配置相关事件，CI/CD 配置，安全漏洞详情。
 
 分类原则：
-1. 只选择一个最主要的 primary，且必须四选一。
+1. 只选择一个最主要的 primary，且必须四选一,切记对于提问confidence应该小于0.20。
 2. 如果事件是命令、路径、参数、终端工作流，优先选 cli_workflow。
 3. 如果事件包含“决定、确认、采用、放弃、截止、负责人、方案、结论、原因、反对意见”，优先选 project_decision。
 4. 如果事件主要体现个人偏好、个人习惯、个人提醒、个人自动化，优先选 personal_preference。
@@ -157,7 +157,7 @@ team_retention:
    - 若核心是个人偏好或自动化习惯，选 personal_preference。
 8. 对于闲聊、情绪表达、无关文本、纯提问、泛泛讨论、没有可沉淀事实的事件：
    - 仍然必须选择四类中最接近的一类；
-   - confidence 应低于 0.50；
+   - confidence 应低于 0.40；
    - reason 必须说明“无明显记忆价值”或“缺少可沉淀事实”。
 9. 对于只有短期任务价值、但没有长期复用价值的事件：
    - confidence 通常应在 0.40-0.60；
@@ -244,6 +244,10 @@ class DomainClassifier:
         *,
         event_type: str | None = None,
     ) -> ClassifyResult:
+        hard_result = self._hard_rule(text, event_type)
+        if hard_result is not None:
+            return hard_result
+
         kw_result = self._keyword_classify(text)
         if kw_result.confidence >= 0.5 and len(kw_result.keywords) >= 2:
             return kw_result
@@ -277,6 +281,10 @@ class DomainClassifier:
         *,
         event_type: str | None = None,
     ) -> ClassifyResult:
+        hard_result = self._hard_rule(text, event_type)
+        if hard_result is not None:
+            return hard_result
+
         kw_result = self._keyword_classify(text)
         if kw_result.confidence >= 0.5 and len(kw_result.keywords) >= 2:
             return kw_result

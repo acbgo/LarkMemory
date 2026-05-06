@@ -205,7 +205,7 @@ class CLIWorkflowExtractor:
                     rule_candidates[0].memory.semantic_description = enriched["semantic_description"]
                     rule_candidates[0].memory.scenario_keywords = enriched["scenario_keywords"]
                     rule_candidates[0].signals.append("llm_semantics")
-                    logger.info(
+                    logger.debug(
                         "action=llm_semantics_enriched command_template=%s command_name=%s "
                         "semantic_description=%s scenario_keywords=%s params=%s param_count=%s",
                         rule_candidates[0].memory.command_template,
@@ -226,7 +226,7 @@ class CLIWorkflowExtractor:
                 # 规则未命中 → LLM 完整提取
                 llm_candidates = self._llm_full_extraction(text, event)
                 if llm_candidates:
-                    logger.info("action=llm_full_extraction_done candidate_count=%s", len(llm_candidates))
+                    logger.debug("action=llm_full_extraction_done candidate_count=%s", len(llm_candidates))
                     return llm_candidates
 
         return rule_candidates
@@ -648,7 +648,7 @@ class CLIWorkflowExtractor:
         scenario_keywords = raw.get("scenario_keywords") or []
         full_command = raw.get("full_command")
         semantic_description = clean_text(str(raw.get("semantic_description") or "")) or None
-        logger.info(
+        logger.debug(
             "action=llm_full_extraction_raw is_teaching=%s full_command=%s "
             "semantic_description=%s scenario_keywords=%s params=%s",
             is_teaching,
@@ -683,7 +683,7 @@ class CLIWorkflowExtractor:
                 command_template, parsed_bindings = self._parameterize(tokens, command_name)
                 if command_template:
                     merged_bindings = _merge_parameter_semantics(parsed_bindings, param_bindings)
-                    logger.info(
+                    logger.debug(
                         "action=llm_full_extraction_candidate command_name=%s command_template=%s "
                         "semantic_description=%s scenario_keywords=%s params=%s",
                         command_name,

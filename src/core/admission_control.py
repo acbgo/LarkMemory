@@ -48,12 +48,19 @@ class AdmissionController:
         *,
         domain: str | None = None,
     ) -> AdmissionDecision:
+        text = clean_text(event.content_text or event.title)
+        if _is_openclaw_retrieval_question(event, text):
+            return AdmissionDecision(
+                False,
+                reason="openclaw retrieval question; skip memory extraction",
+                metadata={"domain": domain},
+            )
+
         if self.llm_client is not None:
             llm_decision = self._evaluate_event_with_llm(event, domain=domain)
             if llm_decision is not None:
                 return llm_decision
 
-        text = clean_text(event.content_text or event.title)
         has_payload = bool(event.payload or event.raw_payload)
         if event.event_type == "memory_feedback":
             return AdmissionDecision(True, status="active", importance=0.8, confidence=0.8, reason="feedback event")
@@ -164,3 +171,14 @@ def _run_async(awaitable: Any) -> Any:
         return asyncio.run(awaitable)
     else:
         raise RuntimeError("AdmissionController sync API cannot run inside an active event loop")
+
+
+def _is_openclaw_retrieval_question(event: NormalizedEvent, text: str) -> bool:
+    """Detect OpenClaw query messages that should only trigger retrieval."""
+    if event.source_type != "openclaw" or not text:
+        return False
+    teaching_markers = ("记住", "以后", "下次", "默认", "设置为", "设为", "用命令", "命令是", "按这个命令")
+    if any(marker in text for marker in teaching_markers):
+        return False
+    question_markers = ("?", "？", "什么", "怎么", "如何", "多少", "哪", "是否", "有没有", "最经常", "常用")
+    return any(marker in text for marker in question_markers)

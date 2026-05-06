@@ -9,7 +9,7 @@ from src.llm import EmbeddingClient, RerankClient
 from src.retrieval import RankedMemory, RetrievalQuery
 from src.schemas import NormalizedEvent
 from src.storage import CLIWorkflowStore, EmbeddingStore, MemoryCoreStore
-from src.storage.cli_workflow_store import extract_parameter_policies, infer_scenario_signature
+from src.storage.cli_workflow_store import extract_parameter_policies, infer_scenario_signature, normalize_command_text, render_command
 from src.utils.text import clean_text
 
 from .extractor import CLIWorkflowExtractor
@@ -122,6 +122,13 @@ class CLIWorkflowDomainHandler:
                     candidate.memory.command_name,
                 )
                 continue
+            if event.source_type == "openclaw" and self._has_duplicate_openclaw_pattern(candidate):
+                logger.info(
+                    "action=openclaw_duplicate_skipped event_id=%s command=%s",
+                    event.event_id,
+                    candidate.memory.command_name,
+                )
+                continue
             version_decision = self.version_manager.detect_update(candidate.memory)
             command_operation = (
                 self._decide_command_memory_operation(
@@ -188,7 +195,7 @@ class CLIWorkflowDomainHandler:
                 )
 
             if event.source_type == "openclaw":
-                logger.info(
+                logger.debug(
                     "action=openclaw_memory_injected event_id=%s memory_id=%s "
                     "template=%s params=%s scenario=%s semantic=%s",
                     event.event_id,
@@ -404,6 +411,27 @@ class CLIWorkflowDomainHandler:
             and bool(getattr(candidate.memory, "command_template", ""))
             and "partial_template" not in list(getattr(candidate, "signals", []) or [])
         )
+
+    def _has_duplicate_openclaw_pattern(self, candidate: Any) -> bool:
+        """Check exact taught-command duplication without strengthening frequency."""
+        if self.cli_store is None or not self._is_full_command_candidate(candidate):
+            return False
+        memory = candidate.memory
+        full_command = render_command(memory.command_template, memory.parameter_bindings)
+        row = self.cli_store.fetch_one(
+            """
+            SELECT pattern_id
+            FROM cli_command_pattern
+            WHERE user_id = ?
+              AND COALESCE(project_id, '') = COALESCE(?, '')
+              AND normalized_full_command = ?
+              AND source_type = 'openclaw'
+              AND status = 'active'
+            LIMIT 1
+            """,
+            (memory.user_id, memory.project_id, normalize_command_text(full_command)),
+        )
+        return row is not None
 
     def _store_command_pattern(
         self,

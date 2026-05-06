@@ -38,6 +38,15 @@ class DomainRouter:
         self.classifier = classifier or DomainClassifier(llm_client=llm_client)
 
     def route_event(self, event: NormalizedEvent) -> RouteDecision:
+        if _is_openclaw_retrieval_question(event):
+            return self._log_decision(
+                event,
+                RouteDecision(
+                    primary=[],
+                    secondary=[],
+                    reason="openclaw retrieval question; no memory domain route",
+                ),
+            )
         text = self._event_text(event)
         result = self.classifier.classify_sync(
             text,
@@ -101,3 +110,17 @@ class DomainRouter:
             decision.reason,
         )
         return decision
+
+
+def _is_openclaw_retrieval_question(event: NormalizedEvent) -> bool:
+    """Return true for OpenClaw messages that ask memory questions instead of teaching facts."""
+    if event.source_type != "openclaw":
+        return False
+    text = DomainRouter._event_text(event)
+    if not text:
+        return False
+    teaching_markers = ("记住", "以后", "下次", "默认", "设置为", "设为", "用命令", "命令是", "按这个命令")
+    if any(marker in text for marker in teaching_markers):
+        return False
+    question_markers = ("?", "？", "什么", "怎么", "如何", "多少", "哪", "是否", "有没有")
+    return any(marker in text for marker in question_markers)

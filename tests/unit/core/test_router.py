@@ -40,6 +40,16 @@ class TestRouter(unittest.TestCase):
             content_text=text,
         )
 
+    def _openclaw_event(self, text: str) -> NormalizedEvent:
+        return NormalizedEvent(
+            event_id="event-1",
+            event_type="memory_feedback",
+            source_type="openclaw",
+            occurred_at="2026-04-27T00:00:00Z",
+            context=EventContext(),
+            content_text=text,
+        )
+
     # ---- hard rules ----
 
     def test_command_finished_routes_to_cli_workflow(self) -> None:
@@ -76,6 +86,14 @@ class TestRouter(unittest.TestCase):
             self._event("chat_message", "部署后台服务用 lark project deploy --env staging")
         )
         self.assertEqual(decision.primary[0].domain, "cli_workflow")
+
+    def test_openclaw_cli_question_does_not_route_to_memory_domain(self) -> None:
+        decision = self.router.route_event(
+            self._openclaw_event("git log 命令我最经常用的参数是什么？")
+        )
+
+        self.assertEqual(decision.primary, [])
+        self.assertIn("retrieval question", decision.reason)
 
     def test_retention_signal_wins_over_decision_keywords(self) -> None:
         event = self._event(

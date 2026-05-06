@@ -22,6 +22,17 @@ class TestAdmissionControl(unittest.TestCase):
             payload=payload or {},
         )
 
+    def _openclaw_event(self, text: str) -> NormalizedEvent:
+        return NormalizedEvent(
+            event_id="event-1",
+            event_type="memory_feedback",
+            source_type="openclaw",
+            occurred_at="2026-04-27T00:00:00Z",
+            context=EventContext(),
+            content_text=text,
+            payload={},
+        )
+
     def test_empty_event_rejected(self) -> None:
         decision = self.controller.evaluate_event(self._event("chat_message"))
 
@@ -37,6 +48,15 @@ class TestAdmissionControl(unittest.TestCase):
         decision = self.controller.evaluate_event(self._event("memory_feedback"))
 
         self.assertTrue(decision.admitted)
+
+    def test_openclaw_cli_question_rejected_before_memory_extraction(self) -> None:
+        decision = self.controller.evaluate_event(
+            self._openclaw_event("git log 命令我最经常用的参数是什么？"),
+            domain="cli_workflow",
+        )
+
+        self.assertFalse(decision.admitted)
+        self.assertIn("retrieval question", decision.reason)
 
     def test_llm_event_gate_rejects_non_memory_event(self) -> None:
         class FakeLLM:
