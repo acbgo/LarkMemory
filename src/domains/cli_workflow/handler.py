@@ -187,6 +187,20 @@ class CLIWorkflowDomainHandler:
                     memory_id,
                 )
 
+            if event.source_type == "openclaw":
+                logger.info(
+                    "action=openclaw_memory_injected event_id=%s memory_id=%s "
+                    "template=%s params=%s scenario=%s semantic=%s",
+                    event.event_id,
+                    memory_id,
+                    candidate.memory.command_template,
+                    json.dumps(
+                        {pb.param_name: pb.param_value for pb in candidate.memory.parameter_bindings},
+                        ensure_ascii=False,
+                    ),
+                    candidate.memory.scenario_keywords,
+                    candidate.memory.semantic_description,
+                )
             logger.info(
                 "action=stored event_id=%s memory_id=%s command=%s execution_count=%s",
                 event.event_id,

@@ -587,22 +587,29 @@ class CLIWorkflowExtractor:
                     max_tokens=1024,
                 )
             )
+            llm_param_names = {str(item.get("param_name") or "") for item in raw.get("parameters", [])}
+            rule_param_names = {pb.param_name for pb in param_bindings}
+            if not llm_param_names & rule_param_names:
+                return {
+                    "parameter_bindings": param_bindings,
+                    "semantic_description": clean_text(str(raw.get("semantic_description") or "")) or None,
+                    "scenario_keywords": _string_list(raw.get("scenario_keywords")),
+                }
             result: list[ParameterBinding] = []
-            for item in raw.get("parameters", []):
-                pb = next(
-                    (p for p in param_bindings if p.param_name == item.get("param_name")),
+            for pb in param_bindings:
+                llm_item = next(
+                    (item for item in raw.get("parameters", []) if str(item.get("param_name") or "") == pb.param_name),
                     None,
                 )
-                if pb:
-                    new_pb = ParameterBinding(
-                        param_name=pb.param_name,
-                        param_value=pb.param_value,
-                        frequency=pb.frequency,
-                        semantics=str(item.get("semantics", "") or ""),
-                    )
-                    result.append(new_pb)
+                new_pb = ParameterBinding(
+                    param_name=pb.param_name,
+                    param_value=pb.param_value,
+                    frequency=pb.frequency,
+                    semantics=str(llm_item.get("semantics", "") or "") if llm_item else (pb.semantics or ""),
+                )
+                result.append(new_pb)
             return {
-                "parameter_bindings": result or param_bindings,
+                "parameter_bindings": result,
                 "semantic_description": clean_text(str(raw.get("semantic_description") or "")) or None,
                 "scenario_keywords": _string_list(raw.get("scenario_keywords")),
             }
