@@ -29,7 +29,9 @@ class MemoryHit(BaseModel):
     source_ref: str | None = None
     tags: list[str] = Field(default_factory=list)
     entities: list[str] = Field(default_factory=list)
+    extra: dict[str, Any] = Field(default_factory=dict)
     score_breakdown: dict[str, float] = Field(default_factory=dict)
+    display_prefix: str = "根据lark-memory:"
 
 
 class RetrieveResponse(BaseModel):

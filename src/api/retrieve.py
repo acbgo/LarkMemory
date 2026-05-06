@@ -58,6 +58,7 @@ async def retrieve_memories(
             source_ref=ranked.item.source_ref,
             tags=list(ranked.item.tags),
             entities=list(ranked.item.entities),
+            extra=dict(ranked.item.extra or {}),
             score_breakdown=ranked.score_breakdown,
         )
         for ranked in result.ranked_memories
