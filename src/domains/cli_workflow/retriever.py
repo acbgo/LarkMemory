@@ -355,17 +355,18 @@ class CLIWorkflowRetriever:
         exact_sub_command = None if identity.script_path else identity.sub_command
         patterns = self.cli_store.find_patterns_by_command_identity(
             user_id=None,
-            project_id=query.project_id,
+            project_id=None,
             base_command=identity.base_command,
             sub_command=exact_sub_command,
             limit=max(limit * 10, 100),
         )
         logger.info(
             "action=cli_direct_pattern_lookup query_user_id=%s user_filter_ignored=%s project_id=%s "
-            "base_command=%s sub_command=%s sql_sub_command=%s pattern_count=%s",
+            "project_filter_ignored=%s base_command=%s sub_command=%s sql_sub_command=%s pattern_count=%s",
             query.user_id,
             True,
             query.project_id,
+            True,
             identity.base_command,
             identity.sub_command,
             exact_sub_command,
