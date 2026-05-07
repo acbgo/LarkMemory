@@ -87,6 +87,18 @@ class TestFeishuProactive(unittest.TestCase):
         self.assertEqual(event.snooze_days, 2)
         self.assertEqual(event.operator_id, "ou-1")
 
+    def test_parse_card_action_reads_json_string_value(self) -> None:
+        event = parse_card_action(
+            {
+                "value": '{"action":"promote_to_active","memory_id":"mem-1"}',
+                "operator": {"open_id": "ou-1"},
+            }
+        )
+
+        self.assertEqual(event.action, "promote_to_active")
+        self.assertEqual(event.memory_id, "mem-1")
+        self.assertEqual(event.operator_id, "ou-1")
+
     def test_build_decision_context_card_contains_summary_and_actions(self) -> None:
         card = build_decision_context_card(
             {

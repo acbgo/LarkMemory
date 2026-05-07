@@ -115,15 +115,7 @@ def build_event_handler(
         except Exception:
             logger.warning("action=feishu_card_action_unhandled_failed", exc_info=True)
             response_payload = {"toast": {"type": "warning", "content": "操作失败，请查看 LarkMemory 日志"}}
-        try:
-            from lark_oapi.event.callback.model.p2_card_action_trigger import P2CardActionTriggerResponse  # type: ignore[import-not-found]
-        except ImportError:
-            return response_payload
-        try:
-            return P2CardActionTriggerResponse(response_payload)
-        except Exception:
-            logger.warning("action=feishu_card_action_response_wrap_failed", exc_info=True)
-            return response_payload
+        return response_payload
 
     handler_builder = (
         lark.EventDispatcherHandler.builder(
@@ -193,14 +185,20 @@ def _message_event_from_lark(data: Any) -> FeishuMessageEvent | None:
 
 
 def _card_action_from_lark(data: Any) -> dict[str, Any]:
-    event = getattr(data, "event", None)
-    action = getattr(event, "action", None)
-    operator = getattr(event, "operator", None)
+    event = _get_value(data, "event")
+    action = _get_value(event, "action")
+    operator = _get_value(event, "operator")
     return {
-        "value": getattr(action, "value", {}) or {},
-        "operator": {"open_id": getattr(operator, "open_id", None)},
+        "value": _get_value(action, "value") or {},
+        "operator": {"open_id": _get_value(operator, "open_id")},
         "raw": _safe_payload(data),
     }
+
+
+def _get_value(obj: Any, key: str) -> Any:
+    if isinstance(obj, dict):
+        return obj.get(key)
+    return getattr(obj, key, None)
 
 
 def _calendar_event_from_lark(data: Any) -> FeishuCalendarEvent | None:

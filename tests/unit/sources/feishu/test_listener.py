@@ -3,7 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from src.sources.feishu.client.config import FeishuSettings
-from src.sources.feishu.client.listener import _message_event_from_lark, build_event_handler
+from src.sources.feishu.client.listener import _card_action_from_lark, _message_event_from_lark, build_event_handler
 
 
 class _FakeBuiltHandler:
@@ -107,6 +107,23 @@ def test_message_event_from_lark_extracts_required_fields() -> None:
     assert event.chat_id == "oc_1"
     assert event.sender_id == "ou_1"
     assert event.content_text == "hello"
+
+
+def test_card_action_from_lark_accepts_dict_payload() -> None:
+    payload = {
+        "event": {
+            "action": {
+                "value": {"action": "promote_to_active", "memory_id": "mem-1"},
+            },
+            "operator": {"open_id": "ou-1"},
+        }
+    }
+
+    action = _card_action_from_lark(payload)
+
+    assert action["value"]["action"] == "promote_to_active"
+    assert action["value"]["memory_id"] == "mem-1"
+    assert action["operator"]["open_id"] == "ou-1"
 
 
 def test_main_passes_settings_to_event_handler(monkeypatch) -> None:

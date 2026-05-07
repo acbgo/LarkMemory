@@ -504,8 +504,9 @@ class TeamRetentionRetriever:
                 self.decay_rate,
                 now,
             )
-            result.score *= factor
-            result.memory_item.extra["time_decay"] = round(factor, 4)
+            if factor is not None:
+                result.score *= factor
+                result.memory_item.extra["time_decay"] = round(factor, 4)
         results.sort(key=lambda r: r.score, reverse=True)
         return results
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any
 
@@ -15,6 +16,11 @@ logger = logging.getLogger(__name__)
 def parse_card_action(raw_action: dict[str, Any]) -> FeishuCardActionEvent:
     """Parse a Feishu card action value into an internal card action event."""
     value = raw_action.get("value") if "value" in raw_action else raw_action
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError:
+            value = {}
     if not isinstance(value, dict):
         value = {}
     operator = raw_action.get("operator")
