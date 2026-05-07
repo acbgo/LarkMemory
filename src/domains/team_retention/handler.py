@@ -454,16 +454,27 @@ class TeamRetentionDomainHandler:
         allowed_statuses: set[str] | None = None,
     ) -> str | None:
         if not memory.version_group:
-            return None
+            exact_candidates = []
+        else:
+            exact_candidates = self.team_retention_store.list_memories(
+                team_id=memory.team_id,
+                project_id=memory.project_id,
+                workspace_id=memory.workspace_id,
+                fact_type=memory.fact_type,
+                version_group=memory.version_group,
+                limit=20,
+            )
         statuses = allowed_statuses or {"active"}
-        existing = self.team_retention_store.list_memories(
+        existing = list(exact_candidates)
+        fuzzy_candidates = self.team_retention_store.list_memories(
             team_id=memory.team_id,
             project_id=memory.project_id,
             workspace_id=memory.workspace_id,
             fact_type=memory.fact_type,
-            version_group=memory.version_group,
-            limit=20,
+            limit=100,
         )
+        seen_ids = {item.retention_id for item in existing}
+        existing.extend(item for item in fuzzy_candidates if item.retention_id not in seen_ids)
         for item in existing:
             if item.fact_value.strip() == memory.fact_value.strip():
                 row = self.memory_store.get_memory(item.retention_id)

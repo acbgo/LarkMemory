@@ -87,6 +87,18 @@ class TestFeishuProactive(unittest.TestCase):
         self.assertEqual(event.snooze_days, 2)
         self.assertEqual(event.operator_id, "ou-1")
 
+    def test_parse_card_action_reads_json_string_value(self) -> None:
+        event = parse_card_action(
+            {
+                "value": '{"action":"promote_to_active","memory_id":"mem-1"}',
+                "operator": {"open_id": "ou-1"},
+            }
+        )
+
+        self.assertEqual(event.action, "promote_to_active")
+        self.assertEqual(event.memory_id, "mem-1")
+        self.assertEqual(event.operator_id, "ou-1")
+
     def test_build_decision_context_card_contains_summary_and_actions(self) -> None:
         card = build_decision_context_card(
             {
@@ -135,6 +147,18 @@ class TestFeishuProactive(unittest.TestCase):
 
         self.assertEqual(service.calls, [("snooze", {"memory_id": "mem-1", "snooze_days": 1})])
         self.assertEqual(response["toast"]["type"], "info")
+
+    def test_card_action_handler_returns_warning_when_update_fails(self) -> None:
+        class FailingMemoryService:
+            def update_memory(self, action: str, **kwargs: object) -> object:
+                raise RuntimeError("boom")
+
+        handler = FeishuCardActionHandler(FailingMemoryService())  # type: ignore[arg-type]
+
+        response = handler.handle(FeishuCardActionEvent(action="promote_to_active", memory_id="mem-1"))
+
+        self.assertEqual(response["toast"]["type"], "warning")
+        self.assertIn("操作失败", response["toast"]["content"])
 
     def test_card_action_handler_rejects_missing_memory_id(self) -> None:
         service = _FakeMemoryService()

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import logging
 from typing import Any
 
 from src.core.service import MemoryService
@@ -8,11 +10,17 @@ from ..events.models import FeishuCardActionEvent
 
 
 SUPPORTED_CARD_ACTIONS = {"reviewed", "snooze", "expire", "forget", "acknowledge", "promote_to_active", "dismiss_candidate"}
+logger = logging.getLogger(__name__)
 
 
 def parse_card_action(raw_action: dict[str, Any]) -> FeishuCardActionEvent:
     """Parse a Feishu card action value into an internal card action event."""
     value = raw_action.get("value") if "value" in raw_action else raw_action
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError:
+            value = {}
     if not isinstance(value, dict):
         value = {}
     operator = raw_action.get("operator")
@@ -36,6 +44,12 @@ class FeishuCardActionHandler:
 
     def handle(self, event: FeishuCardActionEvent) -> dict[str, Any]:
         """Handle a card action and return a Feishu callback toast payload."""
+        logger.info(
+            "action=feishu_card_action_received card_action=%s memory_id=%s operator_id=%s",
+            event.action,
+            event.memory_id,
+            event.operator_id,
+        )
         if event.action not in SUPPORTED_CARD_ACTIONS:
             return _toast("warning", "未知操作")
         if not event.memory_id:
@@ -43,7 +57,23 @@ class FeishuCardActionHandler:
         kwargs: dict[str, Any] = {"memory_id": event.memory_id}
         if event.action == "snooze":
             kwargs["snooze_days"] = event.snooze_days or 1
-        result = self.memory_service.update_memory(event.action, **kwargs)
+        try:
+            result = self.memory_service.update_memory(event.action, **kwargs)
+        except Exception:
+            logger.warning(
+                "action=feishu_card_action_failed card_action=%s memory_id=%s",
+                event.action,
+                event.memory_id,
+                exc_info=True,
+            )
+            return _toast("warning", "操作失败，请查看 LarkMemory 日志")
+        if result is None:
+            logger.warning(
+                "action=feishu_card_action_no_result card_action=%s memory_id=%s",
+                event.action,
+                event.memory_id,
+            )
+            return _toast("warning", "操作未生效，请确认记忆状态")
         if result.updated or event.action in {"expire", "forget"}:
             return _toast("info", _success_message(event.action))
         return _toast("info", result.message or _success_message(event.action))

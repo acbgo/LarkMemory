@@ -504,8 +504,9 @@ class TeamRetentionRetriever:
                 self.decay_rate,
                 now,
             )
-            result.score *= factor
-            result.memory_item.extra["time_decay"] = round(factor, 4)
+            if factor is not None:
+                result.score *= factor
+                result.memory_item.extra["time_decay"] = round(factor, 4)
         results.sort(key=lambda r: r.score, reverse=True)
         return results
 
@@ -528,6 +529,17 @@ class TeamRetentionRetriever:
 
 def _time_decay_factor(timestamp: str | None, decay_rate: float, now_iso: str) -> float:
     if not timestamp or decay_rate <= 0:
+        return 1.0
+    try:
+        ts_date = timestamp[:10]
+        now_date = now_iso[:10]
+        ts_dt = datetime.strptime(ts_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        now_dt = datetime.strptime(now_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        days = (now_dt - ts_dt).days
+        if days < 1:
+            return 1.0
+        return math.exp(-decay_rate * days)
+    except Exception:
         return 1.0
 
 
@@ -553,14 +565,3 @@ def _overlap_terms(text: str) -> set[str]:
         for size in (2, 3, 4):
             terms.update(chunk[index:index + size] for index in range(0, len(chunk) - size + 1))
     return terms
-    try:
-        ts_date = timestamp[:10]
-        now_date = now_iso[:10]
-        ts_dt = datetime.strptime(ts_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
-        now_dt = datetime.strptime(now_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
-        days = (now_dt - ts_dt).days
-        if days < 1:
-            return 1.0
-        return math.exp(-decay_rate * days)
-    except Exception:
-        return 1.0
