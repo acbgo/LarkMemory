@@ -105,12 +105,25 @@ def build_event_handler(
 
     def on_card_action(data: Any) -> Any:
         raw_action = _card_action_from_lark(data)
-        response_payload = card_handler.handle(parse_card_action(raw_action))
+        logger.info(
+            "action=feishu_card_action_raw value=%s operator=%s",
+            raw_action.get("value"),
+            raw_action.get("operator"),
+        )
+        try:
+            response_payload = card_handler.handle(parse_card_action(raw_action))
+        except Exception:
+            logger.warning("action=feishu_card_action_unhandled_failed", exc_info=True)
+            response_payload = {"toast": {"type": "warning", "content": "操作失败，请查看 LarkMemory 日志"}}
         try:
             from lark_oapi.event.callback.model.p2_card_action_trigger import P2CardActionTriggerResponse  # type: ignore[import-not-found]
         except ImportError:
             return response_payload
-        return P2CardActionTriggerResponse(response_payload)
+        try:
+            return P2CardActionTriggerResponse(response_payload)
+        except Exception:
+            logger.warning("action=feishu_card_action_response_wrap_failed", exc_info=True)
+            return response_payload
 
     handler_builder = (
         lark.EventDispatcherHandler.builder(

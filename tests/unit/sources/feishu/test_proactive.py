@@ -136,6 +136,18 @@ class TestFeishuProactive(unittest.TestCase):
         self.assertEqual(service.calls, [("snooze", {"memory_id": "mem-1", "snooze_days": 1})])
         self.assertEqual(response["toast"]["type"], "info")
 
+    def test_card_action_handler_returns_warning_when_update_fails(self) -> None:
+        class FailingMemoryService:
+            def update_memory(self, action: str, **kwargs: object) -> object:
+                raise RuntimeError("boom")
+
+        handler = FeishuCardActionHandler(FailingMemoryService())  # type: ignore[arg-type]
+
+        response = handler.handle(FeishuCardActionEvent(action="promote_to_active", memory_id="mem-1"))
+
+        self.assertEqual(response["toast"]["type"], "warning")
+        self.assertIn("操作失败", response["toast"]["content"])
+
     def test_card_action_handler_rejects_missing_memory_id(self) -> None:
         service = _FakeMemoryService()
         handler = FeishuCardActionHandler(service)  # type: ignore[arg-type]
